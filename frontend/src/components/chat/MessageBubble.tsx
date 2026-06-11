@@ -343,12 +343,16 @@ export default function MessageBubble({ message }: Props) {
           className={`text-xs text-muted-foreground mt-2 ${
             isUser ? "text-right" : "text-left"
           }`}
-          title={new Date(Number(message.id.split("-")[1])).toLocaleString()}
-        >
-          {formatDistanceToNow(
-            new Date(Number(message.id.split("-")[1])),
-            { addSuffix: true }
-          )}
+          title={(() => {
+            const ts = Number(message.id.split("-")[1]);
+            return isNaN(ts) ? "" : new Date(ts).toLocaleString();
+          })()}
+          >
+            {(() => {
+              const ts = Number(message.id.split("-")[1]);
+              if (isNaN(ts)) return "";
+              return formatDistanceToNow(new Date(ts), { addSuffix: true });
+            })()}
         </div>
       </div>
        {isUser && (
