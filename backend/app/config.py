@@ -117,7 +117,7 @@ class Settings(BaseSettings):
     LANGSMITH_PROJECT: str = "pdf-assistant-rag"
 
     # ── Reranker ─────────────────────────────────────────
-    RERANKER_MODEL: str = "BAAI/bge-reranker-v2-m3" # Lightweight 384-dim model fine-tuned for relevance ranking
+    RERANKER_MODEL: str = "cross-encoder/ms-marco-MiniLM-L-6v2" # Lightweight 384-dim model fine-tuned for relevance ranking
     # ── Vision / Image captioning ─────────────────────
     VISION_PROVIDER: str | None = None  # e.g. 'openai'
     VISION_MODEL: str | None = None

@@ -702,6 +702,9 @@ def ask_question_stream(
                 "X-Accel-Buffering": "no",
             },
         )
+    
+    user_id = user.id
+    user_hf_token = user.hf_token
 
     # Stream response
     def event_stream():

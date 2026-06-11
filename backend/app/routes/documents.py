@@ -63,16 +63,19 @@ router = APIRouter(prefix="/documents", tags=["Documents"])
 ALLOWED_MIME_TYPES = settings.ALLOWED_MIME_TYPES
 
 def _deserialize_doc(doc: Document) -> DocumentResponse:
-    """Return a DocumentResponse with extracted_urls parsed from JSON string."""
     import json as _json
-    response = DocumentResponse.model_validate(doc)
+    # Parse extracted_urls before validation so Pydantic receives a list
+    extracted = []
     if doc.extracted_urls:
         try:
-            response = response.model_copy(
-                update={"extracted_urls": _json.loads(doc.extracted_urls)}
-            )
+            extracted = _json.loads(doc.extracted_urls)
         except Exception:
-            response = response.model_copy(update={"extracted_urls": []})
+            extracted = []
+    
+    response = DocumentResponse.model_validate(
+        {**{c.name: getattr(doc, c.name) for c in doc.__table__.columns},
+         "extracted_urls": extracted}
+    )
     return response
 
 async def validate_upload(file: UploadFile):
