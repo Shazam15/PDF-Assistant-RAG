@@ -714,9 +714,9 @@ def ask_question_stream(
         try:
             for chunk in generate_answer_stream(
                 question=payload.question,
-                user_id=user.id,
+                user_id=user_id,
                 document_id=payload.document_id,
-                hf_token=user.hf_token,
+                hf_token=user_hf_token,
                 top_k=payload.top_k,
                 chat_history=chat_history,
             ):
@@ -746,7 +746,7 @@ def ask_question_stream(
 
             with get_db_session() as save_db:
                 _save_message(
-                    save_db, user.id, payload.document_id, "assistant", full_answer, sources, session_id=session_id
+                    save_db, user_id, payload.document_id, "assistant", full_answer, sources, session_id=session_id
                 )
         finally:
             record_query_response_time(time.perf_counter() - started_at)

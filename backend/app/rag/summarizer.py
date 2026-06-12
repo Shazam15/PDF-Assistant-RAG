@@ -2,7 +2,7 @@ import logging
 from app.config import get_settings
 import os
 
-from app.rag.agent import get_llm_client
+#from app.rag.agent import get_llm_client
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -40,17 +40,19 @@ def generate_document_summary(filePath: str, max_sentences: int = 3) -> str | No
 
         text_to_summarise = " ".join(chunk_texts)
 
-        llm = get_llm_client()
+        #llm = get_llm_client()
 
         prompt = f"Summarise the following text in {max_sentences} sentences:\n\n{text_to_summarise}"
 
-        response = llm.chat_completion(
-            messages=[{"role": "user", "content": prompt}],
-            model=settings.LLM_MODEL,
-            max_tokens=settings.SUMMARY_MAX_TOKENS,
-            temperature=settings.LLM_TEMPERATURE,
-        )
-        summary = response.choices[0].message.content.strip() if response.choices else None
+        from langchain_ollama import ChatOllama
+        from langchain_core.messages import SystemMessage, HumanMessage
+
+        chat_llm = ChatOllama(model=settings.LLM_MODEL, temperature=0.3)
+        response = chat_llm.invoke([
+            SystemMessage(content="You are a helpful assistant that summarizes documents."),
+            HumanMessage(content=prompt),
+        ])
+        summary = response.content
 
         return summary if summary else None
 
