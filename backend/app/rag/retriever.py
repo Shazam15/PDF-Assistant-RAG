@@ -74,52 +74,26 @@ class CustomBM25Retriever(BaseRetriever):
         return [LangchainDocument(page_content=c["text"], metadata=c) for c in candidates]
 
 
-def transform_query(query: str) -> List[str]:
-    """Rewrite a user question into multiple retrieval-friendly search queries."""
-    original_query = query.strip()
-    if not original_query:
-        return []
-
-    try:
-        generated_queries = _generate_query_variants(original_query)
-    except Exception as e:
-        logger.warning(f"Query transformation failed, using original query only: {e}")
-        generated_queries = []
-
-    return _dedupe_queries([original_query, *generated_queries])[:MAX_QUERY_VARIANTS]
-
-
 def _generate_query_variants(query: str) -> List[str]:
-    """Use the configured LLM to split/rewrite a user query for semantic search."""
-    if not settings.HF_TOKEN:
+    """Use Ollama to split/rewrite a user query for semantic search."""
+    try:
+        from langchain_ollama import ChatOllama
+        from langchain_core.messages import SystemMessage, HumanMessage
+
+        llm = ChatOllama(model=settings.LLM_MODEL, temperature=0.2)
+        prompt = (
+            "Rewrite the user question into concise semantic search queries for document retrieval. "
+            "Split independent topics into separate queries. Return a JSON array of strings only. "
+            f"User question: {query}"
+        )
+        response = llm.invoke([
+            SystemMessage(content="You create optimized search queries for a RAG retriever."),
+            HumanMessage(content=prompt),
+        ])
+        import json as _json
+        return _json.loads(response.content.strip())
+    except Exception:
         return []
-
-    from huggingface_hub import InferenceClient
-
-    client = InferenceClient(token=settings.HF_TOKEN)
-    prompt = (
-        "Rewrite the user question into concise semantic search queries for document retrieval. "
-        "Split independent topics into separate queries. Return a JSON array of strings only. "
-        f"User question: {query}"
-    )
-    response = client.chat_completion(
-        messages=[
-            {
-                "role": "system",
-                "content": "You create optimized search queries for a RAG retriever.",
-            },
-            {"role": "user", "content": prompt},
-        ],
-        model=settings.LLM_MODEL,
-        max_tokens=256,
-        temperature=0.2,
-    )
-
-    if not response.choices:
-        return []
-
-    content = response.choices[0].message.content or ""
-    return _parse_query_variants(content)
 
 
 def _parse_query_variants(content: str) -> List[str]:

@@ -8,10 +8,10 @@ from typing import List, Dict, Any, Optional, Generator
 
 from sympy import python
 
-from huggingface_hub import InferenceClient
+
 from langchain_classic.agents import create_react_agent, AgentExecutor
 from langchain_core.prompts import PromptTemplate
-from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
+from langchain_ollama import ChatOllama
 
 from app.config import get_settings
 from app.rag.retriever import retrieve
@@ -27,17 +27,9 @@ settings = get_settings()
 
 
 
-def get_llm_client(hf_token: Optional[str] = None) -> InferenceClient:
-    """Create a HuggingFace InferenceClient per-request."""
-
-    token = hf_token or settings.HF_TOKEN
-
-    if not token:
-        raise ValueError(
-            "Hugging Face API token is missing. Please configure HF_TOKEN."
-        )
-
-    return InferenceClient(token=token)
+def get_llm_client(hf_token: Optional[str] = None):
+    """Create an Ollama client (hf_token ignored, kept for compatibility)."""
+    return ChatOllama(model=settings.LLM_MODEL, temperature=0)
 
 
 def _format_chat_history(messages: List[Dict[str, str]]) -> str:
@@ -63,23 +55,10 @@ def get_agent_executor(
     pdf_tool = PDFSearchTool(user_id=user_id, document_id=document_id, top_k=top_k)
     tools = [pdf_tool, MathTool(), WebSearchTool()]
 
-    # Initialize LLM
-    token = hf_token or settings.HF_TOKEN
-
-    if not token:
-        raise ValueError(
-            "Hugging Face API token is missing. Please configure HF_TOKEN."
-        )
-
-    llm = HuggingFaceEndpoint(
-        repo_id=settings.LLM_MODEL,
-        huggingfacehub_api_token=token,
-        max_new_tokens=settings.LLM_MAX_NEW_TOKENS,
+    chat_llm = ChatOllama(
+        model=settings.LLM_MODEL,
         temperature=settings.LLM_TEMPERATURE,
-        timeout=300,
     )
-
-    chat_llm = ChatHuggingFace(llm=llm)
 
     # Setup Agent
     prompt = PromptTemplate.from_template(AGENT_SYSTEM_PROMPT)
@@ -127,22 +106,20 @@ def generate_answer(
     Agentic generation: retrieve via tools → reason → generate answer.
     """
     # ── Handle greetings ─────────────────────────────
+
     if is_greeting(question):
-        client = get_llm_client(hf_token)
-        try:
-            messages = [
-                {"role": "system", "content": "You are Document AI Analyst, a friendly AI assistant."},
-                {"role": "user", "content": question},
-            ]
-            response = client.chat_completion(
-                messages=messages,
-                model=settings.LLM_MODEL,
-                max_tokens=256,
-            )
-            answer = response.choices[0].message.content.strip() if response.choices else "Hello! How can I help you today?"
-        except Exception:
-            answer = "Hello! I'm Document AI Analyst. How can I help you with your documents?"
-        return {"answer": answer, "sources": []}
+        chat_llm = get_llm_client(hf_token)
+    try:
+        from langchain_core.messages import SystemMessage, HumanMessage
+        messages = [
+            SystemMessage(content="You are Document AI Analyst, a friendly AI assistant."),
+            HumanMessage(content=question),
+        ]
+        response = chat_llm.invoke(messages)
+        answer = response.content.strip()
+    except Exception:
+        answer = "Hello! I'm Document AI Analyst. How can I help you with your documents?"
+    return {"answer": answer, "sources": []}
 
     # ── Run Agent ────────────────────────────────────
     try:
@@ -199,23 +176,20 @@ def generate_answer_stream(
     Streaming Agentic pipeline.
     """
     # ── Handle greetings ─────────────────────────────
+
     if is_greeting(question):
-        yield f"data: {json.dumps({'type': 'sources', 'data': []})}\n\n"
-        client = get_llm_client(hf_token)
-        try:
-            stream = client.chat_completion(
-                messages=[{"role": "user", "content": question}],
-                model=settings.LLM_MODEL,
-                max_tokens=256,
-                stream=True,
-            )
-            for chunk in stream:
-                if chunk.choices and chunk.choices[0].delta.content:
-                    yield f"data: {json.dumps({'type': 'token', 'data': chunk.choices[0].delta.content})}\n\n"
-        except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'data': str(e)})}\n\n"
-        yield f"data: {json.dumps({'type': 'done'})}\n\n"
-        return
+        yield f"data: {json.dumps({'type': 'sources', 'data': []})}\\n\\n"
+        chat_llm = get_llm_client(hf_token)
+    try:
+        from langchain_core.messages import HumanMessage
+        for chunk in chat_llm.stream([HumanMessage(content=question)]):
+            if chunk.content:
+                yield f"data: {json.dumps({'type': 'token', 'data': chunk.content})}\\n\\n"
+    except Exception as e:
+        yield f"data: {json.dumps({'type': 'error', 'data': str(e)})}\\n\\n"
+    yield f"data: {json.dumps({'type': 'done'})}\\n\\n"
+    return
+
 
     # ── Run Agent ────────────────────────────────────
     try:
