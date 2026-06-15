@@ -178,6 +178,14 @@ def _merge_candidates(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return list(merged.values())
 
 
+def transform_query(query: str) -> List[str]:
+    """Rewrite a user question into multiple retrieval-friendly search queries."""
+    original_query = query.strip()
+    if not original_query:
+        return []
+    # With Ollama we skip LLM query expansion and just use the original
+    return [original_query]
+
 @trace_function(
     "retrieve",
     metadata_factory=lambda query, user_id, document_id=None, top_k=None: {
@@ -189,6 +197,7 @@ def _merge_candidates(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         "top_k_rerank": settings.TOP_K_RERANK,
     },
 )
+
 def retrieve(
     query: str,
     user_id: str,

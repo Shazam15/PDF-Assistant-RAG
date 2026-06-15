@@ -6,9 +6,6 @@ import logging
 import json
 from typing import List, Dict, Any, Optional, Generator
 
-from sympy import python
-
-
 from langchain_classic.agents import create_react_agent, AgentExecutor
 from langchain_core.prompts import PromptTemplate
 from langchain_ollama import ChatOllama
@@ -24,7 +21,6 @@ from app.rag.tracing import trace_function
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
-
 
 
 def get_llm_client(hf_token: Optional[str] = None):
@@ -50,8 +46,6 @@ def get_agent_executor(
     chat_history: Optional[List[Dict[str, str]]] = None,
 ):
     """Initialize the LangChain ReAct agent executor."""
-
-    # Initialize tools
     pdf_tool = PDFSearchTool(user_id=user_id, document_id=document_id, top_k=top_k)
     tools = [pdf_tool, MathTool(), WebSearchTool()]
 
@@ -60,7 +54,6 @@ def get_agent_executor(
         temperature=settings.LLM_TEMPERATURE,
     )
 
-    # Setup Agent
     prompt = PromptTemplate.from_template(AGENT_SYSTEM_PROMPT)
     agent = create_react_agent(chat_llm, tools, prompt)
 
@@ -73,8 +66,8 @@ def get_agent_executor(
     )
 
     formatted_history = _format_chat_history(chat_history) if chat_history else ""
-
     return executor, pdf_tool, formatted_history
+
 
 def is_greeting(question: str) -> bool:
     """Detect if the question is a casual greeting rather than a document query."""
@@ -102,28 +95,28 @@ def generate_answer(
     top_k: Optional[int] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
 ) -> Dict[str, Any]:
-    """
-    Agentic generation: retrieve via tools → reason → generate answer.
-    """
-    # ── Handle greetings ─────────────────────────────
+    """Agentic generation: retrieve via tools → reason → generate answer."""
 
+    # ── Handle greetings ─────────────────────────────
     if is_greeting(question):
         chat_llm = get_llm_client(hf_token)
-    try:
-        from langchain_core.messages import SystemMessage, HumanMessage
-        messages = [
-            SystemMessage(content="You are Document AI Analyst, a friendly AI assistant."),
-            HumanMessage(content=question),
-        ]
-        response = chat_llm.invoke(messages)
-        answer = response.content.strip()
-    except Exception:
-        answer = "Hello! I'm Document AI Analyst. How can I help you with your documents?"
-    return {"answer": answer, "sources": []}
+        try:
+            from langchain_core.messages import SystemMessage, HumanMessage
+            messages = [
+                SystemMessage(content="You are Document AI Analyst, a friendly AI assistant."),
+                HumanMessage(content=question),
+            ]
+            response = chat_llm.invoke(messages)
+            answer = response.content.strip()
+        except Exception:
+            answer = "Hello! I'm Document AI Analyst. How can I help you with your documents?"
+        return {"answer": answer, "sources": []}
 
     # ── Run Agent ────────────────────────────────────
     try:
-        executor, pdf_tool, formatted_history = get_agent_executor(user_id, document_id, hf_token, top_k, chat_history)
+        executor, pdf_tool, formatted_history = get_agent_executor(
+            user_id, document_id, hf_token, top_k, chat_history
+        )
         result = executor.invoke({"input": question, "chat_history": formatted_history})
 
         raw_answer = result.get("output", "")
@@ -133,7 +126,6 @@ def generate_answer(
             logger.warning(f"Rejected malformed LLM output: {e}")
             answer = MALFORMED_OUTPUT_MESSAGE
 
-        # Retrieve sources from the PDF tool if it was used
         sources = [
             {
                 "text": chunk["text"][:300] + ("..." if len(chunk["text"]) > 300 else ""),
@@ -172,28 +164,27 @@ def generate_answer_stream(
     top_k: Optional[int] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
 ) -> Generator[str, None, None]:
-    """
-    Streaming Agentic pipeline.
-    """
+    """Streaming Agentic pipeline."""
+
     # ── Handle greetings ─────────────────────────────
-
     if is_greeting(question):
-        yield f"data: {json.dumps({'type': 'sources', 'data': []})}\\n\\n"
+        yield f"data: {json.dumps({'type': 'sources', 'data': []})}\n\n"
         chat_llm = get_llm_client(hf_token)
-    try:
-        from langchain_core.messages import HumanMessage
-        for chunk in chat_llm.stream([HumanMessage(content=question)]):
-            if chunk.content:
-                yield f"data: {json.dumps({'type': 'token', 'data': chunk.content})}\\n\\n"
-    except Exception as e:
-        yield f"data: {json.dumps({'type': 'error', 'data': str(e)})}\\n\\n"
-    yield f"data: {json.dumps({'type': 'done'})}\\n\\n"
-    return
-
+        try:
+            from langchain_core.messages import HumanMessage
+            for chunk in chat_llm.stream([HumanMessage(content=question)]):
+                if chunk.content:
+                    yield f"data: {json.dumps({'type': 'token', 'data': chunk.content})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'data': str(e)})}\n\n"
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        return
 
     # ── Run Agent ────────────────────────────────────
     try:
-        executor, pdf_tool, formatted_history = get_agent_executor(user_id, document_id, hf_token, top_k, chat_history)
+        executor, pdf_tool, formatted_history = get_agent_executor(
+            user_id, document_id, hf_token, top_k, chat_history
+        )
 
         sources_sent = False
 

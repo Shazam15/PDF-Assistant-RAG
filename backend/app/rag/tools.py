@@ -9,10 +9,6 @@ import operator as op
 from typing import Any, Dict, List, Optional, Type
 
 from ddgs import DDGS
-from huggingface_hub.inference._generated.types.chat_completion import (
-    ChatCompletionInputFunctionDefinition,
-    ChatCompletionInputTool,
-)
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
@@ -239,60 +235,3 @@ class WebSearchTool(BaseTool):
 
 
 # ── HuggingFace Tool Definitions ──────────────────────
-
-CALCULATOR_TOOL = ChatCompletionInputTool(
-    function=ChatCompletionInputFunctionDefinition(
-        name="calculator",
-        description=(
-            "Evaluate a simple arithmetic expression. "
-            "Use this for all numeric calculations instead of computing mentally."
-        ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "expression": {
-                    "type": "string",
-                    "description": "A valid arithmetic expression, e.g. '(1000 - 250) * 0.2'.",
-                },
-            },
-            "required": ["expression"],
-        },
-    ),
-    type="tool",
-)
-
-WEB_SEARCH_TOOL = ChatCompletionInputTool(
-    function=ChatCompletionInputFunctionDefinition(
-        name="web_search",
-        description=(
-            "Search the web using DuckDuckGo for current information not found in the uploaded documents. "
-            "Use this when the user asks about real-world facts, recent events, or topics outside the PDF content."
-        ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The search query to look up on the web.",
-                },
-                "max_results": {
-                    "type": "integer",
-                    "description": "Number of search results to return (default: 5, max: 10).",
-                    "default": 5,
-                },
-            },
-            "required": ["query"],
-        },
-    ),
-    type="tool",
-)
-
-TOOL_PROMPT = (
-    "Use the calculator tool for all numeric arithmetic operations in the user query. "
-    "The tool accepts a single 'expression' field and returns the evaluated numeric result. "
-    "Do not attempt to compute arithmetic without the tool. "
-    "Use the web_search tool when the user asks about real-world facts, current events, "
-    "or topics that are not covered by the uploaded PDF documents."
-)
-
-TOOLS = [CALCULATOR_TOOL, WEB_SEARCH_TOOL]
