@@ -121,6 +121,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
   // Load history on activeSessionId or fallback to activeDoc change
   useEffect(() => {
     if (activeSessionId) {
+      setMessages([]);
       fetchSessionHistory(activeSessionId);
       return;
     }

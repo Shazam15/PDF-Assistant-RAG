@@ -167,6 +167,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   async fetchSessionHistory(id) {
+    set({ messages: [] }); // ← agrega esta línea
     set({ historyLoading: true });
     try {
       const data = await api.get<{ messages: ChatMsg[] }>(`/api/v1/chat/history/session/${id}`);
