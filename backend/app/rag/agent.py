@@ -148,6 +148,8 @@ def generate_answer(
         raise ExternalServiceException("HuggingFace", str(e)) from e
 
 
+
+
 @trace_function(
     "generate_answer_stream",
     metadata_factory=lambda question, user_id, document_id=None, **kwargs: {

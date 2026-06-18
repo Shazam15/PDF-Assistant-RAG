@@ -195,21 +195,27 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
       const wsUrl = `${wsScheme}:${host}/api/v1/chat/ws${token ? `?token=${encodeURIComponent(token)}` : ""}`;
 
       const ws = new WebSocket(wsUrl);
+      let questionSent = false;
 
       const wsDone = new Promise<void>((resolve, reject) => {
         ws.onopen = () => {
+          clearTimeout(connectTimeout);
           // Send initial payload
+          questionSent = true;
           ws.send(JSON.stringify({ question, document_id: activeDoc?.id || null, session_id: activeSessionId }));
         };
 
-        // If WS doesn't open within 800ms, treat as failure and fallback
+        // If WS doesn't open within 800ms, treat as failure and fallback.
+        // Only safe to fall back if the question was never actually sent.
         const connectTimeout = setTimeout(() => {
           try {
             ws.close();
           } catch (e) {
             // ignore
           }
-          reject(new Error("WebSocket connection timeout"));
+          if (!questionSent) {
+            reject(new Error("WebSocket connection timeout"));
+          }
         }, 800);
 
         ws.onmessage = (ev) => {
