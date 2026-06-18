@@ -79,24 +79,45 @@ def validate_user_input(text: str) -> None:
 
 def parse_agent_output(raw_output: str) -> str:
     """
-    Parse the agent's final answer from a strict JSON object.
-
-    The prompt requires the final answer to be:
-    {"answer": "..."}
+    Parse the agent's final answer.
+    Accepts plain text or JSON with 'answer' key.
     """
-    payload = _load_json_object(raw_output)
-    answer = payload.get("answer")
-    if not isinstance(answer, str) or not answer.strip():
-        raise OutputParserError("LLM output is missing a non-empty 'answer' field.")
+    if not raw_output or not raw_output.strip():
+        raise OutputParserError("Respuesta vacía del agente.")
 
-    return answer.strip()
+    text = raw_output.strip()
+
+    # Intentar JSON primero por compatibilidad
+    try:
+        # Buscar objeto JSON en el output
+        start = text.find('{')
+        end = text.rfind('}') + 1
+        if start != -1 and end > start:
+            parsed = json.loads(text[start:end])
+            if isinstance(parsed, dict) and "answer" in parsed:
+                answer = parsed["answer"].strip()
+                if answer:
+                    return answer
+    except Exception:
+        pass
+
+    # Aceptar texto plano directamente
+    for prefix in ["Final Answer:", "Respuesta Final:", "Answer:", "final answer:"]:
+        if text.lower().startswith(prefix.lower()):
+            text = text[len(prefix):].strip()
+            break
+
+    if len(text) > 10:
+        return text
+
+    raise OutputParserError("LLM output is not valid JSON.")
 
 
 def _load_json_object(raw_output: str) -> Dict[str, Any]:
+    """Kept for backward compatibility."""
     content = (raw_output or "").strip()
     if content.lower().startswith("final answer:"):
         content = content.split(":", 1)[1].strip()
-
     try:
         payload = json.loads(content)
     except json.JSONDecodeError:
@@ -107,12 +128,6 @@ def _load_json_object(raw_output: str) -> Dict[str, Any]:
             payload = json.loads(match.group(0))
         except json.JSONDecodeError as exc:
             raise OutputParserError("LLM output JSON is malformed.") from exc
-
     if not isinstance(payload, dict):
         raise OutputParserError("LLM output must be a JSON object.")
-
-    allowed_keys = {"answer"}
-    if set(payload) != allowed_keys:
-        raise OutputParserError("LLM output must contain exactly the 'answer' field.")
-
     return payload

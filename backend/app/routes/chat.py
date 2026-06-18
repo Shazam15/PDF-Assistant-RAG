@@ -743,11 +743,26 @@ def ask_question_stream(
 
             # Save assistant response to history
             from app.database import get_db_session
+            #Beginning-----------
 
-            with get_db_session() as save_db:
-                _save_message(
-                    save_db, user_id, payload.document_id, "assistant", full_answer, sources, session_id=session_id
+            # Cache the full answer for future identical questions
+            if full_answer:
+                set_cached_response(
+                    document_id=str(payload.document_id or ""),
+                    question=payload.question,
+                    answer=full_answer,
                 )
+            try:
+                from app.database import get_db_session
+                with get_db_session() as save_db:
+        _           save_message(
+                        save_db, user_id, payload.document_id, "assistant", full_answer, sources, session_id=session_id
+                    )
+                logger.info(f"Assistant message saved for session {session_id}, length: {len(full_answer)}")
+            except Exception as e:
+                logger.error(f"Failed to save assistant message: {e}")
+
+            #End----------- 
         finally:
             record_query_response_time(time.perf_counter() - started_at)
 
