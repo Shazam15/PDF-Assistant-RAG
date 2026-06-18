@@ -103,13 +103,13 @@ def generate_answer(
         try:
             from langchain_core.messages import SystemMessage, HumanMessage
             messages = [
-                SystemMessage(content="You are Document AI Analyst, a friendly AI assistant."),
+                SystemMessage(content="Eres Document AI Analyst, un asistente de IA amigable. Responde SIEMPRE en español."),
                 HumanMessage(content=question),
             ]
             response = chat_llm.invoke(messages)
             answer = response.content.strip()
         except Exception:
-            answer = "Hello! I'm Document AI Analyst. How can I help you with your documents?"
+            answer = "¡Hola! Soy Document AI Analyst. ¿En qué puedo ayudarte con tus documentos?"
         return {"answer": answer, "sources": []}
 
     # ── Run Agent ────────────────────────────────────

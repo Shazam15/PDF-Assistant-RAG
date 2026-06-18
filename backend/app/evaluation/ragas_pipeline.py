@@ -123,15 +123,15 @@ def append_graph_context(contexts: list[str], graph_context: str) -> list[str]:
 def generate_grounded_answer(question: str, contexts: list[str]) -> str:
     """Generate an answer using only retrieved contexts."""
     if not contexts:
-        return "I do not have enough retrieved context to answer this question."
+        return "No tengo suficiente contexto recuperado para responder esta pregunta."
 
     client = InferenceClient(token=settings.HF_TOKEN)
     context_block = "\n\n".join(
         f"Context {index}:\n{context}" for index, context in enumerate(contexts, start=1)
     )
     prompt = (
-        "Answer the question using only the provided context. "
-        "If the context is insufficient, say that the answer is not available in the context.\n\n"
+        "Responde la pregunta usando solo el contexto proporcionado."
+        "Si el contexto es insuficiente, di que la respuesta no está disponible en el contexto.\n\n"
         f"{context_block}\n\nQuestion: {question}"
     )
     response = client.chat_completion(

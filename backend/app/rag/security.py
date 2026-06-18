@@ -31,7 +31,7 @@ BLOCKED_INPUT_MESSAGE = (
 )
 
 MALFORMED_OUTPUT_MESSAGE = (
-    "I could not safely parse the model response. Please try rephrasing your question."
+    "No pude procesar la respuesta del modelo correctamente. Por favor, intenta reformular tu pregunta."
 )
 
 
