@@ -39,6 +39,7 @@ from app.schemas import (
 )
 from app.auth import get_current_user
 from app.config import get_settings
+from app.celery_app import celery_app
 from app.tasks import process_document
 from app.services.document_ingestion import ingest_document
 
@@ -61,6 +62,59 @@ router = APIRouter(prefix="/documents", tags=["Documents"])
 
 
 ALLOWED_MIME_TYPES = settings.ALLOWED_MIME_TYPES
+
+
+def _celery_workers_available() -> bool:
+    """Return True only when a Celery worker is reachable through the broker."""
+    try:
+        replies = celery_app.control.inspect(timeout=1).ping()
+    except Exception as exc:
+        logger.warning("Celery worker check failed: %s", exc)
+        return False
+    return bool(replies)
+
+
+def _queue_or_run_ingestion(
+    *,
+    background_tasks: Optional[BackgroundTasks],
+    document_id: str,
+    filepath: str,
+    original_name: str,
+    user_id: str,
+) -> str:
+    """Queue ingestion with Celery, or run it in-process when no worker is alive."""
+    if _celery_workers_available():
+        try:
+            task = process_document.delay(
+                document_id=document_id,
+                filepath=filepath,
+                original_name=original_name,
+                user_id=user_id,
+            )
+            return task.id
+        except Exception as e:
+            logger.warning("Celery queue failed, falling back to background task: %s", e)
+    else:
+        logger.warning("No Celery workers available; using FastAPI background ingestion")
+
+    if background_tasks:
+        background_tasks.add_task(
+            ingest_document,
+            document_id=document_id,
+            filepath=filepath,
+            original_name=original_name,
+            user_id=user_id,
+        )
+        return f"local_{uuid.uuid4().hex}"
+
+    logger.warning("No background task runner available; processing document inline")
+    ingest_document(
+        document_id=document_id,
+        filepath=filepath,
+        original_name=original_name,
+        user_id=user_id,
+    )
+    return f"inline_{uuid.uuid4().hex}"
 
 def _deserialize_doc(doc: Document) -> DocumentResponse:
     import json as _json
@@ -261,26 +315,13 @@ async def upload_document(
     db.refresh(document)
 
     # ── Queue background ingestion ─────────────────
-    task_id = None
-    try:
-        task = process_document.delay(
-            document_id=document.id,
-            filepath=filepath,
-            original_name=file.filename,
-            user_id=user.id,
-        )
-        task_id = task.id
-    except Exception as e:
-        logger.warning(f"Celery queue failed, falling back to background task: {e}")
-        if background_tasks:
-            background_tasks.add_task(
-                ingest_document,
-                document_id=document.id,
-                filepath=filepath,
-                original_name=file.filename,
-                user_id=user.id,
-            )
-        task_id = f"local_{uuid.uuid4().hex}"
+    task_id = _queue_or_run_ingestion(
+        background_tasks=background_tasks,
+        document_id=document.id,
+        filepath=filepath,
+        original_name=file.filename,
+        user_id=user.id,
+    )
 
     return DocumentResponse.model_validate(document).model_copy(update={"task_id": task_id})
 
@@ -372,26 +413,13 @@ async def upload_document_url(
         db.refresh(document)
 
         # ── Queue background ingestion ───────────────────────
-        task_id = None
-        try:
-            task = process_document.delay(
-                document_id=document.id,
-                filepath=filepath,
-                original_name=original_name,
-                user_id=user.id,
-            )
-            task_id = task.id
-        except Exception as e:
-            logger.warning(f"Celery queue failed, falling back to background task: {e}")
-            if background_tasks:
-                background_tasks.add_task(
-                    ingest_document,
-                    document_id=document.id,
-                    filepath=filepath,
-                    original_name=original_name,
-                    user_id=user.id,
-                )
-            task_id = f"local_{uuid.uuid4().hex}"
+        task_id = _queue_or_run_ingestion(
+            background_tasks=background_tasks,
+            document_id=document.id,
+            filepath=filepath,
+            original_name=original_name,
+            user_id=user.id,
+        )
 
         return DocumentResponse.model_validate(document).model_copy(update={"task_id": task_id})
 
@@ -705,26 +733,13 @@ def update_chunk_settings(
 
     # Queue ingestion with updated chunk settings. The worker reads the new
     # settings from the document record before re-chunking.
-    task_id = None
-    try:
-        task = process_document.delay(
-            document_id=doc.id,
-            filepath=os.path.join(settings.UPLOAD_DIR, user.id, doc.filename), 
-            original_name=doc.original_name,
-            user_id=user.id,
-        )
-        task_id = task.id
-    except Exception as e:
-        logger.warning(f"Celery queue failed, falling back to background task: {e}")
-        if background_tasks:
-            background_tasks.add_task(
-                ingest_document,
-                document_id=doc.id,
-                filepath=os.path.join(settings.UPLOAD_DIR, user.id, doc.filename), 
-                original_name=doc.original_name,
-                user_id=user.id,
-            )
-        task_id = f"local_{uuid.uuid4().hex}"
+    task_id = _queue_or_run_ingestion(
+        background_tasks=background_tasks,
+        document_id=doc.id,
+        filepath=os.path.join(settings.UPLOAD_DIR, user.id, doc.filename),
+        original_name=doc.original_name,
+        user_id=user.id,
+    )
 
     # Return the updated document record with new chunk settings
     return _deserialize_doc(doc).model_copy(update={"task_id": task_id})
@@ -766,25 +781,12 @@ def retry_document_processing(
 
     # Re-queue ingestion
     filepath = os.path.join(settings.UPLOAD_DIR, user.id, doc.filename)
-    task_id = None
-    try:
-        task = process_document.delay(
-            document_id=doc.id,
-            filepath=filepath,
-            original_name=doc.original_name,
-            user_id=user.id,
-        )
-        task_id = task.id
-    except Exception as e:
-        logger.warning(f"Celery queue failed for retry, falling back to background task: {e}")
-        if background_tasks:
-            background_tasks.add_task(
-                ingest_document,
-                document_id=doc.id,
-                filepath=filepath,
-                original_name=doc.original_name,
-                user_id=user.id,
-            )
-        task_id = f"local_{uuid.uuid4().hex}"
+    task_id = _queue_or_run_ingestion(
+        background_tasks=background_tasks,
+        document_id=doc.id,
+        filepath=filepath,
+        original_name=doc.original_name,
+        user_id=user.id,
+    )
 
     return _deserialize_doc(doc).model_copy(update={"task_id": task_id})

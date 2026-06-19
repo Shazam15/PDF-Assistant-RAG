@@ -107,9 +107,9 @@ def ingest_document(document_id: str, filepath: str, original_name: str, user_id
         db.commit()
 
         try:
-            from app.rag.summarizer import generate_document_summary
+            from app.rag.summarizer import generate_document_summary_from_chunks
 
-            summary = generate_document_summary(filepath, max_sentences=2)
+            summary = generate_document_summary_from_chunks(chunks, max_sentences=2)
             if summary:
                 doc.summary = summary
                 db.commit()
