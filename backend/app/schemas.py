@@ -260,6 +260,7 @@ class SourceChunk(BaseModel):
     score: float
     confidence: float
     bbox: Optional[str] = None
+    highlightRects: Optional[List[dict]] = None
 
 
 class ChatResponse(BaseModel):

@@ -43,11 +43,23 @@ def test_parse_agent_output_accepts_strict_answer_json():
     "raw_output",
     [
         "Revenue increased by 12%.",
-        '{"answer": ""}',
-        '{"answer": "ok", "extra": "not allowed"}',
-        '["not", "an", "object"]',
+        "Sí.",
+        "Final Answer: Revenue increased by 12%.",
+        "```json\n{\"answer\": \"Use the cited evidence.\"}\n```",
     ],
 )
-def test_parse_agent_output_rejects_malformed_or_loose_output(raw_output):
+def test_parse_agent_output_accepts_plain_text_answers(raw_output):
+    assert parse_agent_output(raw_output)
+
+
+@pytest.mark.parametrize(
+    "raw_output",
+    [
+        "",
+        "   ",
+        '{"answer": ""}',
+    ],
+)
+def test_parse_agent_output_rejects_empty_output(raw_output):
     with pytest.raises(OutputParserError):
         parse_agent_output(raw_output)

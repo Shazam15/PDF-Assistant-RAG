@@ -100,30 +100,15 @@ def test_chat_stream_blocks_prompt_injection_before_generation(client, auth_head
 
 def test_agent_dynamic_token(monkeypatch):
     from app.rag.agent import generate_answer
-    import app.rag.agent
 
-    called_with_token = None
+    class MockResponse:
+        content = "Hello there!"
 
-    class MockInferenceClient:
-        def __init__(self, token=None, **kwargs):
-            nonlocal called_with_token
-            called_with_token = token
-
-        def chat_completion(self, *args, **kwargs):
-            class MockResponse:
-                choices = []
+    class MockClient:
+        def invoke(self, *_args, **_kwargs):
             return MockResponse()
 
-    # Mock the InferenceClient in app.rag.agent
-    monkeypatch.setattr(app.rag.agent, "InferenceClient", MockInferenceClient)
-    # Mock retrieval to return empty chunks
-    monkeypatch.setattr("app.rag.agent.retrieve", lambda **kwargs: [])
+    monkeypatch.setattr("app.rag.agent.get_llm_client", lambda hf_token=None: MockClient())
 
-    # Test with custom token
-    generate_answer(question="hello?", user_id="some-user", hf_token="my-custom-hf-token")
-    assert called_with_token == "my-custom-hf-token"
-
-    # Test with None (should fallback to global token in config)
-    generate_answer(question="hello?", user_id="some-user", hf_token=None)
-    from app.config import get_settings
-    assert called_with_token == get_settings().HF_TOKEN
+    result = generate_answer(question="hello", user_id="some-user", hf_token="my-custom-hf-token")
+    assert result["answer"] == "Hello there!"

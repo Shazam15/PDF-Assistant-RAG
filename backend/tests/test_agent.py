@@ -12,7 +12,7 @@ def mock_llm_client():
 
 @pytest.fixture
 def mock_retriever():
-    with patch("app.rag.agent.retrieve") as mock_retrieve:
+    with patch("app.rag.agent.retrieve") as mock_retrieve, patch("app.rag.agent.get_entity_context", return_value=""):
         yield mock_retrieve
 
 @pytest.fixture
@@ -23,14 +23,8 @@ def mock_agent_executor():
         mock_get.return_value = (executor, pdf_tool, "")
         yield executor, pdf_tool
 
-def test_generate_answer_success(mock_agent_executor, mock_retriever):
-    executor, pdf_tool = mock_agent_executor
-    
-    # Mock executor output
-    executor.invoke.return_value = {"output": '{"answer": "Test answer"}'}
-    
-    # Mock last_sources on pdf_tool
-    pdf_tool.last_sources = [
+def test_generate_answer_success(mock_llm_client, mock_retriever):
+    mock_retriever.return_value = [
         {
             "text": "This is a test chunk.",
             "filename": "test.pdf",
@@ -39,30 +33,29 @@ def test_generate_answer_success(mock_agent_executor, mock_retriever):
             "confidence": 90
         }
     ]
+    mock_response = MagicMock()
+    mock_response.content = "Test answer"
+    mock_llm_client.invoke.return_value = mock_response
 
     result = generate_answer("test question", "user123", "doc123")
 
-    assert result["answer"] == "Test answer"
+    assert result["answer"] == "Test answer\n\nFuentes consultadas: [Fuente: test.pdf, Página 1]"
     assert len(result["sources"]) == 1
     assert result["sources"][0]["filename"] == "test.pdf"
     assert result["sources"][0]["text"] == "This is a test chunk."
-    
-    executor.invoke.assert_called_once_with({"input": "test question", "chat_history": ""})
+    mock_retriever.assert_called_once()
 
-def test_generate_answer_empty_retrieval(mock_agent_executor, mock_retriever):
-    executor, pdf_tool = mock_agent_executor
-    executor.invoke.return_value = {"output": '{"answer": "I don\'t know."}'}
-    pdf_tool.last_sources = []
+def test_generate_answer_empty_retrieval(mock_llm_client, mock_retriever):
+    mock_retriever.return_value = []
 
     result = generate_answer("test question", "user123", "doc123")
 
-    assert result["answer"] == "I don't know."
+    assert result["answer"] == "No encontré información suficiente en los documentos cargados para responder esta pregunta."
     assert len(result["sources"]) == 0
-    executor.invoke.assert_called_once_with({"input": "test question", "chat_history": ""})
+    mock_llm_client.invoke.assert_not_called()
 
-def test_generate_answer_stream_success(mock_agent_executor, mock_retriever):
-    executor, pdf_tool = mock_agent_executor
-    pdf_tool.last_sources = [
+def test_generate_answer_stream_success(mock_llm_client, mock_retriever):
+    mock_retriever.return_value = [
         {
             "text": "Chunk text.",
             "filename": "test.pdf",
@@ -72,11 +65,11 @@ def test_generate_answer_stream_success(mock_agent_executor, mock_retriever):
         }
     ]
 
-    def mock_stream(*args, **kwargs):
-        yield {"intermediate_steps": [("action", "observation")]}
-        yield {"output": '{"answer": "Hello world"}'}
-
-    executor.stream.side_effect = mock_stream
+    chunk1 = MagicMock()
+    chunk1.content = "Hello "
+    chunk2 = MagicMock()
+    chunk2.content = "world"
+    mock_llm_client.stream.return_value = [chunk1, chunk2]
 
     stream = generate_answer_stream("test question", "user123", "doc123")
     events = list(stream)
@@ -87,10 +80,8 @@ def test_generate_answer_stream_success(mock_agent_executor, mock_retriever):
     assert len(sources_event["data"]) == 1
     assert sources_event["data"][0]["filename"] == "test.pdf"
 
-    # Second event: token "Hello world"
-    token_event = json.loads(events[1].replace("data: ", "").strip())
-    assert token_event["type"] == "token"
-    assert token_event["data"] == "Hello world"
+    token_events = [json.loads(event.replace("data: ", "").strip()) for event in events if '"type": "token"' in event]
+    assert "".join(event["data"] for event in token_events) == "Hello world\n\nFuentes consultadas: [Fuente: test.pdf, Página 1]"
 
     # Last event: done
     done_event = json.loads(events[-1].replace("data: ", "").strip())
@@ -99,10 +90,8 @@ def test_generate_answer_stream_success(mock_agent_executor, mock_retriever):
 def test_generate_answer_greeting(mock_llm_client, mock_retriever):
     # "hi" is a greeting, should skip RAG
     mock_response = MagicMock()
-    mock_choice = MagicMock()
-    mock_choice.message.content = "Hello there!"
-    mock_response.choices = [mock_choice]
-    mock_llm_client.chat_completion.return_value = mock_response
+    mock_response.content = "Hello there!"
+    mock_llm_client.invoke.return_value = mock_response
 
     result = generate_answer("hi", "user123")
 
@@ -110,31 +99,29 @@ def test_generate_answer_greeting(mock_llm_client, mock_retriever):
     assert len(result["sources"]) == 0
     mock_retriever.assert_not_called()
 
-def test_generate_answer_stream_empty_retrieval(mock_agent_executor, mock_retriever):
-    executor, pdf_tool = mock_agent_executor
-    pdf_tool.last_sources = []
-
-    def mock_stream(*args, **kwargs):
-        yield {"intermediate_steps": []}
-        yield {"output": '{"answer": "I don\'t know."}'}
-
-    executor.stream.side_effect = mock_stream
+def test_generate_answer_stream_empty_retrieval(mock_llm_client, mock_retriever):
+    mock_retriever.return_value = []
 
     stream = generate_answer_stream("test question", "user123", "doc123")
     events = list(stream)
 
-    # First event: token "I don't know."
-    token_event = json.loads(events[0].replace("data: ", "").strip())
+    sources_event = json.loads(events[0].replace("data: ", "").strip())
+    assert sources_event["type"] == "sources"
+    assert sources_event["data"] == []
+
+    token_event = json.loads(events[1].replace("data: ", "").strip())
     assert token_event["type"] == "token"
-    assert token_event["data"] == "I don't know."
+    assert token_event["data"] == "No encontré información suficiente en los documentos cargados para responder esta pregunta."
 
     # Last event: done
     done_event = json.loads(events[-1].replace("data: ", "").strip())
     assert done_event["type"] == "done"
 
-def test_generate_answer_stream_error(mock_agent_executor, mock_retriever):
-    executor, pdf_tool = mock_agent_executor
-    executor.stream.side_effect = Exception("LLM Down")
+def test_generate_answer_stream_error(mock_llm_client, mock_retriever):
+    mock_retriever.return_value = [
+        {"text": "Chunk text.", "filename": "test.pdf", "page": 1, "score": 0.8, "confidence": 80}
+    ]
+    mock_llm_client.stream.side_effect = Exception("LLM Down")
 
     stream = generate_answer_stream("test question", "user123", "doc123")
     events = list(stream)
@@ -145,9 +132,14 @@ def test_generate_answer_stream_error(mock_agent_executor, mock_retriever):
 
 def test_generate_answer_error(mock_agent_executor, mock_retriever):
     from app.exceptions import ExternalServiceException
-    executor, pdf_tool = mock_agent_executor
-    executor.invoke.side_effect = Exception("LLM Down")
+    with patch("app.rag.agent.get_llm_client") as mock_get:
+        client = MagicMock()
+        client.invoke.side_effect = Exception("LLM Down")
+        mock_get.return_value = client
+        mock_retriever.return_value = [
+            {"text": "Chunk text.", "filename": "test.pdf", "page": 1, "score": 0.8, "confidence": 80}
+        ]
 
-    with pytest.raises(ExternalServiceException) as exc_info:
-        generate_answer("test question", "user123", "doc123")
+        with pytest.raises(ExternalServiceException) as exc_info:
+            generate_answer("test question", "user123", "doc123")
     assert "LLM Down" in str(exc_info.value)

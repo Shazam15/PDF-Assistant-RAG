@@ -171,6 +171,8 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
 
         # Stream answer using existing generator and forward structured events
         try:
+            full_answer = ""
+            sources = []
             for chunk in generate_answer_stream(
                 question=question,
                 user_id=user.id,
@@ -182,12 +184,21 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
                 try:
                     if chunk.startswith("data: "):
                         payload = json.loads(chunk[6:].strip())
+                        if payload.get("type") == "token":
+                            full_answer += payload.get("data", "")
+                        elif payload.get("type") == "sources":
+                            sources = payload.get("data", [])
                         await websocket.send_json(payload)
                     else:
                         # Fallback: send raw token
+                        full_answer += chunk
                         await websocket.send_json({"type": "token", "data": chunk})
                 except Exception:
+                    full_answer += chunk
                     await websocket.send_json({"type": "token", "data": chunk})
+
+            if full_answer:
+                _save_message(db, user.id, document_id, "assistant", full_answer, sources, session_id=session_id)
 
             # Notify client
             await websocket.send_json({"type": "done"})
@@ -562,6 +573,8 @@ def ask_question(
         )
         if cached_answer is not None:
             logger.debug("Returning cached response for question: %s", payload.question[:40])
+            _save_message(db, user.id, payload.document_id, "user", payload.question, session_id=session_id)
+            _save_message(db, user.id, payload.document_id, "assistant", cached_answer, [], session_id=session_id)
             return ChatResponse(
                 answer=cached_answer,
                 sources=[],
@@ -686,6 +699,7 @@ def ask_question_stream(
     )
     if cached_answer is not None:
         logger.debug("Returning cached stream response for question: %s", payload.question[:40])
+        _save_message(db, user.id, payload.document_id, "assistant", cached_answer, [], session_id=session_id)
 
         async def cached_event_stream():
             payload_json = json.dumps({"type": "token", "data": cached_answer})
@@ -740,25 +754,14 @@ def ask_question_stream(
                     question=payload.question,
                     answer=full_answer,
                 )
-
-            # Save assistant response to history
-            from app.database import get_db_session
-            #Beginning-----------
-
-            # Cache the full answer for future identical questions
-            if full_answer:
-                set_cached_response(
-                    document_id=str(payload.document_id or ""),
-                    question=payload.question,
-                    answer=full_answer,
-                )
             try:
                 from app.database import get_db_session
-                with get_db_session() as save_db:
-        _           save_message(
-                        save_db, user_id, payload.document_id, "assistant", full_answer, sources, session_id=session_id
-                    )
-                logger.info(f"Assistant message saved for session {session_id}, length: {len(full_answer)}")
+                if full_answer:
+                    with get_db_session() as save_db:
+                        _save_message(
+                            save_db, user_id, payload.document_id, "assistant", full_answer, sources, session_id=session_id
+                        )
+                    logger.info(f"Assistant message saved for session {session_id}, length: {len(full_answer)}")
             except Exception as e:
                 logger.error(f"Failed to save assistant message: {e}")
 

@@ -80,37 +80,40 @@ def validate_user_input(text: str) -> None:
 def parse_agent_output(raw_output: str) -> str:
     """
     Parse the agent's final answer.
-    Accepts plain text or JSON with 'answer' key.
+    Accepts plain text or JSON with an 'answer' key.
     """
     if not raw_output or not raw_output.strip():
         raise OutputParserError("Respuesta vacía del agente.")
 
     text = raw_output.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json|markdown|md)?\s*", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\s*```$", "", text).strip()
 
-    # Intentar JSON primero por compatibilidad
-    try:
-        # Buscar objeto JSON en el output
-        start = text.find('{')
-        end = text.rfind('}') + 1
-        if start != -1 and end > start:
+    # Try JSON first for compatibility with older prompts.
+    start = text.find('{')
+    end = text.rfind('}') + 1
+    if start != -1 and end > start:
+        try:
             parsed = json.loads(text[start:end])
-            if isinstance(parsed, dict) and "answer" in parsed:
-                answer = parsed["answer"].strip()
-                if answer:
-                    return answer
-    except Exception:
-        pass
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict) and "answer" in parsed:
+            answer = str(parsed["answer"]).strip()
+            if answer:
+                return answer
+            raise OutputParserError("La respuesta JSON no contiene texto.")
 
-    # Aceptar texto plano directamente
+    # ReAct agents often return the final response as plain text.
     for prefix in ["Final Answer:", "Respuesta Final:", "Answer:", "final answer:"]:
         if text.lower().startswith(prefix.lower()):
             text = text[len(prefix):].strip()
             break
 
-    if len(text) > 10:
+    if text:
         return text
 
-    raise OutputParserError("LLM output is not valid JSON.")
+    raise OutputParserError("Respuesta vacía del agente.")
 
 
 def _load_json_object(raw_output: str) -> Dict[str, Any]:

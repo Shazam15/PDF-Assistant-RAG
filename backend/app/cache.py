@@ -76,6 +76,23 @@ _lru_store: dict = {}
 _lru_order: list = []
 
 
+def _is_invalid_cached_answer(answer: str) -> bool:
+    text = (answer or "").lower()
+    invalid_phrases = [
+        "agent stopped due to iteration limit",
+        "agent stopped due to iteration",
+        "agent stopped due to time limit",
+        "iteration limit or time limit",
+        "límite de iteraciones",
+        "limite de iteraciones",
+        "límite de tiempo",
+        "limite de tiempo",
+        "condición de alto",
+        "condicion de alto",
+    ]
+    return any(phrase in text for phrase in invalid_phrases)
+
+
 def _lru_get(key: str) -> Optional[str]:
     return _lru_store.get(key)
 
@@ -127,14 +144,22 @@ def get_cached_response(document_id: str, question: str) -> Optional[str]:
             value = r.get(key)
             if value:
                 logger.debug("Cache HIT (Redis) for key %s", key[:12])
-                return json.loads(value)
+                answer = json.loads(value)
+                if _is_invalid_cached_answer(answer):
+                    r.delete(key)
+                    return None
+                return answer
         except Exception as exc:  # noqa: BLE001
             logger.warning("Redis GET failed (%s) — checking LRU.", exc)
 
     value = _lru_get(key)
     if value:
         logger.debug("Cache HIT (LRU) for key %s", key[:12])
-        return json.loads(value)
+        answer = json.loads(value)
+        if _is_invalid_cached_answer(answer):
+            _lru_delete(key)
+            return None
+        return answer
 
     logger.debug("Cache MISS for key %s", key[:12])
     return None
@@ -145,6 +170,10 @@ def set_cached_response(document_id: str, question: str, answer: str) -> None:
     Store an answer. Tries Redis first; falls back to LRU.
     TTL is controlled by the CACHE_TTL environment variable.
     """
+    if _is_invalid_cached_answer(answer):
+        logger.debug("Skipping invalid cache answer for question: %s", question[:40])
+        return
+
     key = make_cache_key(document_id, question)
     serialised = json.dumps(answer)
     r = _get_redis()

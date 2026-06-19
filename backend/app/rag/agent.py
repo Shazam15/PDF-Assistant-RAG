@@ -4,6 +4,7 @@ Intelligently chooses between PDF search, Web Search, and Math tools.
 """
 import logging
 import json
+import re
 from typing import List, Dict, Any, Optional, Generator
 
 from langchain_classic.agents import create_react_agent, AgentExecutor
@@ -13,7 +14,7 @@ from langchain_ollama import ChatOllama
 from app.config import get_settings
 from app.rag.retriever import retrieve
 from app.rag.graph_retriever import get_entity_context
-from app.rag.prompts import AGENT_SYSTEM_PROMPT
+from app.rag.prompts import AGENT_SYSTEM_PROMPT, RAG_PROMPT_TEMPLATE
 from app.exceptions import ExternalServiceException
 from app.rag.security import MALFORMED_OUTPUT_MESSAGE, OutputParserError, parse_agent_output
 from app.rag.tools import PDFSearchTool, MathTool, WebSearchTool
@@ -63,6 +64,7 @@ def get_agent_executor(
         verbose=True,
         handle_parsing_errors=True,
         max_iterations=5,
+        early_stopping_method="force",
     )
 
     formatted_history = _format_chat_history(chat_history) if chat_history else ""
@@ -77,6 +79,174 @@ def is_greeting(question: str) -> bool:
         "bye", "goodbye", "help", "what can you do", "who are you",
     }
     return question.lower().strip().rstrip("!?.") in greetings
+
+
+def _parse_highlight_rects(bbox: Any) -> List[Dict[str, Any]]:
+    """Convert stored PDF bbox metadata into frontend highlight rectangles."""
+    if not bbox:
+        return []
+
+    try:
+        data = json.loads(bbox) if isinstance(bbox, str) else bbox
+    except (TypeError, json.JSONDecodeError):
+        return []
+
+    if isinstance(data, list) and len(data) == 4 and all(isinstance(v, (int, float)) for v in data):
+        data = [data]
+
+    rects = []
+    if not isinstance(data, list):
+        return rects
+
+    for rect in data:
+        if not (isinstance(rect, list) and len(rect) == 4):
+            continue
+        x0, y0, x1, y1 = rect
+        if not all(isinstance(v, (int, float)) for v in (x0, y0, x1, y1)):
+            continue
+        rects.append(
+            {
+                "left": x0,
+                "top": y0,
+                "width": max(0, x1 - x0),
+                "height": max(0, y1 - y0),
+                "unit": "percent",
+            }
+        )
+
+    return rects
+
+
+def _source_payload(chunk: Dict[str, Any]) -> Dict[str, Any]:
+    source = {
+        "text": chunk["text"][:300] + ("..." if len(chunk["text"]) > 300 else ""),
+        "filename": chunk["filename"],
+        "page": chunk["page"],
+        "score": chunk["score"],
+        "confidence": chunk.get("confidence", 0),
+        "bbox": chunk.get("bbox", ""),
+    }
+    highlight_rects = _parse_highlight_rects(chunk.get("bbox"))
+    if highlight_rects:
+        source["highlightRects"] = highlight_rects
+    return source
+
+
+def _citation_label(source: Dict[str, Any]) -> str:
+    return f"[Fuente: {source['filename']}, Página {source['page']}]"
+
+
+def _ensure_answer_has_citations(answer: str, sources: List[Dict[str, Any]]) -> str:
+    if not answer or not sources:
+        return answer
+    if re.search(r"\[Fuente:\s*.+?,\s*P(?:á|a)gina\s+\d+\]", answer, flags=re.IGNORECASE):
+        return answer
+
+    seen = []
+    for source in sources:
+        label = _citation_label(source)
+        if label not in seen:
+            seen.append(label)
+    return f"{answer}\n\nFuentes consultadas: {'; '.join(seen)}"
+
+
+def _is_agent_stop_answer(answer: str) -> bool:
+    text = (answer or "").lower()
+    stop_phrases = [
+        "agent stopped due to iteration limit",
+        "agent stopped due to iteration",
+        "agent stopped due to time limit",
+        "iteration limit or time limit",
+        "límite de iteraciones",
+        "limite de iteraciones",
+        "límite de tiempo",
+        "limite de tiempo",
+        "condición de alto",
+        "condicion de alto",
+    ]
+    return any(phrase in text for phrase in stop_phrases)
+
+
+def _retrieve_document_context(
+    question: str,
+    user_id: str,
+    document_id: Optional[str],
+    top_k: Optional[int],
+) -> tuple[str, List[Dict[str, Any]]]:
+    chunks = retrieve(
+        query=question,
+        user_id=user_id,
+        document_id=document_id,
+        top_k=top_k,
+    )
+    sources = [_source_payload(chunk) for chunk in chunks]
+
+    if not chunks:
+        return "", sources
+
+    context_parts = [
+        (
+            f"Fragmento {index} ({chunk['filename']}, Página {chunk['page']}):\n"
+            f"{chunk['text']}"
+        )
+        for index, chunk in enumerate(chunks, 1)
+    ]
+
+    try:
+        graph_context = get_entity_context(
+            query=question,
+            user_id=user_id,
+            document_id=document_id,
+        )
+    except Exception as exc:
+        logger.warning("Graph context retrieval failed: %s", exc)
+        graph_context = ""
+
+    if graph_context:
+        context_parts.append(f"Relaciones adicionales:\n{graph_context}")
+
+    return "\n\n".join(context_parts), sources
+
+
+def _build_direct_rag_prompt(
+    question: str,
+    context: str,
+    chat_history: Optional[List[Dict[str, str]]] = None,
+) -> str:
+    history = _format_chat_history(chat_history) if chat_history else ""
+    prompt = RAG_PROMPT_TEMPLATE.format(context=context, question=question)
+    if history:
+        prompt = f"{history}\n\n{prompt}"
+    return prompt
+
+
+def _generate_direct_document_answer(
+    question: str,
+    user_id: str,
+    document_id: Optional[str],
+    hf_token: Optional[str],
+    top_k: Optional[int],
+    chat_history: Optional[List[Dict[str, str]]],
+) -> Dict[str, Any]:
+    context, sources = _retrieve_document_context(question, user_id, document_id, top_k)
+    if not context:
+        return {
+            "answer": "No encontré información suficiente en los documentos cargados para responder esta pregunta.",
+            "sources": [],
+        }
+
+    from langchain_core.messages import HumanMessage
+
+    chat_llm = get_llm_client(hf_token)
+    prompt = _build_direct_rag_prompt(question, context, chat_history)
+    response = chat_llm.invoke([HumanMessage(content=prompt)])
+    answer = parse_agent_output(response.content)
+    if _is_agent_stop_answer(answer):
+        answer = "No pude generar una respuesta final estable. Reformulo con el contexto recuperado: " + (
+            "No encontré información suficiente en los documentos cargados para responder esta pregunta."
+        )
+    answer = _ensure_answer_has_citations(answer, sources)
+    return {"answer": answer, "sources": sources}
 
 
 @trace_function(
@@ -112,6 +282,19 @@ def generate_answer(
             answer = "¡Hola! Soy Document AI Analyst. ¿En qué puedo ayudarte con tus documentos?"
         return {"answer": answer, "sources": []}
 
+    try:
+        return _generate_direct_document_answer(
+            question=question,
+            user_id=user_id,
+            document_id=document_id,
+            hf_token=hf_token,
+            top_k=top_k,
+            chat_history=chat_history,
+        )
+    except Exception as e:
+        logger.error(f"Direct RAG generation error: {e}")
+        raise ExternalServiceException("Ollama", str(e)) from e
+
     # ── Run Agent ────────────────────────────────────
     try:
         executor, pdf_tool, formatted_history = get_agent_executor(
@@ -126,17 +309,8 @@ def generate_answer(
             logger.warning(f"Rejected malformed LLM output: {e}")
             answer = MALFORMED_OUTPUT_MESSAGE
 
-        sources = [
-            {
-                "text": chunk["text"][:300] + ("..." if len(chunk["text"]) > 300 else ""),
-                "filename": chunk["filename"],
-                "page": chunk["page"],
-                "score": chunk["score"],
-                "confidence": chunk.get("confidence", 0),
-                "bbox": chunk.get("bbox", ""),
-            }
-            for chunk in getattr(pdf_tool, "last_sources", [])
-        ]
+        sources = [_source_payload(chunk) for chunk in getattr(pdf_tool, "last_sources", [])]
+        answer = _ensure_answer_has_citations(answer, sources)
 
         return {"answer": answer, "sources": sources}
 
@@ -182,6 +356,42 @@ def generate_answer_stream(
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
         return
 
+    try:
+        context, sources = _retrieve_document_context(question, user_id, document_id, top_k)
+        yield f"data: {json.dumps({'type': 'sources', 'data': sources})}\n\n"
+
+        if not context:
+            answer = "No encontré información suficiente en los documentos cargados para responder esta pregunta."
+            yield f"data: {json.dumps({'type': 'token', 'data': answer})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            return
+
+        from langchain_core.messages import HumanMessage
+
+        chat_llm = get_llm_client(hf_token)
+        prompt = _build_direct_rag_prompt(question, context, chat_history)
+        full_answer = ""
+        for chunk in chat_llm.stream([HumanMessage(content=prompt)]):
+            if chunk.content:
+                full_answer += chunk.content
+
+        if not full_answer.strip():
+            full_answer = "No pude generar una respuesta con el modelo actual, pero sí recuperé fuentes relevantes para esta pregunta."
+        elif _is_agent_stop_answer(full_answer):
+            full_answer = (
+                "No pude generar una respuesta final estable con el modelo actual, "
+                "pero sí recuperé fuentes relevantes para esta pregunta."
+            )
+
+        full_answer = _ensure_answer_has_citations(full_answer, sources)
+        yield f"data: {json.dumps({'type': 'token', 'data': full_answer})}\n\n"
+    except Exception as e:
+        logger.error(f"Direct RAG streaming error: {e}")
+        yield f"data: {json.dumps({'type': 'error', 'data': str(e)})}\n\n"
+
+    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+    return
+
     # ── Run Agent ────────────────────────────────────
     try:
         executor, pdf_tool, formatted_history = get_agent_executor(
@@ -196,27 +406,26 @@ def generate_answer_stream(
 
             elif "intermediate_steps" in step:
                 if not sources_sent and getattr(pdf_tool, "last_sources", []):
-                    sources = [
-                        {
-                            "text": chunk["text"][:300] + ("..." if len(chunk["text"]) > 300 else ""),
-                            "filename": chunk["filename"],
-                            "page": chunk["page"],
-                            "score": chunk["score"],
-                            "confidence": chunk.get("confidence", 0),
-                            "bbox": chunk.get("bbox", ""),
-                        }
-                        for chunk in pdf_tool.last_sources
-                    ]
+                    sources = [_source_payload(chunk) for chunk in pdf_tool.last_sources]
                     yield f"data: {json.dumps({'type': 'sources', 'data': sources})}\n\n"
                     sources_sent = True
 
             elif "output" in step:
+                if not sources_sent and getattr(pdf_tool, "last_sources", []):
+                    sources = [_source_payload(chunk) for chunk in pdf_tool.last_sources]
+                    yield f"data: {json.dumps({'type': 'sources', 'data': sources})}\n\n"
+                    sources_sent = True
+
                 full_answer = step["output"]
                 try:
                     clean_answer = parse_agent_output(full_answer)
                 except OutputParserError as e:
                     logger.warning(f"Rejected malformed streamed LLM output: {e}")
                     clean_answer = MALFORMED_OUTPUT_MESSAGE
+                clean_answer = _ensure_answer_has_citations(
+                    clean_answer,
+                    [_source_payload(chunk) for chunk in getattr(pdf_tool, "last_sources", [])],
+                )
                 yield f"data: {json.dumps({'type': 'token', 'data': clean_answer})}\n\n"
 
     except Exception as e:
