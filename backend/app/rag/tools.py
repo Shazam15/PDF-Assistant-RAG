@@ -123,6 +123,31 @@ def execute_tool(name: str, arguments: dict[str, Any]) -> str:
     raise ValueError(f"Unknown tool: {name}")
 
 
+def _source_key(chunk: Dict[str, Any]) -> str:
+    text = str(chunk.get("text", ""))
+    return "|".join(
+        str(part)
+        for part in (
+            chunk.get("id", ""),
+            chunk.get("chunk_id", ""),
+            chunk.get("document_id", ""),
+            chunk.get("filename", ""),
+            chunk.get("page", ""),
+            text[:200],
+        )
+    )
+
+
+def _merge_sources(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    merged: Dict[str, Dict[str, Any]] = {}
+    for chunk in chunks:
+        key = _source_key(chunk)
+        existing = merged.get(key)
+        if existing is None or chunk.get("score", 0) > existing.get("score", 0):
+            merged[key] = chunk
+    return list(merged.values())
+
+
 # ── Pydantic Schemas ──────────────────────────────────
 
 class PDFSearchSchema(BaseModel):
@@ -153,8 +178,9 @@ class PDFSearchTool(BaseTool):
     user_id: str
     document_id: Optional[str] = None
     top_k: Optional[int] = None
-    # We'll store sources here to retrieve them after agent execution
-    last_sources: List[Dict[str, Any]] = []
+    # Sources are captured so the API can return citation metadata after the agent finishes.
+    last_sources: List[Dict[str, Any]] = Field(default_factory=list)
+    all_sources: List[Dict[str, Any]] = Field(default_factory=list)
 
     def _run(self, query: str) -> str:
         """Execute the search."""
@@ -168,6 +194,7 @@ class PDFSearchTool(BaseTool):
 
             # Save for later retrieval
             self.last_sources = chunks
+            self.all_sources = _merge_sources([*self.all_sources, *chunks])
 
             if not chunks:
                 return "No relevant information found in the documents."

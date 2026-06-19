@@ -63,7 +63,7 @@ def get_agent_executor(
         tools=tools,
         verbose=True,
         handle_parsing_errors=True,
-        max_iterations=5,
+        max_iterations=settings.AGENT_MAX_ITERATIONS,
         early_stopping_method="force",
     )
 
@@ -148,6 +148,36 @@ def _ensure_answer_has_citations(answer: str, sources: List[Dict[str, Any]]) -> 
         if label not in seen:
             seen.append(label)
     return f"{answer}\n\nFuentes consultadas: {'; '.join(seen)}"
+
+
+def _get_pdf_tool_sources(pdf_tool: PDFSearchTool) -> List[Dict[str, Any]]:
+    return list(getattr(pdf_tool, "all_sources", None) or getattr(pdf_tool, "last_sources", []))
+
+
+def _generate_agentic_document_answer(
+    question: str,
+    user_id: str,
+    document_id: Optional[str],
+    hf_token: Optional[str],
+    top_k: Optional[int],
+    chat_history: Optional[List[Dict[str, str]]],
+) -> Dict[str, Any]:
+    executor, pdf_tool, formatted_history = get_agent_executor(
+        user_id, document_id, hf_token, top_k, chat_history
+    )
+    result = executor.invoke({"input": question, "chat_history": formatted_history})
+
+    raw_answer = result.get("output", "")
+    try:
+        answer = parse_agent_output(raw_answer)
+    except OutputParserError as e:
+        logger.warning(f"Rejected malformed LLM output: {e}")
+        answer = MALFORMED_OUTPUT_MESSAGE
+
+    sources = [_source_payload(chunk) for chunk in _get_pdf_tool_sources(pdf_tool)]
+    answer = _ensure_answer_has_citations(answer, sources)
+
+    return {"answer": answer, "sources": sources}
 
 
 def _is_agent_stop_answer(answer: str) -> bool:
@@ -283,6 +313,21 @@ def generate_answer(
         return {"answer": answer, "sources": []}
 
     try:
+        result = _generate_agentic_document_answer(
+            question=question,
+            user_id=user_id,
+            document_id=document_id,
+            hf_token=hf_token,
+            top_k=top_k,
+            chat_history=chat_history,
+        )
+        if not _is_agent_stop_answer(result["answer"]):
+            return result
+        logger.warning("Agent stopped before a final answer; falling back to direct RAG.")
+    except Exception as e:
+        logger.warning("Agentic RAG failed; falling back to direct RAG: %s", e)
+
+    try:
         return _generate_direct_document_answer(
             question=question,
             user_id=user_id,
@@ -353,6 +398,83 @@ def generate_answer_stream(
                     yield f"data: {json.dumps({'type': 'token', 'data': chunk.content})}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'data': str(e)})}\n\n"
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        return
+
+    try:
+        executor, pdf_tool, formatted_history = get_agent_executor(
+            user_id, document_id, hf_token, top_k, chat_history
+        )
+
+        sources_sent = False
+        answer_sent = False
+
+        for step in executor.stream({"input": question, "chat_history": formatted_history}):
+            if "actions" in step:
+                continue
+
+            if "intermediate_steps" in step:
+                tool_sources = _get_pdf_tool_sources(pdf_tool)
+                if not sources_sent and tool_sources:
+                    sources = [_source_payload(chunk) for chunk in tool_sources]
+                    yield f"data: {json.dumps({'type': 'sources', 'data': sources})}\n\n"
+                    sources_sent = True
+                continue
+
+            if "output" in step:
+                tool_sources = _get_pdf_tool_sources(pdf_tool)
+                sources = [_source_payload(chunk) for chunk in tool_sources]
+                if not sources_sent:
+                    yield f"data: {json.dumps({'type': 'sources', 'data': sources})}\n\n"
+                    sources_sent = True
+
+                try:
+                    clean_answer = parse_agent_output(step["output"])
+                except OutputParserError as e:
+                    logger.warning(f"Rejected malformed streamed LLM output: {e}")
+                    clean_answer = MALFORMED_OUTPUT_MESSAGE
+
+                if _is_agent_stop_answer(clean_answer):
+                    logger.warning("Streaming agent stopped before a final answer; falling back to direct RAG.")
+                    break
+
+                clean_answer = _ensure_answer_has_citations(clean_answer, sources)
+                yield f"data: {json.dumps({'type': 'token', 'data': clean_answer})}\n\n"
+                answer_sent = True
+
+        if answer_sent:
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            return
+
+        fallback = _generate_direct_document_answer(
+            question=question,
+            user_id=user_id,
+            document_id=document_id,
+            hf_token=hf_token,
+            top_k=top_k,
+            chat_history=chat_history,
+        )
+        yield f"data: {json.dumps({'type': 'sources', 'data': fallback['sources']})}\n\n"
+        yield f"data: {json.dumps({'type': 'token', 'data': fallback['answer']})}\n\n"
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        return
+
+    except Exception as e:
+        logger.warning("Agentic streaming failed; falling back to direct RAG: %s", e)
+        try:
+            fallback = _generate_direct_document_answer(
+                question=question,
+                user_id=user_id,
+                document_id=document_id,
+                hf_token=hf_token,
+                top_k=top_k,
+                chat_history=chat_history,
+            )
+            yield f"data: {json.dumps({'type': 'sources', 'data': fallback['sources']})}\n\n"
+            yield f"data: {json.dumps({'type': 'token', 'data': fallback['answer']})}\n\n"
+        except Exception as fallback_error:
+            logger.error(f"Direct RAG streaming fallback error: {fallback_error}")
+            yield f"data: {json.dumps({'type': 'error', 'data': str(fallback_error)})}\n\n"
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
         return
 
