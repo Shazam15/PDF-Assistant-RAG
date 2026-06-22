@@ -76,7 +76,9 @@ def is_greeting(question: str) -> bool:
     greetings = {
         "hi", "hello", "hey", "how are you", "what's up", "whats up",
         "good morning", "good evening", "good afternoon", "thanks", "thank you",
-        "bye", "goodbye", "help", "what can you do", "who are you",
+        "bye", "goodbye", "help", "what can you do", "who are you", "hola", "buenos días", 
+        "buenas tardes", "buenas noches", "gracias", "adiós", "qué puedes hacer", "quién eres",
+        "qué tal", "qué hay", "qué onda", "qué pasa", "cómo estás", "cómo te va", "qué haces",
     }
     return question.lower().strip().rstrip("!?.") in greetings
 

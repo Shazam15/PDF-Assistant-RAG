@@ -77,8 +77,8 @@ class Settings(BaseSettings):
     # ── RAG Pipeline ─────────────────────────────────────
     CHUNK_SIZE: int = 1000
     CHUNK_OVERLAP: int = 200
-    TOP_K_RETRIEVAL: int = 20 # Fetch more candidates for reranking
-    TOP_K_RERANK: int = 8 # Final number of chunks to return after reranking
+    TOP_K_RETRIEVAL: int = 10 # Fetch more candidates for reranking
+    TOP_K_RERANK: int = 5 # Final number of chunks to return after reranking
 
     # ── Knowledge Graph (GraphRAG) ───────────────────────
     GRAPH_PERSIST_DIR: str = "./data/graphs"
@@ -108,7 +108,7 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "mistral"
     LLM_MAX_NEW_TOKENS: int = 1024
     LLM_TEMPERATURE: float = 0.3
-    AGENT_MAX_ITERATIONS: int = 8
+    AGENT_MAX_ITERATIONS: int = 5
     SUMMARY_MAX_TOKENS: int = 512
 
     # ── LangSmith Tracing (optional) ─────────────────────
