@@ -9,8 +9,6 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Brain, Eye, EyeOff, Loader2 } from "lucide-react";
 import Link from "next/link";
-import GoogleSignInButton from "@/components/auth/GoogleSignInButton";
-import HuggingFaceSignInButton from "@/components/auth/HuggingFaceSignInButton";
 
 export default function LoginPage() {
   const { login, user, initialized } = useAuth();
@@ -66,11 +64,6 @@ export default function LoginPage() {
         </CardHeader>
         
         <CardContent>
-          {/* Social Sign-In Buttons */}
-          <div className="flex flex-col gap-2.5 mb-4">
-            <HuggingFaceSignInButton onError={setError} />
-            <GoogleSignInButton onError={setError} onSuccess={handleGoogleSuccess} />
-          </div>
 
           <div className="relative my-5">
             <div className="absolute inset-0 flex items-center">
@@ -100,7 +93,7 @@ export default function LoginPage() {
               <Input
                 id="login-email"
                 type="email"
-                placeholder="you@example.com"
+                placeholder="ejemplo@utp.ac.pa"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required

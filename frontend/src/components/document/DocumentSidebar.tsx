@@ -130,8 +130,12 @@ export default function DocumentSidebar({
     accept: {
       "application/pdf": [".pdf"],
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"],
-      "text/plain": [".txt"],
+      "text/plain": [".txt", ".md", ".py", ".java", ".cpp", ".c", ".cs", ".go", ".rs", ".sql"],
       "text/markdown": [".md"],
+      "application/javascript": [".js"],
+      "text/javascript": [".js"],
+      "application/typescript": [".ts", ".tsx"],
+      "application/json": [".ipynb"],
     },
     disabled: uploading,
   });
@@ -278,7 +282,7 @@ export default function DocumentSidebar({
           className={`relative rounded-lg border-2 border-dashed p-4 text-center cursor-pointer transition-all duration-200
             ${isDragActive ? "border-primary bg-primary/10 scale-[1.02]" : "border-sidebar-border hover:border-primary/40 hover:bg-sidebar-accent/50"}
             ${uploading ? "pointer-events-none opacity-60" : ""}`}
-          aria-label="Upload documents"
+          aria-label="Suba documentos"
         >
           <input {...getInputProps()} />
           {uploading ? (
@@ -389,7 +393,7 @@ export default function DocumentSidebar({
                         <p
                           className="text-sm font-medium truncate leading-tight"
                           onDoubleClick={(e) => startRename(doc, e)}
-                          title="Double-click to rename"
+                          title="Doble clic para renombrar documento"
                         >
                           {doc.original_name}
                         </p>

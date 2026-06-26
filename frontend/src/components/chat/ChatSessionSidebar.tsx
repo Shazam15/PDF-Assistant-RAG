@@ -66,7 +66,7 @@ export default function ChatSessionSidebar() {
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (confirm("Are you sure you want to delete this chat session?")) {
+    if (confirm("¿Está seguro de que desea eliminar esta sesión de chat? Esta acción no se puede deshacer.")) {
       try {
         await deleteSession(id);
       } catch (err) {
@@ -101,7 +101,7 @@ export default function ChatSessionSidebar() {
             size="icon"
             className="h-7 w-7 bg-background/50 hover:bg-accent hover:text-accent-foreground"
             disabled={creating}
-            aria-label="Create new chat session"
+            aria-label="Crear nueva sesión de chat"
           >
             <Plus className="w-4 h-4" />
           </Button>
@@ -111,7 +111,7 @@ export default function ChatSessionSidebar() {
               variant="ghost"
               size="icon"
               className="h-7 w-7"
-              aria-label="Close chat sessions"
+              aria-label="Cerrar sesiones de chat"
             >
               <X className="w-4 h-4" />
             </Button>
@@ -163,7 +163,7 @@ export default function ChatSessionSidebar() {
                         className="h-6 text-xs px-1 py-0 bg-background/50 border-input w-full"
                         autoFocus
                         onBlur={() => handleSaveRename(session.id)}
-                        aria-label={`Rename chat session ${session.title}`}
+                        aria-label={`Renombrar sesión de chat ${session.title}`}
                       />
                     </form>
                   ) : (
@@ -178,7 +178,7 @@ export default function ChatSessionSidebar() {
                       size="icon"
                       className="h-5 w-5 rounded-md hover:bg-background/80"
                       onClick={(e) => handleStartRename(session, e)}
-                      aria-label={`Rename chat session ${session.title}`}
+                      aria-label={`Renombrar sesión de chat ${session.title}`}
                     >
                       <Edit2 className="w-3 h-3" />
                     </Button>
@@ -187,8 +187,8 @@ export default function ChatSessionSidebar() {
                       size="icon"
                       className="h-5 w-5 rounded-md hover:bg-destructive/10 hover:text-destructive"
                       onClick={(e) => handleDelete(session.id, e)}
-                      aria-label="Delete chat session"
-                      title={`Delete ${session.title}`}
+                      aria-label={`Eliminar sesión de chat ${session.title}`}
+                      title={`Eliminar ${session.title}`}
                     >
                       <Trash2 className="w-3 h-3" />
                     </Button>
@@ -228,7 +228,7 @@ export default function ChatSessionSidebar() {
             "absolute -right-3 top-1/2 -translate-y-1/2 z-40 h-6 w-6 rounded-full border border-border bg-background shadow-md hover:bg-accent hover:text-accent-foreground",
             !isOpen && "right-auto -left-3 rotate-180"
           )}
-          aria-label={isOpen ? "Collapse chat sessions sidebar" : "Expand chat sessions sidebar"}
+          aria-label={isOpen ? "Colapsar sidebar de sesiones de chat" : "Expandir sidebar de sesiones de chat"}
           aria-expanded={isOpen}
         >
           <ChevronLeft className="w-3.5 h-3.5" />
@@ -239,7 +239,7 @@ export default function ChatSessionSidebar() {
         onClick={() => setMobileOpen(true)}
         className="fixed bottom-4 left-4 z-30 h-11 w-11 rounded-full shadow-lg md:hidden"
         size="icon"
-        aria-label="Open chat sessions"
+        aria-label="Abrir sesiones de chat"
         aria-controls="mobile-chat-sessions"
         aria-expanded={mobileOpen}
       >
@@ -261,7 +261,7 @@ export default function ChatSessionSidebar() {
           "fixed inset-y-0 left-0 z-50 flex w-72 flex-col border-r border-border/50 bg-card shadow-xl transition-transform duration-300 ease-out md:hidden",
           mobileOpen ? "translate-x-0" : "-translate-x-full"
         )}
-        aria-label="Chat sessions"
+        aria-label="Sesiones de chat"
         aria-hidden={!mobileOpen}
         inert={!mobileOpen ? true : undefined}
       >

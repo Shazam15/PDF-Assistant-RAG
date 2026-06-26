@@ -14,34 +14,34 @@ import { AlertTriangle, RefreshCcw, Home } from "lucide-react";
 
 const ERROR_MESSAGES: Record<string, { title: string; description: string }> = {
   csrf_mismatch: {
-    title: "Security Check Failed",
+    title: "Verificación de Seguridad Fallida",
     description:
-      "The OAuth state did not match. This could indicate a CSRF attack. Please try signing in again.",
+      "El estado de OAuth no coincide. Esto podría indicar un ataque CSRF. Por favor, intenta iniciar sesión de nuevo.",
   },
   token_exchange_failed: {
-    title: "Token Exchange Failed",
+    title: "Intercambio de Token Fallido",
     description:
-      "We could not exchange your authorization code for an access token. Please try again.",
+      "No pudimos intercambiar tu código de autorización por un token de acceso. Por favor, intenta de nuevo.",
   },
   userinfo_failed: {
-    title: "Profile Fetch Failed",
+    title: "Recuperación de Perfil Fallida",
     description:
-      "We could not retrieve your Hugging Face profile. Please check your account and try again.",
+      "No pudimos recuperar tu perfil de Hugging Face. Por favor, verifica tu cuenta y vuelve a intentarlo.",
   },
   email_required: {
-    title: "Email Required",
+    title: "Email Requerido",
     description:
-      "Your Hugging Face account did not provide an email address. Please ensure your email is public and try again.",
+      "Tu cuenta de Hugging Face no proporcionó una dirección de email. Por favor, asegúrate de que tu email sea público y vuelve a intentarlo.",
   },
   oauth_not_configured: {
-    title: "OAuth Not Configured",
+    title: "OAuth No ha sido configurado",
     description:
-      "Hugging Face OAuth is not configured on this server. Please contact the administrator.",
+      "OAuth no está configurado en este servidor. Por favor, contacta al administrador.",
   },
   default: {
-    title: "Authentication Failed",
+    title: "Autenticación Fallida",
     description:
-      "Something went wrong during sign-in with Hugging Face. Please try again.",
+      "Algo salió mal durante el inicio de sesión con Hugging Face. Por favor, intenta de nuevo.",
   },
 };
 

@@ -347,6 +347,7 @@ def chunk_document(filepath: str, chunk_size: int = None, chunk_overlap: int = N
     If chunk size and overlap are not provided, defaults from settings will be used.
     Returns list of dicts with 'text', 'page', and 'chunk_index'.
     """
+
     ext = filepath.rsplit(".", 1)[-1].lower()
 
     # ── Extract text by file type ────────────────────
@@ -354,7 +355,7 @@ def chunk_document(filepath: str, chunk_size: int = None, chunk_overlap: int = N
         pages = extract_pdf(filepath)
     elif ext == "docx":
         pages = extract_docx(filepath)
-    elif ext in ("txt", "md"):
+    elif ext in ("txt", "md") or ext in CODE_EXTENSIONS:
         pages = extract_txt(filepath)
     else:
         raise ValueError(f"Unsupported file type: {ext}")

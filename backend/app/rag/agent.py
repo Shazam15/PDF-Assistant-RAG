@@ -14,10 +14,10 @@ from langchain_ollama import ChatOllama
 from app.config import get_settings
 from app.rag.retriever import retrieve
 from app.rag.graph_retriever import get_entity_context
-from app.rag.prompts import AGENT_SYSTEM_PROMPT, RAG_PROMPT_TEMPLATE
+from app.rag.prompts import AGENT_SYSTEM_PROMPT, RAG_PROMPT_TEMPLATE, CODE_REVIEW_PROMPT
 from app.exceptions import ExternalServiceException
 from app.rag.security import MALFORMED_OUTPUT_MESSAGE, OutputParserError, parse_agent_output
-from app.rag.tools import PDFSearchTool, MathTool, WebSearchTool
+from app.rag.tools import PDFSearchTool, MathTool, CodeReviewTool
 from app.rag.tracing import trace_function
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,8 @@ def get_agent_executor(
 ):
     """Initialize the LangChain ReAct agent executor."""
     pdf_tool = PDFSearchTool(user_id=user_id, document_id=document_id, top_k=top_k)
-    tools = [pdf_tool, MathTool(), WebSearchTool()]
+    code_review_tool = CodeReviewTool(user_id=user_id, document_id=document_id, top_k=top_k)
+    tools = [pdf_tool, MathTool()]
 
     chat_llm = ChatOllama(
         model=settings.LLM_MODEL,
@@ -118,7 +119,7 @@ def _parse_highlight_rects(bbox: Any) -> List[Dict[str, Any]]:
 
     return rects
 
-
+#Carga los documentos y genera un payload de fuente para cada fragmento de texto recuperado.
 def _source_payload(chunk: Dict[str, Any]) -> Dict[str, Any]:
     source = {
         "text": chunk["text"][:300] + ("..." if len(chunk["text"]) > 300 else ""),
@@ -133,11 +134,11 @@ def _source_payload(chunk: Dict[str, Any]) -> Dict[str, Any]:
         source["highlightRects"] = highlight_rects
     return source
 
-
+#Genera la etiqueta de cita para un fragmento de texto recuperado.
 def _citation_label(source: Dict[str, Any]) -> str:
     return f"[Fuente: {source['filename']}, Página {source['page']}]"
 
-
+#Asegura que la respuesta generada por el agente incluya citas a las fuentes utilizadas.
 def _ensure_answer_has_citations(answer: str, sources: List[Dict[str, Any]]) -> str:
     if not answer or not sources:
         return answer
@@ -342,32 +343,6 @@ def generate_answer(
         logger.error(f"Direct RAG generation error: {e}")
         raise ExternalServiceException("Ollama", str(e)) from e
 
-    # ── Run Agent ────────────────────────────────────
-    try:
-        executor, pdf_tool, formatted_history = get_agent_executor(
-            user_id, document_id, hf_token, top_k, chat_history
-        )
-        result = executor.invoke({"input": question, "chat_history": formatted_history})
-
-        raw_answer = result.get("output", "")
-        try:
-            answer = parse_agent_output(raw_answer)
-        except OutputParserError as e:
-            logger.warning(f"Rejected malformed LLM output: {e}")
-            answer = MALFORMED_OUTPUT_MESSAGE
-
-        sources = [_source_payload(chunk) for chunk in getattr(pdf_tool, "last_sources", [])]
-        answer = _ensure_answer_has_citations(answer, sources)
-
-        return {"answer": answer, "sources": sources}
-
-    except (OutputParserError, ValueError) as e:
-        logger.warning(f"Agent output error: {e}")
-        return {"answer": MALFORMED_OUTPUT_MESSAGE, "sources": []}
-    except Exception as e:
-        logger.error(f"Agent execution error: {e}")
-        raise ExternalServiceException("HuggingFace", str(e)) from e
-
 
 
 
@@ -479,81 +454,3 @@ def generate_answer_stream(
             yield f"data: {json.dumps({'type': 'error', 'data': str(fallback_error)})}\n\n"
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
         return
-
-    try:
-        context, sources = _retrieve_document_context(question, user_id, document_id, top_k)
-        yield f"data: {json.dumps({'type': 'sources', 'data': sources})}\n\n"
-
-        if not context:
-            answer = "No encontré información suficiente en los documentos cargados para responder esta pregunta."
-            yield f"data: {json.dumps({'type': 'token', 'data': answer})}\n\n"
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
-            return
-
-        from langchain_core.messages import HumanMessage
-
-        chat_llm = get_llm_client(hf_token)
-        prompt = _build_direct_rag_prompt(question, context, chat_history)
-        full_answer = ""
-        for chunk in chat_llm.stream([HumanMessage(content=prompt)]):
-            if chunk.content:
-                full_answer += chunk.content
-
-        if not full_answer.strip():
-            full_answer = "No pude generar una respuesta con el modelo actual, pero sí recuperé fuentes relevantes para esta pregunta."
-        elif _is_agent_stop_answer(full_answer):
-            full_answer = (
-                "No pude generar una respuesta final estable con el modelo actual, "
-                "pero sí recuperé fuentes relevantes para esta pregunta."
-            )
-
-        full_answer = _ensure_answer_has_citations(full_answer, sources)
-        yield f"data: {json.dumps({'type': 'token', 'data': full_answer})}\n\n"
-    except Exception as e:
-        logger.error(f"Direct RAG streaming error: {e}")
-        yield f"data: {json.dumps({'type': 'error', 'data': str(e)})}\n\n"
-
-    yield f"data: {json.dumps({'type': 'done'})}\n\n"
-    return
-
-    # ── Run Agent ────────────────────────────────────
-    try:
-        executor, pdf_tool, formatted_history = get_agent_executor(
-            user_id, document_id, hf_token, top_k, chat_history
-        )
-
-        sources_sent = False
-
-        for step in executor.stream({"input": question, "chat_history": formatted_history}):
-            if "actions" in step:
-                continue
-
-            elif "intermediate_steps" in step:
-                if not sources_sent and getattr(pdf_tool, "last_sources", []):
-                    sources = [_source_payload(chunk) for chunk in pdf_tool.last_sources]
-                    yield f"data: {json.dumps({'type': 'sources', 'data': sources})}\n\n"
-                    sources_sent = True
-
-            elif "output" in step:
-                if not sources_sent and getattr(pdf_tool, "last_sources", []):
-                    sources = [_source_payload(chunk) for chunk in pdf_tool.last_sources]
-                    yield f"data: {json.dumps({'type': 'sources', 'data': sources})}\n\n"
-                    sources_sent = True
-
-                full_answer = step["output"]
-                try:
-                    clean_answer = parse_agent_output(full_answer)
-                except OutputParserError as e:
-                    logger.warning(f"Rejected malformed streamed LLM output: {e}")
-                    clean_answer = MALFORMED_OUTPUT_MESSAGE
-                clean_answer = _ensure_answer_has_citations(
-                    clean_answer,
-                    [_source_payload(chunk) for chunk in getattr(pdf_tool, "last_sources", [])],
-                )
-                yield f"data: {json.dumps({'type': 'token', 'data': clean_answer})}\n\n"
-
-    except Exception as e:
-        logger.error(f"Agent streaming error: {e}")
-        yield f"data: {json.dumps({'type': 'error', 'data': str(e)})}\n\n"
-
-    yield f"data: {json.dumps({'type': 'done'})}\n\n"

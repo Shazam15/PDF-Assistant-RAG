@@ -10,7 +10,7 @@ from functools import lru_cache
 class Settings(BaseSettings):
     # ── App ──────────────────────────────────────────────
     APP_NAME: str = "Document AI Analyst"
-    SECRET_KEY: str = "change-me-in-production-please"
+    SECRET_KEY: str = "X28veY5oCwfUVP3tZDvzrTvz-5TnvYIhXUi3IfwoSOE"
     DEBUG: bool = False
     ENVIRONMENT: str = "development"
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:7860"
@@ -71,14 +71,25 @@ class Settings(BaseSettings):
         ],
         ".txt": ["text/plain"],
         ".md": ["text/markdown"],
+        ".py": ["text/x-python", "application/x-python-code"],
+        ".js": ["application/javascript", "text/javascript"],
+        ".ts": ["application/typescript", "text/typescript"],
+        ".tsx": ["application/typescript", "text/typescript"],
+        ".java": ["text/x-java-source", "text/x-java"],
+        ".cpp": ["text/x-c++src", "text/x-c++hdr"],
+        ".c": ["text/x-csrc", "text/x-chdr"],
+        ".cs": ["text/x-csharp", "text/x-csharp"],
+        ".go": ["text/x-go", "text/x-go-source"],
+        ".rs": ["text/x-rust", "text/x-rust-source"],
+        ".sql": ["text/x-sql", "application/sql"],
 
     }
 
     # ── RAG Pipeline ─────────────────────────────────────
     CHUNK_SIZE: int = 1000
     CHUNK_OVERLAP: int = 200
-    TOP_K_RETRIEVAL: int = 10 # Fetch more candidates for reranking
-    TOP_K_RERANK: int = 5 # Final number of chunks to return after reranking
+    TOP_K_RETRIEVAL: int = 20 # Fetch more candidates for reranking
+    TOP_K_RERANK: int = 8 # Final number of chunks to return after reranking
 
     # ── Knowledge Graph (GraphRAG) ───────────────────────
     GRAPH_PERSIST_DIR: str = "./data/graphs"
@@ -132,6 +143,11 @@ class Settings(BaseSettings):
     SMTP_PORT: int = 0
     SMTP_USER: str = ""
     SMTP_PASSWORD: str = ""
+
+    #--- Code Help --------------------------------
+    CODE_REVIEW_LLM_MODEL: str = "qwen3-coder"
+    CODE_REVIEW_TEMPERATURE: float = 0
+    CODE_REVIEW_MAX_CHARS: int = 12000
 
     @property
     def cors_origins(self) -> list[str]:

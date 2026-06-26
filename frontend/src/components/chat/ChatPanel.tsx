@@ -723,7 +723,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
                       <div
                         id="chat-export-menu"
                         role="menu"
-                        aria-label="Export chat"
+                        aria-label="Exportar chat"
                         onKeyDown={handleExportMenuKeyDown}
                         className="absolute bottom-full mb-2 right-0 min-w-[160px] rounded-lg border border-border bg-popover p-1 shadow-lg animate-in fade-in slide-in-from-bottom-2 z-50"
                       >
@@ -766,7 +766,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
                     size="icon"
                     onClick={handleClear}
                     className="h-[44px] w-[44px] text-muted-foreground hover:text-destructive"
-                    aria-label="Clear chat history"
+                    aria-label="Borrar historial de chat"
                   >
                     <Trash2 className="w-4 h-4" />
                   </Button>

@@ -98,7 +98,7 @@ export default function DashboardPage() {
 
       if (!hasHfToken) {
         console.info(
-          "Hugging Face API token is not configured. Personal model access will fall back to the system default unless set in the user profile menu."
+          "No hay token de API de Hugging Face configurado. El acceso al modelo personal volverá al valor predeterminado del sistema a menos que se establezca en el menú del perfil del usuario."
         );
       }
     }
@@ -143,9 +143,9 @@ export default function DashboardPage() {
       const oldStatus = prev[doc.id];
       if (oldStatus && oldStatus !== doc.status) {
         if (doc.status === "ready") {
-          toast.success(`🎉 Ingestion complete: '${doc.original_name}' is ready!`);
+          toast.success(`🎉 Ingestion completa: '${doc.original_name}' está listo!`);
         } else if (doc.status === "failed") {
-          toast.error(`❌ Ingestion failed for '${doc.original_name}': ${doc.error_message || "Unknown error"}`);
+          toast.error(`❌ Ingestion fallida para '${doc.original_name}': ${doc.error_message || "Error desconocido"}`);
         }
       }
     });

@@ -36,27 +36,27 @@ const getConfidenceBadgeMeta = (value?: number): ConfidenceBadgeMeta => {
 
   if (normalizedValue === undefined) {
     return {
-      label: "Unknown",
+      label: "Desconocido",
       className: "border-muted bg-muted/40 text-muted-foreground",
     };
   }
 
   if (normalizedValue >= 0.8) {
     return {
-      label: "High",
+      label: "Alta",
       className: "border-emerald-500/30 bg-emerald-500/10 text-emerald-600",
     };
   }
 
   if (normalizedValue >= 0.5) {
     return {
-      label: "Medium",
+      label: "Media",
       className: "border-amber-500/30 bg-amber-500/10 text-amber-600",
     };
   }
 
   return {
-    label: "Low",
+    label: "Baja",
     className: "border-red-500/30 bg-red-500/10 text-red-600",
   };
 };
@@ -68,7 +68,7 @@ const MetricBadge = ({
   label,
   value,
 }: {
-  label: "Score" | "Confidence";
+  label: "Score" | "Confianza";
   value?: number;
 }) => {
   const badgeMeta = getConfidenceBadgeMeta(value);
@@ -164,7 +164,7 @@ export default function SourceCard({ sources = [], onPageClick }: Props) {
                 >
                   <div className="mb-1 flex flex-wrap gap-1">
                     <MetricBadge label="Score" value={src.score} />
-                    <MetricBadge label="Confidence" value={src.confidence} />
+                    <MetricBadge label="Confianza" value={src.confidence} />
                   </div>
                   <p className="text-[11px] leading-relaxed line-clamp-6">
                     {src.text}
@@ -192,7 +192,7 @@ export default function SourceCard({ sources = [], onPageClick }: Props) {
                     Page {src.page + 1}
                   </Badge>
                   <MetricBadge label="Score" value={src.score} />
-                  <MetricBadge label="Confidence" value={src.confidence} />
+                  <MetricBadge label="Confianza" value={src.confidence} />
                 </div>
                 <Button
                   variant="ghost"

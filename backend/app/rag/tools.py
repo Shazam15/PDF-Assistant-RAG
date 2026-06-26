@@ -3,7 +3,7 @@ Custom tools for the Agentic RAG system.
 Defines PDF Search, Web Research, and Math tools.
 """
 import ast
-import json
+#import json
 import logging
 import operator as op
 from typing import Any, Dict, List, Optional, Type
@@ -75,7 +75,6 @@ def calculate_expression(expression: str) -> str:
         return str(int(result))
 
     return str(result)
-
 
 # ── LangChain Tools ──────────────────────────────────
 
@@ -160,8 +159,13 @@ class MathSchema(BaseModel):
     )
 
 
-class WebSearchSchema(BaseModel):
-    query: str = Field(description="The query to search the live web for.")
+#class WebSearchSchema(BaseModel):
+#    query: str = Field(description="The query to search the live web for.")
+
+class CodeReviewSchema(BaseModel):
+    query: str = Field(description="Solicitud de revisión técnica.")
+    language: Optional[str] = Field(default=None, description="Lenguaje del código.")
+    focus: Optional[str] = Field(default=None, description="Enfoque: bugs, seguridad, complejidad, claridad, etc.")
 
 
 # ── LangChain Tool Classes ────────────────────────────
@@ -248,17 +252,35 @@ class MathTool(BaseTool):
             return f"Error evaluating expression: {str(e)}. Please ensure it's a valid numerical expression."
 
 
-class WebSearchTool(BaseTool):
-    name: str = "web_search"
-    description: str = (
-        "Useful for fact-checking information or finding live data from the internet. "
-        "Use this only when the PDF content is insufficient or outdated."
-    )
-    args_schema: Type[BaseModel] = WebSearchSchema
-
-    def _run(self, query: str) -> str:
-        """Execute a live web search via DuckDuckGo."""
-        return web_search(query)
+#class WebSearchTool(BaseTool):
+#    name: str = "web_search"
+#    description: str = (
+#        "Useful for fact-checking information or finding live data from the internet. "
+#        "Use this only when the PDF content is insufficient or outdated."
+#    )
+#    args_schema: Type[BaseModel] = WebSearchSchema
+#
+#    def _run(self, query: str) -> str:
+#        """Execute a live web search via DuckDuckGo."""
+#        return web_search(query)
 
 
 # ── HuggingFace Tool Definitions ──────────────────────
+
+
+
+# WIP: Programming and algorithmic tools can be added here in the future, such as code execution or data analysis tools.
+
+
+class CodeReviewTool(BaseTool):
+    name: str = "code_review"
+    description: str = (
+        "Useful for reviewing code snippets and providing feedback or suggestions. "
+        "Use this when the user asks for code quality checks or improvements."
+    )
+    args_schema: Type[BaseModel] = CodeReviewSchema
+
+    def _run(self, code_snippet: str) -> str:
+        """Execute code review logic (placeholder)."""
+        # Placeholder implementation; in a real scenario, this could integrate with a code analysis tool.
+        return f"Code review for the provided snippet:\n{code_snippet}\n\nFeedback: [This is a placeholder response.]"

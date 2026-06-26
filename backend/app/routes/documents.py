@@ -285,7 +285,7 @@ async def upload_document(
     ext = file.filename.rsplit(".", 1)[-1].lower()
     if ext not in settings.ALLOWED_EXTENSIONS:
         raise ValidationException(
-            f"File type '.{ext}' not supported. Allowed: {', '.join(settings.ALLOWED_EXTENSIONS)}",
+            "Only PDF, DOCX, TXT, Markdown, and code files are allowed",
         )
 
     # ── Validate and save file to disk ───────────────
