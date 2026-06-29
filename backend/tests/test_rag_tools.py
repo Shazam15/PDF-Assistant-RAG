@@ -5,6 +5,7 @@ from app.rag.tools import (
     CALCULATOR_TOOL,
     TOOLS,
     WEB_SEARCH_TOOL,
+    CodeReviewTool,
     MathTool,
     PDFSearchTool,
     calculate_expression,
@@ -41,6 +42,37 @@ def test_math_tool_metadata():
     assert tool.name == "calculator"
     assert "mathematical calculations" in tool.description
     assert tool.args_schema is not None
+
+
+def test_code_review_tool_run(monkeypatch):
+    class MockResponse:
+        def __init__(self, content):
+            self.content = content
+
+    class MockChatOllama:
+        def __init__(self, model, temperature):
+            self.model = model
+            self.temperature = temperature
+            self.invoked = False
+
+        def invoke(self, messages):
+            self.invoked = True
+            assert any("Eres un revisor senior de código" in m.content for m in messages)
+            return MockResponse("Revisión de código simulada.")
+
+    monkeypatch.setattr(tools, "ChatOllama", MockChatOllama)
+
+    tool = CodeReviewTool()
+    result = tool.run(
+        {
+            "query": "Revisa este código",
+            "code": "def add(a, b):\n    return a + b",
+            "language": "python",
+            "focus": "bugs",
+        }
+    )
+
+    assert "Revisión de código simulada." in result
 
 
 def test_execute_tool_dispatches_calculator():
@@ -218,3 +250,11 @@ def test_huggingface_tool_definitions_expose_expected_schemas():
     assert web_schema["properties"]["query"]["type"] == "string"
     assert web_schema["properties"]["max_results"]["default"] == 5
     assert [tool.function.name for tool in TOOLS] == ["calculator", "web_search"]
+
+
+def test_tools_list_includes_code_review():
+    from app.rag.agent import get_agent_executor
+
+    executor, _, _ = get_agent_executor("user-1")
+    tool_names = [getattr(tool, "name", None) for tool in getattr(executor, "tools", [])]
+    assert "code_review" in tool_names

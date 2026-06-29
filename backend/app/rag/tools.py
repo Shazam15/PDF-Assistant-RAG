@@ -9,13 +9,17 @@ import operator as op
 from typing import Any, Dict, List, Optional, Type
 
 from ddgs import DDGS
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool
+from langchain_ollama import ChatOllama
 from pydantic import BaseModel, Field
 
+from app.config import get_settings
 from app.rag.graph_retriever import get_entity_context
 from app.rag.retriever import retrieve
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 # ── Math Helper ──────────────────────────────────────
 
@@ -163,7 +167,8 @@ class MathSchema(BaseModel):
 #    query: str = Field(description="The query to search the live web for.")
 
 class CodeReviewSchema(BaseModel):
-    query: str = Field(description="Solicitud de revisión técnica.")
+    query: str = Field(description="Solicitud de revisión técnica o instrucciones de revisión.")
+    code: Optional[str] = Field(default=None, description="Código a revisar.")
     language: Optional[str] = Field(default=None, description="Lenguaje del código.")
     focus: Optional[str] = Field(default=None, description="Enfoque: bugs, seguridad, complejidad, claridad, etc.")
 

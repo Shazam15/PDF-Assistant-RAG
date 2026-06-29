@@ -49,7 +49,7 @@ def get_agent_executor(
     """Initialize the LangChain ReAct agent executor."""
     pdf_tool = PDFSearchTool(user_id=user_id, document_id=document_id, top_k=top_k)
     code_review_tool = CodeReviewTool(user_id=user_id, document_id=document_id, top_k=top_k)
-    tools = [pdf_tool, MathTool()]
+    tools = [pdf_tool, code_review_tool, MathTool()]
 
     chat_llm = ChatOllama(
         model=settings.LLM_MODEL,
