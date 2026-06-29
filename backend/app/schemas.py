@@ -5,7 +5,9 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional, List, Any
 from datetime import datetime
 from app.models import UserRole
+# Importamos ambas funciones desde el mismo archivo por el momento
 from app.password_validation import validate_password
+from app.email_validation import validate_email
 
 
 class ErrorDetail(BaseModel):
@@ -40,15 +42,33 @@ class UserRegister(BaseModel):
     def validate_password_strength(cls, value: str) -> str:
         validate_password(value)
         return value
+    
+    @field_validator("email")
+    @classmethod
+    def validate_email_domain(cls, value: str) -> str:
+        validate_email(value)
+        return value
 
 
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
 
+    @field_validator("email")
+    @classmethod
+    def validate_email_domain(cls, value: str) -> str:
+        validate_email(value)
+        return value
+
 
 class EmailVerificationRequest(BaseModel):
     email: EmailStr
+
+    @field_validator("email")
+    @classmethod
+    def validate_email_domain(cls, value: str) -> str:
+        validate_email(value)
+        return value
 
 
 class MessageResponse(BaseModel):
@@ -66,15 +86,26 @@ class GoogleLoginRequest(BaseModel):
 
 class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
-    username:Optional[str] = None
+    username: Optional[str] = None
+
+    @field_validator("email")
+    @classmethod
+    def validate_email_domain(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None:
+            validate_email(value)
+        return value
+
 
 class UserProfileUpdate(BaseModel):
     username: Optional[str] = None
     display_name: Optional[str] = None
+
+
 class UserUpdateResponse(BaseModel):
     id: str
     username: str
     email: EmailStr
+
 
 class UpdatePassword(BaseModel):
     password: str
@@ -85,6 +116,7 @@ class UpdatePassword(BaseModel):
     def validate_password_strength(cls, value: str) -> str:
         validate_password(value)
         return value
+
 
 class UpdatePasswordResponse(BaseModel):
     id: str
@@ -97,6 +129,12 @@ class WorkspaceInviteRequest(BaseModel):
     email: EmailStr
     workspace_name: str = Field(..., min_length=1, max_length=100)
     message: Optional[str] = None
+
+    @field_validator("email")
+    @classmethod
+    def validate_email_domain(cls, value: str) -> str:
+        validate_email(value)
+        return value
 
 
 class WorkspaceInviteResponse(BaseModel):
@@ -178,7 +216,7 @@ class DocumentResponse(BaseModel):
     status: str
     error_message: Optional[str] = None
     uploaded_at: datetime
-    summary: Optional[str] = None # New field for document summary
+    summary: Optional[str] = None  # New field for document summary
     task_id: Optional[str] = None
     extracted_urls: Optional[List[str]] = None
 
@@ -270,7 +308,7 @@ class ChatResponse(BaseModel):
 
 
 class FeedbackRequest(BaseModel):
-    feedback: Optional[str] = Field(None, pattern="^(up|down)?$")
+    feedback: Optional[str] = None
 
 
 class ChatMessageResponse(BaseModel):
@@ -289,13 +327,16 @@ class ChatHistoryResponse(BaseModel):
     messages: List[ChatMessageResponse]
     document_id: Optional[str] = None
 
+
 # Chunk settings schema for optional chunk size and overlap parameters in document processing
 class ChunkSettings(BaseModel):
     chunk_size: int | None
     chunk_overlap: int | None
-      
+
+
 class UploadUrl(BaseModel):
     url: str
+
 
 class ShareAnswerResponse(BaseModel):
     id: str
@@ -307,10 +348,6 @@ class ShareAnswerResponse(BaseModel):
 class ShareLinkResponse(BaseModel):
     message_id: str
     share_url: str
-
-
-class FeedbackRequest(BaseModel):
-    feedback: Optional[str] = None
 
 
 # ── Chat Session ──────────────────────────────────────

@@ -8,7 +8,7 @@ const resources = {
   en: {
     translation: {
       common: {
-        appName: "Document AI Analyst",
+        appName: "ATLAS",
         language: "Language",
         english: "English",
         hindi: "Hindi",

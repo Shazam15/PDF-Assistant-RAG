@@ -163,7 +163,7 @@ async def validate_upload(file: UploadFile):
 
     # extension without leading dot in settings
     if ext.lstrip(".") not in settings.ALLOWED_EXTENSIONS:
-        raise ValidationException("Only PDF, DOCX, TEXT, AND MARKDOWN files are allowed")
+        raise ValidationException("Only PDF, DOCX, TXT, Markdown, and source-code files are allowed")
 
     # save to a temporary file
     with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
@@ -285,7 +285,7 @@ async def upload_document(
     ext = file.filename.rsplit(".", 1)[-1].lower()
     if ext not in settings.ALLOWED_EXTENSIONS:
         raise ValidationException(
-            "Only PDF, DOCX, TXT, Markdown, and code files are allowed",
+            "Only PDF, DOCX, TXT, Markdown, and source-code files are allowed",
         )
 
     # ── Validate and save file to disk ───────────────

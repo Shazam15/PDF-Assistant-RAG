@@ -62,7 +62,24 @@ class Settings(BaseSettings):
     # ── File Upload ──────────────────────────────────────
     UPLOAD_DIR: str = "./data/uploads"
     MAX_UPLOAD_SIZE_MB: int = 50
-    ALLOWED_EXTENSIONS: set = {"pdf", "docx", "txt", "md"}
+    ALLOWED_EXTENSIONS: set = {
+        "pdf",
+        "docx",
+        "txt",
+        "md",
+        "py",
+        "js",
+        "ts",
+        "tsx",
+        "java",
+        "cpp",
+        "c",
+        "cs",
+        "go",
+        "rs",
+        "sql",
+        "ipynb",
+    }
     ALLOWED_MIME_TYPES: dict = {
         ".pdf": ["application/pdf"],
         ".docx": [
@@ -71,18 +88,18 @@ class Settings(BaseSettings):
         ],
         ".txt": ["text/plain"],
         ".md": ["text/markdown"],
-        ".py": ["text/x-python", "application/x-python-code"],
-        ".js": ["application/javascript", "text/javascript"],
-        ".ts": ["application/typescript", "text/typescript"],
-        ".tsx": ["application/typescript", "text/typescript"],
-        ".java": ["text/x-java-source", "text/x-java"],
-        ".cpp": ["text/x-c++src", "text/x-c++hdr"],
-        ".c": ["text/x-csrc", "text/x-chdr"],
-        ".cs": ["text/x-csharp", "text/x-csharp"],
-        ".go": ["text/x-go", "text/x-go-source"],
-        ".rs": ["text/x-rust", "text/x-rust-source"],
-        ".sql": ["text/x-sql", "application/sql"],
-
+        ".py": ["text/x-python", "application/x-python-code", "text/plain"],
+        ".js": ["application/javascript", "text/javascript", "text/plain"],
+        ".ts": ["application/typescript", "text/typescript", "text/plain"],
+        ".tsx": ["application/typescript", "text/typescript", "text/plain"],
+        ".java": ["text/x-java-source", "text/x-java", "text/plain"],
+        ".cpp": ["text/x-c++src", "text/x-c++hdr", "text/plain"],
+        ".c": ["text/x-csrc", "text/x-chdr", "text/plain"],
+        ".cs": ["text/x-csharp", "text/x-csharp", "text/plain"],
+        ".go": ["text/x-go", "text/x-go-source", "text/plain"],
+        ".rs": ["text/x-rust", "text/x-rust-source", "text/plain"],
+        ".sql": ["text/x-sql", "application/sql", "text/plain"],
+        ".ipynb": ["application/json", "text/plain"],
     }
 
     # ── RAG Pipeline ─────────────────────────────────────

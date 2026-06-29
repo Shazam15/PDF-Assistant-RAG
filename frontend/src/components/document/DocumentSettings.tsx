@@ -169,11 +169,11 @@ function DocumentSettingsBody({
         <div className="flex justify-between items-center pt-2">
           <Button variant="outline" size="sm" onClick={handleReset} disabled={loading} className="cursor-pointer">
             <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
-            Reset
+            Reiniciar
           </Button>
           <div className="flex gap-2">
             <Button variant="ghost" size="sm" onClick={() => onOpenChange(false)} className="cursor-pointer">
-              Cancel
+              Cancelar
             </Button>
             <Button size="sm" onClick={handleSave} disabled={loading} className="cursor-pointer">
               {loading ? "Saving..." : "Save & Re-index"}

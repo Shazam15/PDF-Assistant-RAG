@@ -14,6 +14,8 @@ from app.config import get_settings
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
+CODE_EXTENSIONS = {"py", "js", "ts", "tsx", "java", "cpp", "c", "cs", "go", "rs", "sql", "ipynb"}
+
 
 def _is_word_inside_bbox(word: Dict[str, Any], bbox: tuple) -> bool:
     """Return True when the word center falls inside a pdfplumber bbox."""

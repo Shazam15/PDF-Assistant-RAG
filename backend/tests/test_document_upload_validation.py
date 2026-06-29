@@ -54,6 +54,35 @@ def test_validate_upload_accepts_valid_pdf() -> None:
             Path(temp_path).unlink(missing_ok=True)
 
 
+@pytest.mark.parametrize(
+    ("filename", "content", "mime_type"),
+    [
+        ("script.py", b"print('hello')\n", "text/plain"),
+        ("main.cpp", b"int main() { return 0; }\n", "text/plain"),
+    ],
+)
+def test_validate_upload_accepts_source_code_files(
+    monkeypatch: pytest.MonkeyPatch,
+    filename: str,
+    content: bytes,
+    mime_type: str,
+) -> None:
+    monkeypatch.setitem(
+        sys.modules,
+        "magic",
+        types.SimpleNamespace(from_file=lambda *_args, **_kwargs: mime_type),
+    )
+
+    temp_path = None
+    try:
+        temp_path = _run(documents.validate_upload(_upload_file(filename, content)))
+        assert Path(temp_path).exists()
+        assert Path(temp_path).suffix == Path(filename).suffix
+    finally:
+        if temp_path:
+            Path(temp_path).unlink(missing_ok=True)
+
+
 def test_validate_upload_rejects_invalid_file_type() -> None:
     with pytest.raises(ValidationException) as exc:
         _run(documents.validate_upload(_upload_file("notes.exe", b"not a document")))
