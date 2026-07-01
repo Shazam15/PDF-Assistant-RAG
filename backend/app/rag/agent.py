@@ -56,7 +56,7 @@ def get_agent_executor(
         temperature=settings.LLM_TEMPERATURE,
     )
 
-    prompt = PromptTemplate.from_template(AGENT_SYSTEM_PROMPT)
+    prompt = PromptTemplate.from_template(AGENT_SYSTEM_PROMPT).partial(style_reference="")
     agent = create_react_agent(chat_llm, tools, prompt)
 
     executor = AgentExecutor(
@@ -241,13 +241,40 @@ def _retrieve_document_context(
     return "\n\n".join(context_parts), sources
 
 
+def _build_style_reference(sources: List[Dict[str, Any]]) -> str:
+    """Create a brief style instruction from the retrieved document snippet."""
+    if not sources:
+        return ""
+
+    sample = next((source for source in sources if source.get("text")), None)
+    if not sample:
+        return ""
+
+    snippet = re.sub(r"\s+", " ", str(sample.get("text", "")).strip())
+    if len(snippet) > 500:
+        snippet = snippet[:497] + "..."
+
+    filename = sample.get("filename", "documento")
+    return (
+        "## Referencia de estilo\n"
+        f"Imita el tono, el ritmo y la cadencia del siguiente fragmento del documento '{filename}'. "
+        "No copies literalmente las frases; responde de forma original, elegante y coherente con ese estilo.\n"
+        f"Fragmento de referencia: {snippet}"
+    )
+
+
 def _build_direct_rag_prompt(
     question: str,
     context: str,
     chat_history: Optional[List[Dict[str, str]]] = None,
+    style_reference: Optional[str] = None,
 ) -> str:
     history = _format_chat_history(chat_history) if chat_history else ""
-    prompt = RAG_PROMPT_TEMPLATE.format(context=context, question=question)
+    prompt = RAG_PROMPT_TEMPLATE.format(
+        context=context,
+        question=question,
+        style_reference=style_reference or "",
+    )
     if history:
         prompt = f"{history}\n\n{prompt}"
     return prompt
@@ -270,8 +297,9 @@ def _generate_direct_document_answer(
 
     from langchain_core.messages import HumanMessage
 
+    style_reference = _build_style_reference(sources)
     chat_llm = get_llm_client(hf_token)
-    prompt = _build_direct_rag_prompt(question, context, chat_history)
+    prompt = _build_direct_rag_prompt(question, context, chat_history, style_reference=style_reference)
     response = chat_llm.invoke([HumanMessage(content=prompt)])
     answer = parse_agent_output(response.content)
     if _is_agent_stop_answer(answer):
@@ -423,32 +451,69 @@ def generate_answer_stream(
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
             return
 
-        fallback = _generate_direct_document_answer(
-            question=question,
-            user_id=user_id,
-            document_id=document_id,
-            hf_token=hf_token,
-            top_k=top_k,
-            chat_history=chat_history,
-        )
-        yield f"data: {json.dumps({'type': 'sources', 'data': fallback['sources']})}\n\n"
-        yield f"data: {json.dumps({'type': 'token', 'data': fallback['answer']})}\n\n"
+        context, sources = _retrieve_document_context(question, user_id, document_id, top_k)
+        if not context:
+            fallback_answer = "No encontré información suficiente en los documentos cargados para responder esta pregunta."
+            yield f"data: {json.dumps({'type': 'sources', 'data': []})}\n\n"
+            yield f"data: {json.dumps({'type': 'token', 'data': fallback_answer})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            return
+
+        from langchain_core.messages import HumanMessage
+
+        style_reference = _build_style_reference(sources)
+        chat_llm = get_llm_client(hf_token)
+        prompt = _build_direct_rag_prompt(question, context, chat_history, style_reference=style_reference)
+
+        try:
+            if hasattr(chat_llm, "stream"):
+                collected_chunks = []
+                for chunk in chat_llm.stream([HumanMessage(content=prompt)]):
+                    content = getattr(chunk, "content", "")
+                    if content:
+                        collected_chunks.append(str(content))
+                answer = parse_agent_output("".join(collected_chunks))
+            else:
+                response = chat_llm.invoke([HumanMessage(content=prompt)])
+                answer = parse_agent_output(response.content)
+        except Exception as stream_error:
+            logger.error(f"Direct RAG streaming fallback error: {stream_error}")
+            answer = "No pude generar una respuesta final estable."
+
+        answer = _ensure_answer_has_citations(answer, sources)
+        yield f"data: {json.dumps({'type': 'sources', 'data': sources})}\n\n"
+        if not answer_sent:
+            yield f"data: {json.dumps({'type': 'token', 'data': answer})}\n\n"
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
         return
 
     except Exception as e:
         logger.warning("Agentic streaming failed; falling back to direct RAG: %s", e)
         try:
-            fallback = _generate_direct_document_answer(
-                question=question,
-                user_id=user_id,
-                document_id=document_id,
-                hf_token=hf_token,
-                top_k=top_k,
-                chat_history=chat_history,
-            )
-            yield f"data: {json.dumps({'type': 'sources', 'data': fallback['sources']})}\n\n"
-            yield f"data: {json.dumps({'type': 'token', 'data': fallback['answer']})}\n\n"
+            context, sources = _retrieve_document_context(question, user_id, document_id, top_k)
+            if not context:
+                yield f"data: {json.dumps({'type': 'sources', 'data': []})}\n\n"
+                yield f"data: {json.dumps({'type': 'token', 'data': 'No encontré información suficiente en los documentos cargados para responder esta pregunta.'})}\n\n"
+            else:
+                from langchain_core.messages import HumanMessage
+
+                style_reference = _build_style_reference(sources)
+                chat_llm = get_llm_client(hf_token)
+                prompt = _build_direct_rag_prompt(question, context, chat_history, style_reference=style_reference)
+                if hasattr(chat_llm, "stream"):
+                    collected_chunks = []
+                    for chunk in chat_llm.stream([HumanMessage(content=prompt)]):
+                        content = getattr(chunk, "content", "")
+                        if content:
+                            collected_chunks.append(str(content))
+                    answer = parse_agent_output("".join(collected_chunks))
+                else:
+                    response = chat_llm.invoke([HumanMessage(content=prompt)])
+                    answer = parse_agent_output(response.content)
+
+                answer = _ensure_answer_has_citations(answer, sources)
+                yield f"data: {json.dumps({'type': 'sources', 'data': sources})}\n\n"
+                yield f"data: {json.dumps({'type': 'token', 'data': answer})}\n\n"
         except Exception as fallback_error:
             logger.error(f"Direct RAG streaming fallback error: {fallback_error}")
             yield f"data: {json.dumps({'type': 'error', 'data': str(fallback_error)})}\n\n"

@@ -78,6 +78,24 @@ export default function DashboardPage() {
   const [connectionError, setConnectionError] = useState("");
   const [documentsLoading, setDocumentsLoading] = useState(true);
 
+  const resetViewerState = useCallback(() => {
+    setViewerOpen(false);
+    setActiveDoc(null);
+    setPdfPage(1);
+    setPdfHighlightTarget(null);
+  }, []);
+
+  const handleSelectDoc = useCallback((doc: DocInfo) => {
+    setActiveDoc(doc);
+    setPdfPage(1);
+    setPdfHighlightTarget(null);
+    if (doc.original_name.toLowerCase().endsWith(".pdf")) {
+      setViewerOpen(true);
+    } else {
+      setViewerOpen(false);
+    }
+  }, []);
+
   const handleDocumentRenamed = useCallback((renamedDocument: DocInfo) => {
     setDocuments((current) =>
       current.map((document) => (document.id === renamedDocument.id ? renamedDocument : document))
@@ -177,10 +195,7 @@ export default function DashboardPage() {
       documents={documents}
       activeDoc={activeDoc}
       loading={documentsLoading}
-      onSelectDoc={(doc) => {
-        setActiveDoc(doc);
-        setPdfPage(1);
-      }}
+      onSelectDoc={handleSelectDoc}
       onDocumentsChange={loadDocuments}
       onDocumentRenamed={handleDocumentRenamed}
     />
@@ -192,7 +207,13 @@ export default function DashboardPage() {
         sidebarOpen={sidebarOpen}
         onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
         viewerOpen={viewerOpen}
-        onToggleViewer={() => setViewerOpen(!viewerOpen)}
+        onToggleViewer={() => {
+          if (viewerOpen) {
+            resetViewerState();
+          } else if (activeDoc?.original_name.toLowerCase().endsWith(".pdf")) {
+            setViewerOpen(true);
+          }
+        }}
         mobileSheetContent={sidebarContent}
       />
 
@@ -242,6 +263,7 @@ export default function DashboardPage() {
               }}
               totalPages={activeDoc.page_count}
               highlightTarget={pdfHighlightTarget}
+              onClose={resetViewerState}
             />
           </div>
         )}

@@ -3,14 +3,19 @@ Application configuration via pydantic-settings.
 All config is loaded from environment variables with sensible defaults.
 """
 import os
-from pydantic_settings import BaseSettings
+import secrets
 from functools import lru_cache
+
+from pydantic import ConfigDict, model_validator
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
+    model_config = ConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
     # ── App ──────────────────────────────────────────────
     APP_NAME: str = "Document AI Analyst"
-    SECRET_KEY: str = "X28veY5oCwfUVP3tZDvzrTvz-5TnvYIhXUi3IfwoSOE"
+    SECRET_KEY: str = ""
     DEBUG: bool = False
     ENVIRONMENT: str = "development"
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:7860"
@@ -133,7 +138,7 @@ class Settings(BaseSettings):
 
     # ── LLM (HuggingFace Inference API) ──────────────────
     HF_TOKEN: str = os.getenv("HF_TOKEN", "")  # HuggingFace API token (set in .env)
-    LLM_MODEL: str = "mistral"
+    LLM_MODEL: str = "gemma2:2b"
     LLM_MAX_NEW_TOKENS: int = 1024
     LLM_TEMPERATURE: float = 0.3
     AGENT_MAX_ITERATIONS: int = 5
@@ -166,16 +171,21 @@ class Settings(BaseSettings):
     CODE_REVIEW_TEMPERATURE: float = 0
     CODE_REVIEW_MAX_CHARS: int = 12000
 
+    @model_validator(mode="after")
+    def validate_secret_key(self):
+        environment = str(self.ENVIRONMENT).lower()
+        if self.SECRET_KEY:
+            return self
+        if environment == "production":
+            raise ValueError("SECRET_KEY must be set when ENVIRONMENT=production")
+        self.SECRET_KEY = secrets.token_urlsafe(32)
+        return self
+
     @property
     def cors_origins(self) -> list[str]:
         if self.ENVIRONMENT == "production":
             return [o.strip() for o in self.ALLOWED_ORIGINS.split(",")]
         return ["*"]
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        extra = "ignore"
 
 
 @lru_cache()

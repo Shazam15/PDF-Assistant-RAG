@@ -166,9 +166,6 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
         recent_messages.reverse()
         chat_history = [{"role": m.role, "content": m.content} for m in recent_messages]
 
-        # Save user message
-        _save_message(db, user.id, document_id, "user", question, session_id=session_id)
-
         # Stream answer using existing generator and forward structured events
         try:
             full_answer = ""
@@ -198,7 +195,15 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
                     await websocket.send_json({"type": "token", "data": chunk})
 
             if full_answer:
-                _save_message(db, user.id, document_id, "assistant", full_answer, sources, session_id=session_id)
+                _save_messages(
+                    db,
+                    user.id,
+                    [
+                        (document_id, "user", question, None),
+                        (document_id, "assistant", full_answer, sources),
+                    ],
+                    session_id=session_id,
+                )
 
             # Notify client
             await websocket.send_json({"type": "done"})
@@ -573,8 +578,15 @@ def ask_question(
         )
         if cached_answer is not None:
             logger.debug("Returning cached response for question: %s", payload.question[:40])
-            _save_message(db, user.id, payload.document_id, "user", payload.question, session_id=session_id)
-            _save_message(db, user.id, payload.document_id, "assistant", cached_answer, [], session_id=session_id)
+            _save_messages(
+                db,
+                user.id,
+                [
+                    (payload.document_id, "user", payload.question, None),
+                    (payload.document_id, "assistant", cached_answer, []),
+                ],
+                session_id=session_id,
+            )
             return ChatResponse(
                 answer=cached_answer,
                 sources=[],
@@ -598,9 +610,14 @@ def ask_question(
         )
 
         # Save to chat history
-        _save_message(db, user.id, payload.document_id, "user", payload.question, session_id=session_id)
-        _save_message(
-            db, user.id, payload.document_id, "assistant", result["answer"], result["sources"], session_id=session_id
+        _save_messages(
+            db,
+            user.id,
+            [
+                (payload.document_id, "user", payload.question, None),
+                (payload.document_id, "assistant", result["answer"], result["sources"]),
+            ],
+            session_id=session_id,
         )
 
         return ChatResponse(
@@ -689,9 +706,6 @@ def ask_question_stream(
     recent_messages.reverse()
     chat_history = [{"role": m.role, "content": m.content} for m in recent_messages]
 
-    # Save user message immediately
-    _save_message(db, user.id, payload.document_id, "user", payload.question, session_id=session_id)
-
     # Cache check before starting the stream
     cached_answer = get_cached_response(
         document_id=str(payload.document_id or ""),
@@ -699,7 +713,15 @@ def ask_question_stream(
     )
     if cached_answer is not None:
         logger.debug("Returning cached stream response for question: %s", payload.question[:40])
-        _save_message(db, user.id, payload.document_id, "assistant", cached_answer, [], session_id=session_id)
+        _save_messages(
+            db,
+            user.id,
+            [
+                (payload.document_id, "user", payload.question, None),
+                (payload.document_id, "assistant", cached_answer, []),
+            ],
+            session_id=session_id,
+        )
 
         async def cached_event_stream():
             payload_json = json.dumps({"type": "token", "data": cached_answer})
@@ -755,12 +777,16 @@ def ask_question_stream(
                     answer=full_answer,
                 )
             try:
-                from app.database import get_db_session
                 if full_answer:
-                    with get_db_session() as save_db:
-                        _save_message(
-                            save_db, user_id, payload.document_id, "assistant", full_answer, sources, session_id=session_id
-                        )
+                    _save_messages(
+                        db,
+                        user_id,
+                        [
+                            (payload.document_id, "user", payload.question, None),
+                            (payload.document_id, "assistant", full_answer, sources),
+                        ],
+                        session_id=session_id,
+                    )
                     logger.info(f"Assistant message saved for session {session_id}, length: {len(full_answer)}")
             except Exception as e:
                 logger.error(f"Failed to save assistant message: {e}")
@@ -969,6 +995,35 @@ def submit_feedback(
     )
 
 
+def _save_messages(
+    db: Session,
+    user_id: str,
+    messages: list[tuple[Optional[str], str, str, list | None]],
+    session_id: Optional[str] = None,
+):
+    """Persist one or more chat messages in a single transaction."""
+    if not session_id:
+        session = db.query(ChatSession).filter(ChatSession.user_id == user_id).first()
+        if not session:
+            session = ChatSession(user_id=user_id, title="Default Chat")
+            db.add(session)
+            db.commit()
+            db.refresh(session)
+        session_id = session.id
+
+    for document_id, role, content, sources in messages:
+        msg = ChatMessage(
+            user_id=user_id,
+            document_id=document_id,
+            session_id=session_id,
+            role=role,
+            content=content,
+            sources_json=json.dumps(sources) if sources else None,
+        )
+        db.add(msg)
+    db.commit()
+
+
 def _save_message(
     db: Session,
     user_id: str,
@@ -979,25 +1034,12 @@ def _save_message(
     session_id: Optional[str] = None,
 ):
     """Save a chat message to the database."""
-    if not session_id:
-        session = db.query(ChatSession).filter(ChatSession.user_id == user_id).first()
-        if not session:
-            session = ChatSession(user_id=user_id, title="Default Chat")
-            db.add(session)
-            db.commit()
-            db.refresh(session)
-        session_id = session.id
-
-    msg = ChatMessage(
-        user_id=user_id,
-        document_id=document_id,
+    _save_messages(
+        db,
+        user_id,
+        [(document_id, role, content, sources)],
         session_id=session_id,
-        role=role,
-        content=content,
-        sources_json=json.dumps(sources) if sources else None,
     )
-    db.add(msg)
-    db.commit()
 
 
 def _share_answer_response(message: ChatMessage) -> ShareAnswerResponse:

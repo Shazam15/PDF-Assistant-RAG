@@ -27,6 +27,8 @@ FORMATO:
 
 RAG_PROMPT_TEMPLATE = """Basándote en los siguientes fragmentos de documentos, responde la pregunta del usuario con precisión y cita tus fuentes.
 
+{style_reference}
+
 ## Contexto del Documento
 
 {context}
@@ -86,6 +88,9 @@ AGENT_SYSTEM_PROMPT = """Eres Document AI Analyst, un agente inteligente capaz d
 
 Tienes acceso a las siguientes herramientas:
 {tools}
+
+Instrucciones de estilo:
+{style_reference}
 
 Usa el siguiente formato EXACTAMENTE:
 

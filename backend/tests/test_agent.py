@@ -54,6 +54,29 @@ def test_generate_answer_empty_retrieval(mock_llm_client, mock_retriever):
     assert len(result["sources"]) == 0
     mock_llm_client.invoke.assert_not_called()
 
+
+def test_generate_answer_uses_document_style_reference(mock_llm_client, mock_retriever):
+    mock_retriever.return_value = [
+        {
+            "text": "El cielo estaba oscuro y el silencio pesaba sobre la calle.",
+            "filename": "book.pdf",
+            "page": 1,
+            "score": 0.95,
+            "confidence": 95,
+        }
+    ]
+    mock_response = MagicMock()
+    mock_response.content = "Respuesta estilizada"
+    mock_llm_client.invoke.return_value = mock_response
+
+    generate_answer("¿Qué sensación transmite este pasaje?", "user123", "doc123")
+
+    prompt = mock_llm_client.invoke.call_args.args[0][0].content
+    assert "Referencia de estilo" in prompt
+    assert "book.pdf" in prompt
+    assert "silencio pesaba" in prompt
+
+
 def test_generate_answer_stream_success(mock_llm_client, mock_retriever):
     mock_retriever.return_value = [
         {
