@@ -1,6 +1,8 @@
 import json
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 import pytest
+from app.rag import agent as agent_module
 from app.rag.agent import generate_answer, generate_answer_stream
 
 @pytest.fixture
@@ -53,6 +55,20 @@ def test_generate_answer_empty_retrieval(mock_llm_client, mock_retriever):
     assert result["answer"] == "No encontré información suficiente en los documentos cargados para responder esta pregunta."
     assert len(result["sources"]) == 0
     mock_llm_client.invoke.assert_not_called()
+
+
+def test_load_global_style_reference_from_named_file(tmp_path, monkeypatch):
+    style_dir = tmp_path / "uploads"
+    style_dir.mkdir()
+    style_file = style_dir / "PDF_DE_PRUEBA"
+    style_file.write_text("Tono solemne y elegante", encoding="utf-8")
+
+    monkeypatch.setattr(agent_module, "settings", SimpleNamespace(UPLOAD_DIR=str(style_dir)))
+
+    reference = agent_module._load_global_style_reference()
+
+    assert "Tono solemne y elegante" in reference
+    assert "Referencia de estilo global" in reference
 
 
 def test_generate_answer_uses_document_style_reference(mock_llm_client, mock_retriever):

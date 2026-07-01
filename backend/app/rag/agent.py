@@ -4,6 +4,7 @@ Intelligently chooses between PDF search, Web Search, and Math tools.
 """
 import logging
 import json
+import os
 import re
 from typing import List, Dict, Any, Optional, Generator
 
@@ -39,6 +40,36 @@ def _format_chat_history(messages: List[Dict[str, str]]) -> str:
     return "\n".join(lines)
 
 
+def _load_global_style_reference() -> str:
+    """Load a global writing-style reference from a fixed file name in the upload directory."""
+    try:
+        upload_dir = getattr(settings, "UPLOAD_DIR", "") or ""
+        if not upload_dir:
+            return ""
+
+        style_path = os.path.join(upload_dir, "PDF_DE_PRUEBA")
+        if not os.path.exists(style_path):
+            return ""
+
+        with open(style_path, "r", encoding="utf-8", errors="ignore") as handle:
+            text = handle.read().strip()
+        if not text:
+            return ""
+
+        snippet = re.sub(r"\s+", " ", text)
+        if len(snippet) > 700:
+            snippet = snippet[:697] + "..."
+        return (
+            "## Referencia de estilo global\n"
+            "Usa este tono, ritmo y forma de expresión como referencia por defecto para todas las respuestas. "
+            "No copies literalmente las frases; responde de forma original, elegante y coherente con ese estilo.\n"
+            f"Texto de referencia: {snippet}"
+        )
+    except Exception as exc:
+        logger.warning("Could not load global style reference: %s", exc)
+        return ""
+
+
 def get_agent_executor(
     user_id: str,
     document_id: Optional[str] = None,
@@ -56,7 +87,8 @@ def get_agent_executor(
         temperature=settings.LLM_TEMPERATURE,
     )
 
-    prompt = PromptTemplate.from_template(AGENT_SYSTEM_PROMPT).partial(style_reference="")
+    global_style_reference = _load_global_style_reference()
+    prompt = PromptTemplate.from_template(AGENT_SYSTEM_PROMPT).partial(style_reference=global_style_reference)
     agent = create_react_agent(chat_llm, tools, prompt)
 
     executor = AgentExecutor(

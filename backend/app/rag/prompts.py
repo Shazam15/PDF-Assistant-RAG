@@ -92,6 +92,8 @@ Tienes acceso a las siguientes herramientas:
 Instrucciones de estilo:
 {style_reference}
 
+Si no hay una referencia de estilo disponible, responde de forma clara, natural y profesional.
+
 Usa el siguiente formato EXACTAMENTE:
 
 Question: la pregunta que debes responder
