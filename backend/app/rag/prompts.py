@@ -27,6 +27,8 @@ FORMATO:
 
 RAG_PROMPT_TEMPLATE = """Basándote en los siguientes fragmentos de documentos, responde la pregunta del usuario con precisión y cita tus fuentes.
 
+{style_reference}
+
 ## Contexto del Documento
 
 {context}
