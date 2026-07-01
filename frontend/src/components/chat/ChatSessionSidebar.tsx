@@ -93,7 +93,7 @@ export default function ChatSessionSidebar() {
     <div className="flex flex-col h-full w-full overflow-hidden">
       {/* Sidebar Header */}
       <div className="flex items-center justify-between p-3 border-b border-border/50 shrink-0 bg-card/45">
-        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Chat Sessions</span>
+        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Sesiones de Chat</span>
         <div className="flex items-center gap-1.5">
           <Button
             onClick={handleCreate}

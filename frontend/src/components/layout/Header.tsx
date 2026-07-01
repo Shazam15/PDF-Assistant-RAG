@@ -136,7 +136,7 @@ export default function Header({
             <div className="w-7 h-7 rounded-lg bg-primary/15 flex items-center justify-center">
               <Brain className="w-4 h-4 text-primary" />
             </div>
-            <span className="font-semibold text-sm hidden sm:inline">Document AI Analyst</span>
+            <span className="font-semibold text-sm hidden sm:inline">ATLAS</span>
           </Link>
         </div>
 
@@ -266,7 +266,7 @@ export default function Header({
             <div className="w-7 h-7 rounded-lg bg-primary/15 flex items-center justify-center">
               <Brain className="w-4 h-4 text-primary" />
             </div>
-            <span className="font-semibold text-sm">Document AI Analyst</span>
+            <span className="font-semibold text-sm">ATLAS</span>
           </Link>
           <Button
             variant="ghost"
