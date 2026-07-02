@@ -84,19 +84,43 @@ def extract_pdf(filepath: str) -> List[Dict[str, Any]]:
     """Extract PDF text while preserving tables as separate chunks.
 
     Prefer Unstructured for robust table extraction. Fall back to pdfplumber
-    if Unstructured is not available, then to PyMuPDF as a last resort.
+    if Unstructured is not available, then to PyMuPDF, and finally to OCR
+    for image-based PDFs.
     """
     try:
-        return extract_pdf_with_unstructured(filepath)
+        result = extract_pdf_with_unstructured(filepath)
+        if result:  # Only return if we got non-empty results
+            return result
     except Exception as e:
         # Unstructured may be installed but require native deps (poppler/pdfinfo).
-        # If anything goes wrong, fall back to pdfplumber then PyMuPDF.
         logger.warning(f"Unstructured extraction failed, falling back: {e}")
-        try:
-            return extract_pdf_with_tables(filepath)
-        except Exception as e2:
-            logger.warning(f"pdfplumber extraction failed, falling back: {e2}")
-            return extract_pdf_with_pymupdf(filepath)
+    
+    try:
+        result = extract_pdf_with_tables(filepath)
+        if result:
+            return result
+    except Exception as e2:
+        logger.warning(f"pdfplumber extraction failed, falling back: {e2}")
+    
+    try:
+        result = extract_pdf_with_pymupdf(filepath)
+        if result:
+            return result
+    except Exception as e3:
+        logger.warning(f"PyMuPDF extraction failed, falling back to OCR: {e3}")
+    
+    # Last resort: try OCR for image-based PDFs
+    try:
+        result = extract_pdf_with_ocr(filepath)
+        if result:
+            logger.info(f"Successfully extracted text from {filepath} using OCR")
+            return result
+    except Exception as e4:
+        logger.warning(f"OCR extraction failed: {e4}")
+    
+    # If all extraction methods fail, return empty list
+    logger.error(f"Could not extract text from {filepath} using any method")
+    return []
 
 
 def extract_pdf_with_pymupdf(filepath: str) -> List[Dict[str, Any]]:
@@ -221,6 +245,60 @@ def extract_pdf_with_tables(filepath: str) -> List[Dict[str, Any]]:
                         "table_index": table_index,
                     })
 
+    return pages
+
+
+def extract_pdf_with_ocr(filepath: str) -> List[Dict[str, Any]]:
+    """Extract text from image-based PDFs using OCR (Tesseract via pdf2image).
+    
+    This function converts PDF pages to images and applies optical character recognition
+    to extract text. Useful for scanned documents or PDFs where other extraction methods
+    fail to retrieve sufficient text.
+    
+    Args:
+        filepath: Path to the PDF file.
+    
+    Returns:
+        List of dicts with keys: 'text', 'page', 'chunk_type' (always 'text').
+        Returns empty list if pdf2image or pytesseract are unavailable.
+    """
+    try:
+        from pdf2image import convert_from_path
+        import pytesseract
+        from PIL import Image
+    except ImportError as e:
+        logger.warning(f"OCR dependencies not available (pdf2image/pytesseract): {e}")
+        return []
+    
+    pages: List[Dict[str, Any]] = []
+    
+    try:
+        # Convert PDF pages to images
+        # poppler_path can be configured via environment if needed
+        images = convert_from_path(filepath, dpi=200, fmt='ppm')
+        
+        for page_num, image in enumerate(images, start=1):
+            try:
+                # Apply OCR to extract text from image
+                text = pytesseract.image_to_string(image, lang='spa+eng')
+                text = text.strip()
+                
+                if text:
+                    pages.append({
+                        "text": text,
+                        "page": page_num,
+                        "chunk_type": "text",
+                        "ocr_source": True,  # Flag to indicate this came from OCR
+                    })
+                else:
+                    logger.debug(f"OCR returned empty text for page {page_num}")
+            except Exception as e:
+                logger.warning(f"OCR failed for page {page_num}: {e}")
+                continue
+    except Exception as e:
+        logger.warning(f"PDF to image conversion failed: {e}")
+        return []
+    
     return pages
 
 

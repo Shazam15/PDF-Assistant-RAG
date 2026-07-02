@@ -203,3 +203,173 @@ def test_pdf_image_captioning_on_the_fly(monkeypatch):
     # Ensure image_bytes is not in the chunk dictionary (preventing memory leak)
     assert "image_bytes" not in chunks[1]
 
+
+def test_ocr_extraction_with_mock_pdf2image_and_pytesseract(tmp_path, monkeypatch):
+    """Test OCR extraction from scanned PDFs using mocked pdf2image and pytesseract."""
+    from PIL import Image
+    from io import BytesIO
+    
+    # Create a simple test image in memory
+    def create_test_image():
+        img = Image.new('RGB', (200, 100), color='white')
+        return img
+    
+    # Mock pdf2image.convert_from_path to return image objects
+    def mock_convert_from_path(filepath, dpi=200, fmt='ppm'):
+        return [create_test_image(), create_test_image()]
+    
+    # Mock pytesseract.image_to_string to return text
+    def mock_image_to_string(image, lang=None):
+        return "This is text extracted from scanned document page"
+    
+    monkeypatch.setattr("pdf2image.convert_from_path", mock_convert_from_path)
+    monkeypatch.setattr("pytesseract.image_to_string", mock_image_to_string)
+    
+    # Test the OCR extraction function
+    from app.rag.chunker import extract_pdf_with_ocr
+    
+    # Create a dummy PDF file (it won't actually be read by the mock)
+    test_pdf = tmp_path / "scanned.pdf"
+    test_pdf.write_bytes(b"fake pdf content")
+    
+    result = extract_pdf_with_ocr(str(test_pdf))
+    
+    # Verify results
+    assert len(result) == 2  # Two pages
+    assert result[0]["page"] == 1
+    assert result[1]["page"] == 2
+    assert result[0]["chunk_type"] == "text"
+    assert result[1]["chunk_type"] == "text"
+    assert "scanned document" in result[0]["text"]
+    assert "scanned document" in result[1]["text"]
+    assert result[0].get("ocr_source") is True
+    assert result[1].get("ocr_source") is True
+
+
+def test_ocr_fallback_when_other_methods_fail(tmp_path, monkeypatch):
+    """Test that OCR is called as fallback when other extraction methods return empty."""
+    from PIL import Image
+    
+    def create_test_image():
+        img = Image.new('RGB', (200, 100), color='white')
+        return img
+    
+    # Mock extract_pdf_with_unstructured to return empty
+    def mock_unstructured_extract(filepath):
+        raise ImportError("Unstructured not available")
+    
+    # Mock extract_pdf_with_tables to return empty
+    def mock_tables_extract(filepath):
+        return []
+    
+    # Mock extract_pdf_with_pymupdf to return empty
+    def mock_pymupdf_extract(filepath):
+        return []
+    
+    # Mock pdf2image and pytesseract to succeed
+    def mock_convert_from_path(filepath, dpi=200, fmt='ppm'):
+        return [create_test_image()]
+    
+    def mock_image_to_string(image, lang=None):
+        return "Extracted text via OCR fallback"
+    
+    # Apply monkeypatches for the extraction methods
+    monkeypatch.setattr("app.rag.chunker.extract_pdf_with_unstructured", mock_unstructured_extract)
+    monkeypatch.setattr("app.rag.chunker.extract_pdf_with_tables", mock_tables_extract)
+    monkeypatch.setattr("app.rag.chunker.extract_pdf_with_pymupdf", mock_pymupdf_extract)
+    monkeypatch.setattr("pdf2image.convert_from_path", mock_convert_from_path)
+    monkeypatch.setattr("pytesseract.image_to_string", mock_image_to_string)
+    
+    # Create a dummy PDF file
+    test_pdf = tmp_path / "image_only.pdf"
+    test_pdf.write_bytes(b"fake pdf content")
+    
+    # Test extract_pdf function which should fallback to OCR
+    result = chunker.extract_pdf(str(test_pdf))
+    
+    # Verify OCR was used as fallback
+    assert len(result) == 1
+    assert result[0]["page"] == 1
+    assert "OCR fallback" in result[0]["text"]
+    assert result[0].get("ocr_source") is True
+
+
+def test_ocr_handles_missing_dependencies(tmp_path, monkeypatch):
+    """Test that OCR gracefully handles missing pdf2image or pytesseract."""
+    from app.rag.chunker import extract_pdf_with_ocr
+    
+    # Mock import to raise ImportError
+    def mock_import_error(*args, **kwargs):
+        raise ImportError("pdf2image not available")
+    
+    # Patch the import in the OCR function
+    import sys
+    # Create fake module that raises ImportError when imported
+    monkeypatch.setitem(sys.modules, "pdf2image", None)
+    monkeypatch.setitem(sys.modules, "pytesseract", None)
+    
+    # Create a dummy PDF file
+    test_pdf = tmp_path / "missing_deps.pdf"
+    test_pdf.write_bytes(b"fake pdf content")
+    
+    # Should return empty list when dependencies are missing
+    result = extract_pdf_with_ocr(str(test_pdf))
+    assert result == []
+
+
+def test_ocr_handles_corrupted_pdf(tmp_path, monkeypatch):
+    """Test that OCR handles corrupted PDFs gracefully."""
+    from app.rag.chunker import extract_pdf_with_ocr
+    
+    # Mock pdf2image.convert_from_path to raise exception
+    def mock_convert_error(filepath, dpi=200, fmt='ppm'):
+        raise Exception("PDF is corrupted or unreadable")
+    
+    monkeypatch.setattr("pdf2image.convert_from_path", mock_convert_error)
+    
+    # Create a dummy PDF file
+    test_pdf = tmp_path / "corrupted.pdf"
+    test_pdf.write_bytes(b"corrupted pdf content")
+    
+    # Should handle the exception and return empty list
+    result = extract_pdf_with_ocr(str(test_pdf))
+    assert result == []
+
+
+def test_ocr_skips_empty_results(tmp_path, monkeypatch):
+    """Test that OCR skips pages where no text is extracted."""
+    from PIL import Image
+    
+    def create_test_image():
+        img = Image.new('RGB', (200, 100), color='white')
+        return img
+    
+    # Mock to return 3 pages but only extract text from pages 1 and 3
+    call_count = [0]
+    def mock_image_to_string(image, lang=None):
+        call_count[0] += 1
+        if call_count[0] == 2:  # Skip page 2
+            return ""
+        return f"Text from page {call_count[0]}"
+    
+    def mock_convert_from_path(filepath, dpi=200, fmt='ppm'):
+        return [create_test_image(), create_test_image(), create_test_image()]
+    
+    monkeypatch.setattr("pdf2image.convert_from_path", mock_convert_from_path)
+    monkeypatch.setattr("pytesseract.image_to_string", mock_image_to_string)
+    
+    from app.rag.chunker import extract_pdf_with_ocr
+    
+    test_pdf = tmp_path / "partial.pdf"
+    test_pdf.write_bytes(b"fake pdf")
+    
+    result = extract_pdf_with_ocr(str(test_pdf))
+    
+    # Should only return pages with extracted text
+    assert len(result) == 2
+    assert result[0]["page"] == 1
+    assert result[1]["page"] == 3
+    assert "Text from page 1" in result[0]["text"]
+    assert "Text from page 3" in result[1]["text"]
+
+

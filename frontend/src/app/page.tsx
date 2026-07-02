@@ -14,7 +14,6 @@ import {
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import ContributorsPanel from "@/components/layout/ContributorsPanel";
-import OpenSourceBadge from "@/components/layout/OpenSourceBadge";
 
 // ─── Feature card data ───────────────────────────────────────────────────────
 const FEATURES = [
@@ -204,9 +203,6 @@ export default function HomePage() {
       {hallOfFameOpen && (
         <ContributorsPanel onClose={() => setHallOfFameOpen(false)} />
       )}
-
-      {/* Floating open-source badge */}
-      <OpenSourceBadge onOpenHallOfFame={() => setHallOfFameOpen(true)} />
     </div>
   );
 }
