@@ -1,15 +1,3 @@
----
-title: Document AI Analyst
-emoji: 🧠
-colorFrom: indigo
-colorTo: purple
-sdk: docker
-app_port: 7860
-pinned: true
-license: mit
-short_description: Enterprise Agentic RAG — upload PDFs and chat with AI
----
-
 <div align="center">
 
 <br/>
@@ -55,21 +43,6 @@ short_description: Enterprise Agentic RAG — upload PDFs and chat with AI
 
 </div>
 
-## 🤝 Contributors
-
-Thanks to all the amazing people who have contributed to **PDF-Assistant-RAG**! 🎉
-
-
-<div align="center">
-  <img src="https://contrib.nn.ci/api?repo=param20h/PDF-Assistant-RAG&cols=6" />
-</div>
-<br/>
-
-> 🌟 **Want to join them?** Check out [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines and look for [good first issues](https://github.com/Yuvraj-Sarathe/PDF-Assistant-RAG/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) to get started!
-
----
-
-<br/>
 
 ## 🌟 Overview
 
