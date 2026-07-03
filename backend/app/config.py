@@ -110,6 +110,7 @@ class Settings(BaseSettings):
     # ── RAG Pipeline ─────────────────────────────────────
     CHUNK_SIZE: int = 1000
     CHUNK_OVERLAP: int = 200
+    PDF_USE_UNSTRUCTURED: bool = False
     TOP_K_RETRIEVAL: int = 20 # Fetch more candidates for reranking
     TOP_K_RERANK: int = 8 # Final number of chunks to return after reranking
 

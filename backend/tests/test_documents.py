@@ -2,6 +2,7 @@ import types
 
 from app.models import Document
 from app.services.document_ingestion import ingest_document
+from app.tasks import process_document
 
 
 def test_api_health(client):
@@ -11,6 +12,10 @@ def test_api_health(client):
     payload = response.json()
     assert payload["status"] == "healthy"
     assert payload["version"] == "2.0.0"
+
+
+def test_process_document_does_not_requeue_lost_workers_forever():
+    assert process_document.reject_on_worker_lost is False
 
 
 def test_protected_documents_list_requires_auth(client):

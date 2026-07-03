@@ -107,6 +107,8 @@ def test_pdf_table_detection_separates_table_from_paragraph(monkeypatch):
 
 
 def test_unstructured_table_detection(monkeypatch):
+    monkeypatch.setattr(chunker.settings, "PDF_USE_UNSTRUCTURED", True)
+
     # Create fake Unstructured Table and Text element classes
     class FakeTableClass:
         pass
@@ -145,6 +147,38 @@ def test_unstructured_table_detection(monkeypatch):
     assert table_chunks[0]["page"] == 3
     assert "| Name | Amount |" in table_chunks[0]["text"]
     assert "| Delta | $40 |" in table_chunks[0]["text"]
+
+
+def test_extract_pdf_skips_unstructured_by_default(monkeypatch):
+    monkeypatch.setattr(chunker.settings, "PDF_USE_UNSTRUCTURED", False)
+    monkeypatch.setattr(
+        "app.rag.chunker.extract_pdf_with_unstructured",
+        lambda filepath: pytest.fail("Unstructured should be opt-in for PDF extraction"),
+    )
+    monkeypatch.setattr(
+        "app.rag.chunker.extract_pdf_with_tables",
+        lambda filepath: [{"text": "Stable pdfplumber text", "page": 1, "chunk_type": "text"}],
+    )
+
+    result = chunker.extract_pdf("stable.pdf")
+
+    assert result[0]["text"] == "Stable pdfplumber text"
+
+
+def test_extract_pdf_uses_unstructured_when_enabled(monkeypatch):
+    monkeypatch.setattr(chunker.settings, "PDF_USE_UNSTRUCTURED", True)
+    monkeypatch.setattr(
+        "app.rag.chunker.extract_pdf_with_unstructured",
+        lambda filepath: [{"text": "Unstructured text", "page": 1, "chunk_type": "text"}],
+    )
+    monkeypatch.setattr(
+        "app.rag.chunker.extract_pdf_with_tables",
+        lambda filepath: pytest.fail("pdfplumber should not run when enabled Unstructured succeeds"),
+    )
+
+    result = chunker.extract_pdf("advanced.pdf")
+
+    assert result[0]["text"] == "Unstructured text"
 
 
 def test_pdf_image_captioning_on_the_fly(monkeypatch):
@@ -215,15 +249,19 @@ def test_ocr_extraction_with_mock_pdf2image_and_pytesseract(tmp_path, monkeypatc
         return img
     
     # Mock pdf2image.convert_from_path to return image objects
-    def mock_convert_from_path(filepath, dpi=200, fmt='ppm'):
+    def mock_convert_from_path(filepath, **kwargs):
         return [create_test_image(), create_test_image()]
     
     # Mock pytesseract.image_to_string to return text
-    def mock_image_to_string(image, lang=None):
+    def mock_image_to_string(image, **kwargs):
         return "This is text extracted from scanned document page"
     
+    monkeypatch.setitem(sys.modules, "pytesseract", types.SimpleNamespace(
+        image_to_string=mock_image_to_string,
+        get_languages=lambda config="": ["eng"],
+    ))
+    monkeypatch.setattr("shutil.which", lambda binary: "/usr/bin/tesseract" if binary == "tesseract" else None)
     monkeypatch.setattr("pdf2image.convert_from_path", mock_convert_from_path)
-    monkeypatch.setattr("pytesseract.image_to_string", mock_image_to_string)
     
     # Test the OCR extraction function
     from app.rag.chunker import extract_pdf_with_ocr
@@ -267,18 +305,22 @@ def test_ocr_fallback_when_other_methods_fail(tmp_path, monkeypatch):
         return []
     
     # Mock pdf2image and pytesseract to succeed
-    def mock_convert_from_path(filepath, dpi=200, fmt='ppm'):
+    def mock_convert_from_path(filepath, **kwargs):
         return [create_test_image()]
     
-    def mock_image_to_string(image, lang=None):
+    def mock_image_to_string(image, **kwargs):
         return "Extracted text via OCR fallback"
     
     # Apply monkeypatches for the extraction methods
     monkeypatch.setattr("app.rag.chunker.extract_pdf_with_unstructured", mock_unstructured_extract)
     monkeypatch.setattr("app.rag.chunker.extract_pdf_with_tables", mock_tables_extract)
     monkeypatch.setattr("app.rag.chunker.extract_pdf_with_pymupdf", mock_pymupdf_extract)
+    monkeypatch.setitem(sys.modules, "pytesseract", types.SimpleNamespace(
+        image_to_string=mock_image_to_string,
+        get_languages=lambda config="": ["eng"],
+    ))
+    monkeypatch.setattr("shutil.which", lambda binary: "/usr/bin/tesseract" if binary == "tesseract" else None)
     monkeypatch.setattr("pdf2image.convert_from_path", mock_convert_from_path)
-    monkeypatch.setattr("pytesseract.image_to_string", mock_image_to_string)
     
     # Create a dummy PDF file
     test_pdf = tmp_path / "image_only.pdf"
@@ -317,14 +359,36 @@ def test_ocr_handles_missing_dependencies(tmp_path, monkeypatch):
     assert result == []
 
 
+def test_ocr_uses_only_installed_tesseract_languages(tmp_path, monkeypatch):
+    """Missing spa language data should not make OCR fail when eng is installed."""
+    from PIL import Image
+
+    used = {}
+    monkeypatch.setattr("shutil.which", lambda binary: "/usr/bin/tesseract" if binary == "tesseract" else None)
+    monkeypatch.setattr("pdf2image.convert_from_path", lambda filepath, **kwargs: [Image.new("RGB", (50, 50))])
+    monkeypatch.setitem(sys.modules, "pytesseract", types.SimpleNamespace(
+        get_languages=lambda config="": ["eng", "osd"],
+        image_to_string=lambda image, **kwargs: used.setdefault("lang", kwargs["lang"]) or "Text",
+    ))
+
+    test_pdf = tmp_path / "scan.pdf"
+    test_pdf.write_bytes(b"fake pdf")
+
+    result = chunker.extract_pdf_with_ocr(str(test_pdf))
+
+    assert result[0]["text"] == "eng"
+    assert used["lang"] == "eng"
+
+
 def test_ocr_handles_corrupted_pdf(tmp_path, monkeypatch):
     """Test that OCR handles corrupted PDFs gracefully."""
     from app.rag.chunker import extract_pdf_with_ocr
     
     # Mock pdf2image.convert_from_path to raise exception
-    def mock_convert_error(filepath, dpi=200, fmt='ppm'):
+    def mock_convert_error(filepath, **kwargs):
         raise Exception("PDF is corrupted or unreadable")
     
+    monkeypatch.setattr("shutil.which", lambda binary: "/usr/bin/tesseract" if binary == "tesseract" else None)
     monkeypatch.setattr("pdf2image.convert_from_path", mock_convert_error)
     
     # Create a dummy PDF file
@@ -346,17 +410,21 @@ def test_ocr_skips_empty_results(tmp_path, monkeypatch):
     
     # Mock to return 3 pages but only extract text from pages 1 and 3
     call_count = [0]
-    def mock_image_to_string(image, lang=None):
+    def mock_image_to_string(image, **kwargs):
         call_count[0] += 1
         if call_count[0] == 2:  # Skip page 2
             return ""
         return f"Text from page {call_count[0]}"
     
-    def mock_convert_from_path(filepath, dpi=200, fmt='ppm'):
+    def mock_convert_from_path(filepath, **kwargs):
         return [create_test_image(), create_test_image(), create_test_image()]
     
+    monkeypatch.setitem(sys.modules, "pytesseract", types.SimpleNamespace(
+        image_to_string=mock_image_to_string,
+        get_languages=lambda config="": ["eng"],
+    ))
+    monkeypatch.setattr("shutil.which", lambda binary: "/usr/bin/tesseract" if binary == "tesseract" else None)
     monkeypatch.setattr("pdf2image.convert_from_path", mock_convert_from_path)
-    monkeypatch.setattr("pytesseract.image_to_string", mock_image_to_string)
     
     from app.rag.chunker import extract_pdf_with_ocr
     
@@ -373,3 +441,65 @@ def test_ocr_skips_empty_results(tmp_path, monkeypatch):
     assert "Text from page 3" in result[1]["text"]
 
 
+def test_pdf_sparse_pages_are_replaced_with_ocr(monkeypatch):
+    """Text extraction that finds only tiny artifacts should OCR those pages."""
+    monkeypatch.setattr(chunker.settings, "PDF_USE_UNSTRUCTURED", False)
+    monkeypatch.setattr(
+        "app.rag.chunker.extract_pdf_with_tables",
+        lambda filepath: [{"text": "x", "page": 1, "chunk_type": "text"}],
+    )
+    monkeypatch.setattr(
+        "app.rag.chunker.extract_pdf_with_ocr",
+        lambda filepath, page_numbers=None: [
+            {"text": "OCR text from scanned page", "page": 1, "chunk_type": "text", "ocr_source": True}
+        ],
+    )
+
+    class FakePdf:
+        def __len__(self):
+            return 1
+        def close(self):
+            pass
+
+    monkeypatch.setattr("fitz.open", lambda filepath: FakePdf())
+
+    result = chunker.extract_pdf("scanned.pdf")
+
+    assert len(result) == 1
+    assert result[0]["text"] == "OCR text from scanned page"
+    assert result[0]["ocr_source"] is True
+
+
+def test_pdf_mixed_pages_only_ocr_sparse_page(monkeypatch):
+    """Digital pages stay intact while scanned pages get OCR text."""
+    monkeypatch.setattr(chunker.settings, "PDF_USE_UNSTRUCTURED", False)
+    rich_text = "This page already has enough selectable text to avoid OCR extraction."
+    monkeypatch.setattr(
+        "app.rag.chunker.extract_pdf_with_tables",
+        lambda filepath: [
+            {"text": rich_text, "page": 1, "chunk_type": "text"},
+            {"text": "2", "page": 2, "chunk_type": "text"},
+        ],
+    )
+    requested = {}
+
+    def fake_ocr(filepath, page_numbers=None):
+        requested["page_numbers"] = page_numbers
+        return [{"text": "OCR text from page two", "page": 2, "chunk_type": "text", "ocr_source": True}]
+
+    monkeypatch.setattr("app.rag.chunker.extract_pdf_with_ocr", fake_ocr)
+
+    class FakePdf:
+        def __len__(self):
+            return 2
+        def close(self):
+            pass
+
+    monkeypatch.setattr("fitz.open", lambda filepath: FakePdf())
+
+    result = chunker.extract_pdf("mixed.pdf")
+
+    assert requested["page_numbers"] == [2]
+    assert [page["page"] for page in result] == [1, 2]
+    assert result[0]["text"] == rich_text
+    assert result[1]["text"] == "OCR text from page two"
