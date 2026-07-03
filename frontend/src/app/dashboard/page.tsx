@@ -103,6 +103,33 @@ export default function DashboardPage() {
     setActiveDoc((current) => (current?.id === renamedDocument.id ? renamedDocument : current));
   }, []);
 
+  const documentsEqual = useCallback((a: DocInfo[], b: DocInfo[]) => {
+    if (a.length !== b.length) return false;
+
+    for (let i = 0; i < a.length; i += 1) {
+      const lhs = a[i];
+      const rhs = b[i];
+
+      if (
+        lhs.id !== rhs.id ||
+        lhs.original_name !== rhs.original_name ||
+        lhs.file_size !== rhs.file_size ||
+        lhs.page_count !== rhs.page_count ||
+        lhs.chunk_count !== rhs.chunk_count ||
+        lhs.status !== rhs.status ||
+        lhs.error_message !== rhs.error_message ||
+        lhs.uploaded_at !== rhs.uploaded_at ||
+        lhs.summary !== rhs.summary ||
+        lhs.chunk_size !== rhs.chunk_size ||
+        lhs.chunk_overlap !== rhs.chunk_overlap
+      ) {
+        return false;
+      }
+    }
+
+    return true;
+  }, []);
+
   // Auth guard
 
   useEffect(() => {
@@ -124,13 +151,20 @@ export default function DashboardPage() {
 
 
   // Load documents
-  const loadDocuments = useCallback(async () => {
-    setDocumentsLoading(true);
+  const loadDocuments = useCallback(async (skipLoading = false) => {
+    if (!skipLoading) {
+      setDocumentsLoading(true);
+    }
+
     try {
       const data = await api.get<{ documents?: DocInfo[]; items?: DocInfo[] }>(
         "/api/v1/documents/"
       );
-      setDocuments(data?.documents ?? data?.items ?? []);
+      const nextDocuments = data?.documents ?? data?.items ?? [];
+
+      setDocuments((current) =>
+        documentsEqual(current, nextDocuments) ? current : nextDocuments
+      );
       setConnectionError("");
     } catch (err) {
       const message = err instanceof Error ? err.message : CONNECTION_ERROR_MESSAGE;
@@ -140,9 +174,11 @@ export default function DashboardPage() {
           : `⚠️ ${message}`
       );
     } finally {
-      setDocumentsLoading(false);
+      if (!skipLoading) {
+        setDocumentsLoading(false);
+      }
     }
-  }, []);
+  }, [documentsEqual]);
 
   useEffect(() => {
     if (!user) return;
@@ -177,7 +213,7 @@ export default function DashboardPage() {
     );
     if (!hasPending) return;
 
-    const interval = setInterval(loadDocuments, 3000);
+    const interval = setInterval(() => void loadDocuments(true), 3000);
     return () => clearInterval(interval);
   }, [documents, loadDocuments]);
 
