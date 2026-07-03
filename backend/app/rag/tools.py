@@ -282,6 +282,7 @@ class CodeReviewTool(BaseTool):
     description: str = (
         "Useful for reviewing code snippets and providing feedback or suggestions. "
         "Use this when the user asks for code quality checks or improvements."
+        "You can use this in combination with the PDF search tool to use references from the documents."
     )
     args_schema: Type[BaseModel] = CodeReviewSchema
 

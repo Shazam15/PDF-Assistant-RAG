@@ -27,7 +27,10 @@ settings = get_settings()
 
 def get_llm_client(hf_token: Optional[str] = None):
     """Create an Ollama client (hf_token ignored, kept for compatibility)."""
-    return ChatOllama(model=settings.LLM_MODEL, temperature=0)
+    return ChatOllama(
+        model=settings.LLM_MODEL, 
+        temperature=0,
+        num_predict=settings.LLM_MAX_NEW_TOKENS)
 
 
 def _format_chat_history(messages: List[Dict[str, str]]) -> str:
@@ -85,6 +88,7 @@ def get_agent_executor(
     chat_llm = ChatOllama(
         model=settings.LLM_MODEL,
         temperature=settings.LLM_TEMPERATURE,
+        num_predict=settings.LLM_MAX_NEW_TOKENS
     )
 
     global_style_reference = _load_global_style_reference()

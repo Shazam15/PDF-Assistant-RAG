@@ -139,8 +139,8 @@ class Settings(BaseSettings):
 
     # ── LLM (HuggingFace Inference API) ──────────────────
     HF_TOKEN: str = os.getenv("HF_TOKEN", "")  # HuggingFace API token (set in .env)
-    LLM_MODEL: str = "gemma2:2b"
-    LLM_MAX_NEW_TOKENS: int = 1024
+    LLM_MODEL: str = "mistral"
+    LLM_MAX_NEW_TOKENS: int = 2048
     LLM_TEMPERATURE: float = 0.3
     AGENT_MAX_ITERATIONS: int = 5
     SUMMARY_MAX_TOKENS: int = 512

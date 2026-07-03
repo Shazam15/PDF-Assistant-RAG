@@ -45,7 +45,11 @@ def generate_document_summary_from_chunks(
         from langchain_ollama import ChatOllama
         from langchain_core.messages import SystemMessage, HumanMessage
 
-        chat_llm = ChatOllama(model=settings.LLM_MODEL, temperature=0.3)
+        chat_llm = ChatOllama(
+            model=settings.LLM_MODEL, 
+            temperature=0.3,
+            num_predict=settings.SUMMARY_MAX_TOKENS
+            )
         response = chat_llm.invoke([
             SystemMessage(content="You are a helpful assistant that summarizes documents."),
             HumanMessage(content=prompt),
