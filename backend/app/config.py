@@ -9,12 +9,11 @@ from functools import lru_cache
 from pydantic import ConfigDict, model_validator
 from pydantic_settings import BaseSettings
 
-
 class Settings(BaseSettings):
     model_config = ConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # ── App ──────────────────────────────────────────────
-    APP_NAME: str = "Document AI Analyst"
+    APP_NAME: str = "ATLAS"
     SECRET_KEY: str = ""
     DEBUG: bool = False
     ENVIRONMENT: str = "development"

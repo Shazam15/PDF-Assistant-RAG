@@ -72,7 +72,6 @@ def _load_global_style_reference() -> str:
         logger.warning("Could not load global style reference: %s", exc)
         return ""
 
-
 def get_agent_executor(
     user_id: str,
     document_id: Optional[str] = None,
@@ -376,7 +375,7 @@ def generate_answer(
             response = chat_llm.invoke(messages)
             answer = response.content.strip()
         except Exception:
-            answer = "¡Hola! Soy Document AI Analyst. ¿En qué puedo ayudarte con tus documentos?"
+            answer = "¡Hola! Soy ATLAS. ¿En qué puedo ayudarte hoy?"
         return {"answer": answer, "sources": []}
 
     try:
