@@ -55,6 +55,14 @@ export interface DocInfo {
   uploaded_at: string;
 }
 
+interface DocumentListPayload {
+  documents?: DocInfo[];
+  items?: DocInfo[];
+  total?: number;
+  page?: number;
+  pages?: number;
+}
+
 export default function DashboardPage() {
   const { user, loading, initialized } = useAuth();
   const router = useRouter();
@@ -157,10 +165,29 @@ export default function DashboardPage() {
     }
 
     try {
-      const data = await api.get<{ documents?: DocInfo[]; items?: DocInfo[] }>(
-        "/api/v1/documents/"
-      );
-      const nextDocuments = data?.documents ?? data?.items ?? [];
+      const firstPage = await api.get<DocumentListPayload>("/api/v1/documents/");
+      const firstPageDocuments = firstPage?.documents ?? firstPage?.items ?? [];
+      let nextDocuments = firstPageDocuments;
+
+      if (firstPage?.items && (firstPage.pages ?? 1) > 1) {
+        const remainingPages = Array.from(
+          { length: (firstPage.pages ?? 1) - 1 },
+          (_, index) => index + 2
+        );
+
+        const remainingResponses = await Promise.all(
+          remainingPages.map((page) =>
+            api.get<DocumentListPayload>(`/api/v1/documents/?page=${page}`)
+          )
+        );
+
+        nextDocuments = [
+          ...firstPageDocuments,
+          ...remainingResponses.flatMap(
+            (response) => response?.items ?? response?.documents ?? []
+          ),
+        ];
+      }
 
       setDocuments((current) =>
         documentsEqual(current, nextDocuments) ? current : nextDocuments

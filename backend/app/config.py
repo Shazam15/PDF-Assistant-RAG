@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     # ── Database ─────────────────────────────────────────
     DATABASE_URL: str = "sqlite:///./data/app.db"
     DATABASE_POOL_SIZE: int = 10
-    DATABASE_MAX_OVERFLOW: int = 20
+    DATABASE_MAX_OVERFLOW: int = 25
     DATABASE_POOL_PRE_PING: bool = True
 
     # ── Auth ─────────────────────────────────────────────
