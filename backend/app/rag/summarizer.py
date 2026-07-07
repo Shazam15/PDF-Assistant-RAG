@@ -39,7 +39,7 @@ def generate_document_summary_from_chunks(
     if not text_to_summarise:
         return None
 
-    prompt = f"Summarise the following text in {max_sentences} sentences:\n\n{text_to_summarise}"
+    prompt = f"Resume el siguiente texto en {max_sentences} oraciones:\n\n{text_to_summarise}"
 
     try:
         from langchain_ollama import ChatOllama
@@ -51,7 +51,7 @@ def generate_document_summary_from_chunks(
             num_predict=settings.SUMMARY_MAX_TOKENS
             )
         response = chat_llm.invoke([
-            SystemMessage(content="You are a helpful assistant that summarizes documents."),
+            SystemMessage(content="Eres un asistente útil y conciso que resume documentos de manera clara y precisa."),
             HumanMessage(content=prompt),
         ])
         summary = response.content.strip()
