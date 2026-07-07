@@ -163,8 +163,8 @@ class MathSchema(BaseModel):
     )
 
 
-#class WebSearchSchema(BaseModel):
-#    query: str = Field(description="The query to search the live web for.")
+class WebSearchSchema(BaseModel):
+    query: str = Field(description="The query to search the live web for.")
 
 class CodeReviewSchema(BaseModel):
     query: str = Field(description="Solicitud de revisión técnica o instrucciones de revisión.")
@@ -257,17 +257,17 @@ class MathTool(BaseTool):
             return f"Error evaluating expression: {str(e)}. Please ensure it's a valid numerical expression."
 
 
-#class WebSearchTool(BaseTool):
-#    name: str = "web_search"
-#    description: str = (
-#        "Useful for fact-checking information or finding live data from the internet. "
-#        "Use this only when the PDF content is insufficient or outdated."
-#    )
-#    args_schema: Type[BaseModel] = WebSearchSchema
-#
-#    def _run(self, query: str) -> str:
-#        """Execute a live web search via DuckDuckGo."""
-#        return web_search(query)
+class WebSearchTool(BaseTool):
+    name: str = "web_search"
+    description: str = (
+        "Useful for fact-checking information or finding live data from the internet. "
+        "Use this only when the PDF content is insufficient or outdated."
+    )
+    args_schema: Type[BaseModel] = WebSearchSchema
+
+    def _run(self, query: str) -> str:
+        """Execute a live web search via DuckDuckGo."""
+        return web_search(query)
 
 
 # ── HuggingFace Tool Definitions ──────────────────────

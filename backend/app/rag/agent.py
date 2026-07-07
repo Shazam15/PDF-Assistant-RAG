@@ -18,7 +18,7 @@ from app.rag.graph_retriever import get_entity_context
 from app.rag.prompts import AGENT_SYSTEM_PROMPT, RAG_PROMPT_TEMPLATE, CODE_REVIEW_PROMPT
 from app.exceptions import ExternalServiceException
 from app.rag.security import MALFORMED_OUTPUT_MESSAGE, OutputParserError, parse_agent_output
-from app.rag.tools import PDFSearchTool, MathTool, CodeReviewTool
+from app.rag.tools import PDFSearchTool, MathTool, CodeReviewTool, WebSearchTool
 from app.rag.tracing import trace_function
 
 logger = logging.getLogger(__name__)
@@ -82,7 +82,7 @@ def get_agent_executor(
     """Initialize the LangChain ReAct agent executor."""
     pdf_tool = PDFSearchTool(user_id=user_id, document_id=document_id, top_k=top_k)
     code_review_tool = CodeReviewTool(user_id=user_id, document_id=document_id, top_k=top_k)
-    tools = [pdf_tool, code_review_tool, MathTool()]
+    tools = [pdf_tool, code_review_tool, MathTool(), WebSearchTool()]
 
     chat_llm = ChatOllama(
         model=settings.LLM_MODEL,

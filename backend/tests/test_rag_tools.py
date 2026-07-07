@@ -7,6 +7,7 @@ from app.rag.tools import (
     WEB_SEARCH_TOOL,
     CodeReviewTool,
     MathTool,
+    WebSearchTool,
     PDFSearchTool,
     calculate_expression,
     execute_tool,
@@ -169,12 +170,12 @@ def test_web_search_handles_provider_errors(monkeypatch):
     )
 
 
-#def test_web_search_tool_uses_shared_search_function(monkeypatch):
-#    monkeypatch.setattr(tools, "web_search", lambda query: f"searched: {query}")
-#
-#    result = WebSearchTool().run({"query": "retrieval augmented generation"})
-#
-#    assert result == "searched: retrieval augmented generation"
+def test_web_search_tool_uses_shared_search_function(monkeypatch):
+    monkeypatch.setattr(tools, "web_search", lambda query: f"searched: {query}")
+
+    result = WebSearchTool().run({"query": "retrieval augmented generation"})
+
+    assert result == "searched: retrieval augmented generation"
 
 
 def test_pdf_search_tool_formats_chunks_and_graph_context(monkeypatch):
