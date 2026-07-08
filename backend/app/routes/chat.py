@@ -4,6 +4,7 @@ Chat routes — ask questions with RAG, stream responses via SSE, manage history
 
 import html
 import json
+import math
 import time
 from datetime import datetime, timezone
 from io import BytesIO
@@ -42,6 +43,42 @@ from app.schemas import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
+
+
+def _json_safe_value(value):
+    if isinstance(value, float):
+        return value if math.isfinite(value) else 0.0
+    if isinstance(value, list):
+        return [_json_safe_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _json_safe_value(item) for key, item in value.items()}
+    return value
+
+
+def _sanitize_source(source: dict) -> dict:
+    safe_source = _json_safe_value(source)
+    for key in ("score", "confidence"):
+        try:
+            value = float(safe_source.get(key, 0))
+        except (TypeError, ValueError):
+            value = 0.0
+        safe_source[key] = value if math.isfinite(value) else 0.0
+    return safe_source
+
+
+def _sanitize_sources(sources: list | None) -> list:
+    if not sources:
+        return []
+    return [_sanitize_source(source) for source in sources if isinstance(source, dict)]
+
+
+def _load_sources(sources_json: str | None) -> list[SourceChunk]:
+    if not sources_json:
+        return []
+    try:
+        return [SourceChunk(**source) for source in _sanitize_sources(json.loads(sources_json))]
+    except Exception:
+        return []
 
 
 @router.websocket("/ws")
@@ -184,8 +221,9 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
                         if payload.get("type") == "token":
                             full_answer += payload.get("data", "")
                         elif payload.get("type") == "sources":
-                            sources = payload.get("data", [])
-                        await websocket.send_json(payload)
+                            sources = _sanitize_sources(payload.get("data", []))
+                            payload["data"] = sources
+                        await websocket.send_json(_json_safe_value(payload))
                     else:
                         # Fallback: send raw token
                         full_answer += chunk
@@ -433,12 +471,7 @@ def get_session_history(
 
     formatted = []
     for msg in messages:
-        sources = []
-        if msg.sources_json:
-            try:
-                sources = [SourceChunk(**s) for s in json.loads(msg.sources_json)]
-            except Exception:
-                pass
+        sources = _load_sources(msg.sources_json)
 
         formatted.append(
             ChatMessageResponse(
@@ -609,20 +642,22 @@ def ask_question(
             answer=result["answer"],
         )
 
+        sources = _sanitize_sources(result["sources"])
+
         # Save to chat history
         _save_messages(
             db,
             user.id,
             [
                 (payload.document_id, "user", payload.question, None),
-                (payload.document_id, "assistant", result["answer"], result["sources"]),
+                (payload.document_id, "assistant", result["answer"], sources),
             ],
             session_id=session_id,
         )
 
         return ChatResponse(
             answer=result["answer"],
-            sources=[SourceChunk(**s) for s in result["sources"]],
+            sources=[SourceChunk(**s) for s in sources],
             document_id=payload.document_id,
         )
     finally:
@@ -765,7 +800,7 @@ def ask_question_stream(
                         if data.get("type") == "token":
                             full_answer += data.get("data", "")
                         elif data.get("type") == "sources":
-                            sources = data.get("data", [])
+                            sources = _sanitize_sources(data.get("data", []))
                 except Exception:
                     pass
 
@@ -830,12 +865,7 @@ def get_chat_history(
 
     formatted = []
     for msg in messages:
-        sources = []
-        if msg.sources_json:
-            try:
-                sources = [SourceChunk(**s) for s in json.loads(msg.sources_json)]
-            except Exception:
-                pass
+        sources = _load_sources(msg.sources_json)
 
         formatted.append(
             ChatMessageResponse(
@@ -1012,13 +1042,14 @@ def _save_messages(
         session_id = session.id
 
     for document_id, role, content, sources in messages:
+        safe_sources = _sanitize_sources(sources)
         msg = ChatMessage(
             user_id=user_id,
             document_id=document_id,
             session_id=session_id,
             role=role,
             content=content,
-            sources_json=json.dumps(sources) if sources else None,
+            sources_json=json.dumps(safe_sources, allow_nan=False) if safe_sources else None,
         )
         db.add(msg)
     db.commit()
@@ -1044,12 +1075,7 @@ def _save_message(
 
 def _share_answer_response(message: ChatMessage) -> ShareAnswerResponse:
     """Format a shared assistant message with only safe public fields."""
-    sources = []
-    if message.sources_json:
-        try:
-            sources = [SourceChunk(**item) for item in json.loads(message.sources_json)]
-        except Exception:
-            sources = []
+    sources = _load_sources(message.sources_json)
 
     return ShareAnswerResponse(
         id=str(message.id),
@@ -1084,7 +1110,7 @@ def _format_markdown(doc, messages) -> str:
 
         if msg.role == "assistant" and msg.sources_json:
             try:
-                sources = json.loads(msg.sources_json)
+                sources = _sanitize_sources(json.loads(msg.sources_json))
                 if sources:
                     lines.append("**Sources:**")
                     lines.append("")
@@ -1127,7 +1153,7 @@ def _format_plaintext(doc, messages) -> str:
 
         if msg.role == "assistant" and msg.sources_json:
             try:
-                sources = json.loads(msg.sources_json)
+                sources = _sanitize_sources(json.loads(msg.sources_json))
                 if sources:
                     lines.append("")
                     lines.append("Sources:")

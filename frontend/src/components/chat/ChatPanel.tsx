@@ -196,6 +196,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
 
       const ws = new WebSocket(wsUrl);
       let questionSent = false;
+      let completed = false;
 
       const wsDone = new Promise<void>((resolve, reject) => {
         ws.onopen = () => {
@@ -255,6 +256,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
               ws.close();
               reject(new Error(String(event.data)));
             } else if (event.type === "done") {
+              completed = true;
               setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, isStreaming: false } : m)));
               ws.close();
               resolve();
@@ -270,7 +272,21 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
         };
 
         ws.onclose = () => {
-          resolve();
+          clearTimeout(connectTimeout);
+          if (completed) {
+            resolve();
+            return;
+          }
+          if (!questionSent) {
+            reject(new Error("WebSocket closed before sending the question"));
+            return;
+          }
+          if (assistantCreated) {
+            setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, isStreaming: false } : m)));
+            resolve();
+            return;
+          }
+          reject(new Error("WebSocket closed before completion"));
         };
       });
 

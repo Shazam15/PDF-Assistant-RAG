@@ -4,6 +4,7 @@ Intelligently chooses between PDF search, Web Search, and Math tools.
 """
 import logging
 import json
+import math
 import os
 import re
 from typing import List, Dict, Any, Optional, Generator
@@ -142,6 +143,8 @@ def _parse_highlight_rects(bbox: Any) -> List[Dict[str, Any]]:
         x0, y0, x1, y1 = rect
         if not all(isinstance(v, (int, float)) for v in (x0, y0, x1, y1)):
             continue
+        if not all(math.isfinite(float(v)) for v in (x0, y0, x1, y1)):
+            continue
         rects.append(
             {
                 "left": x0,
@@ -155,13 +158,21 @@ def _parse_highlight_rects(bbox: Any) -> List[Dict[str, Any]]:
     return rects
 
 #Carga los documentos y genera un payload de fuente para cada fragmento de texto recuperado.
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    return number if math.isfinite(number) else default
+
+
 def _source_payload(chunk: Dict[str, Any]) -> Dict[str, Any]:
     source = {
         "text": chunk["text"][:300] + ("..." if len(chunk["text"]) > 300 else ""),
         "filename": chunk["filename"],
         "page": chunk["page"],
-        "score": chunk["score"],
-        "confidence": chunk.get("confidence", 0),
+        "score": _safe_float(chunk.get("score")),
+        "confidence": _safe_float(chunk.get("confidence", 0)),
         "bbox": chunk.get("bbox", ""),
     }
     highlight_rects = _parse_highlight_rects(chunk.get("bbox"))
