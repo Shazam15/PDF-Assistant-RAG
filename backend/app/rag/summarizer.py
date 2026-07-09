@@ -25,7 +25,7 @@ def generate_document_summary_from_chunks(
     chunks: List[Dict[str, Any]],
     max_sentences: int = 3,
 ) -> str | None:
-    """Generate a short document summary from already extracted chunks."""
+    """Generar un resumen corto del documento usando chunk extraidos"""
     if not chunks:
         return None
 
@@ -63,19 +63,20 @@ def generate_document_summary_from_chunks(
 
 def generate_document_summary(filePath: str, max_sentences: int = 3) -> str | None:
     """
-    Extract text from the first few chunks of the document and ask LLM to summarise.
-    Returns a short summary string, or None on failure.
+    Extraer el texto de los primeros fragmentos del documento y pedir al LLM que resuma.
+    Devuelve un resumen corto como cadena, o None si falla.
+
 
     Args:
-        filePath (str): Path to the document file.
-        max_sentences (int): Maximum number of sentences in the summary.
+        filePath (str): Path al archivo del documento.
+        max_sentences (int): Maximo de oraciones que puede tener el resumen.
     
     Returns:
-        str | None: Summary text or None if summarisation fails.
+        str | None: Texto del resumen o None si falla la generación del resumen.
     
-    Note:
-        - This function is designed to be called after a document is uploaded and processed.
-        - It uses the first few chunks of the document to generate a summary, which is then stored in the database.        
+    Nota:
+        - Esta función está diseñada para ser llamada después de que un documento se haya subido y procesado.
+        - Usa los primeros fragmentos del documento para generar un resumen, que luego se almacena en la base de datos.      
     """
     from app.rag.chunker import chunk_document
 

@@ -141,7 +141,7 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "mistral"
     LLM_MAX_NEW_TOKENS: int = 2048
     LLM_TEMPERATURE: float = 0.3
-    AGENT_MAX_ITERATIONS: int = 5
+    AGENT_MAX_ITERATIONS: int = 8
     SUMMARY_MAX_TOKENS: int = 512
 
     # ── LangSmith Tracing (optional) ─────────────────────
