@@ -13,7 +13,7 @@ import hashlib
 import json
 import logging
 import os
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -76,8 +76,14 @@ _lru_store: dict = {}
 _lru_order: list = []
 
 
-def _is_invalid_cached_answer(answer: str) -> bool:
-    text = (answer or "").lower()
+def _cached_answer_text(payload: Any) -> str:
+    if isinstance(payload, dict):
+        return str(payload.get("answer", ""))
+    return str(payload or "")
+
+
+def _is_invalid_cached_answer(answer: Any) -> bool:
+    text = _cached_answer_text(answer).lower()
     invalid_phrases = [
         "agent stopped due to iteration limit",
         "agent stopped due to iteration",
@@ -118,7 +124,12 @@ def _lru_delete(key: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def make_cache_key(document_id: str, question: str) -> str:
+def make_cache_key(
+    document_id: str,
+    question: str,
+    user_id: str = "",
+    top_k: Optional[int] = None,
+) -> str:
     """
     Generate a stable, short cache key from document_id + question.
 
@@ -127,16 +138,21 @@ def make_cache_key(document_id: str, question: str) -> str:
     - Unique per (document_id, question) pair
     - Safe for Redis keys and dict keys
     """
-    raw = f"{document_id}:{question.strip().lower()}"
+    raw = f"{user_id}:{document_id}:{top_k or ''}:{question.strip().lower()}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def get_cached_response(document_id: str, question: str) -> Optional[str]:
+def get_cached_response(
+    document_id: str,
+    question: str,
+    user_id: str = "",
+    top_k: Optional[int] = None,
+) -> Optional[dict[str, Any]]:
     """
     Look up a cached answer for a (document_id, question) pair.
     Returns the answer string on hit, None on miss.
     """
-    key = make_cache_key(document_id, question)
+    key = make_cache_key(document_id, question, user_id=user_id, top_k=top_k)
     r = _get_redis()
 
     if r is not None:
@@ -144,28 +160,39 @@ def get_cached_response(document_id: str, question: str) -> Optional[str]:
             value = r.get(key)
             if value:
                 logger.debug("Cache HIT (Redis) for key %s", key[:12])
-                answer = json.loads(value)
-                if _is_invalid_cached_answer(answer):
+                payload = json.loads(value)
+                if _is_invalid_cached_answer(payload):
                     r.delete(key)
                     return None
-                return answer
+                if isinstance(payload, dict):
+                    return payload
+                return {"answer": str(payload), "sources": []}
         except Exception as exc:  # noqa: BLE001
             logger.warning("Redis GET failed (%s) — checking LRU.", exc)
 
     value = _lru_get(key)
     if value:
         logger.debug("Cache HIT (LRU) for key %s", key[:12])
-        answer = json.loads(value)
-        if _is_invalid_cached_answer(answer):
+        payload = json.loads(value)
+        if _is_invalid_cached_answer(payload):
             _lru_delete(key)
             return None
-        return answer
+        if isinstance(payload, dict):
+            return payload
+        return {"answer": str(payload), "sources": []}
 
     logger.debug("Cache MISS for key %s", key[:12])
     return None
 
 
-def set_cached_response(document_id: str, question: str, answer: str) -> None:
+def set_cached_response(
+    document_id: str,
+    question: str,
+    answer: str,
+    sources: Optional[list[dict[str, Any]]] = None,
+    user_id: str = "",
+    top_k: Optional[int] = None,
+) -> None:
     """
     Store an answer. Tries Redis first; falls back to LRU.
     TTL is controlled by the CACHE_TTL environment variable.
@@ -174,8 +201,8 @@ def set_cached_response(document_id: str, question: str, answer: str) -> None:
         logger.debug("Skipping invalid cache answer for question: %s", question[:40])
         return
 
-    key = make_cache_key(document_id, question)
-    serialised = json.dumps(answer)
+    key = make_cache_key(document_id, question, user_id=user_id, top_k=top_k)
+    serialised = json.dumps({"answer": answer, "sources": sources or []})
     r = _get_redis()
 
     if r is not None:
@@ -190,9 +217,14 @@ def set_cached_response(document_id: str, question: str, answer: str) -> None:
     logger.debug("Cache SET (LRU) key %s", key[:12])
 
 
-def invalidate_cache(document_id: str, question: str) -> None:
+def invalidate_cache(
+    document_id: str,
+    question: str,
+    user_id: str = "",
+    top_k: Optional[int] = None,
+) -> None:
     """Remove one cache entry — useful when a document is re-indexed."""
-    key = make_cache_key(document_id, question)
+    key = make_cache_key(document_id, question, user_id=user_id, top_k=top_k)
     r = _get_redis()
     if r is not None:
         try:

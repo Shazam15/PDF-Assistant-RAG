@@ -15,6 +15,11 @@ export interface SourceChunk {
   text: string;
   filename: string;
   page: number;
+  source_type?: "document" | "web";
+  source_id?: string;
+  title?: string;
+  url?: string;
+  snippet?: string;
   score?: number;
   confidence?: number;
   highlightRects?: SourceBoundingBox[];

@@ -57,6 +57,11 @@ def store_bm25_index(chunks: List[Dict[str, Any]], document_id: str, filename: s
             "filename": filename,
             "document_id": document_id,
             "page": chunk.get("page", 1),
+            "chunk_index": chunk.get("chunk_index"),
+            "chunk_type": chunk.get("chunk_type", "text"),
+            "bbox": chunk.get("bbox", ""),
+            **({"table_index": chunk.get("table_index", 0)} if chunk.get("chunk_type") == "table" else {}),
+            **({"is_image": True, "image_caption": chunk.get("image_caption", "")} if chunk.get("is_image") else {}),
         })
 
     data = {

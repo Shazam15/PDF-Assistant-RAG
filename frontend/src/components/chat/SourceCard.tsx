@@ -136,25 +136,33 @@ export default function SourceCard({ sources = [], onPageClick }: Props) {
             const badgeMeta = getConfidenceBadgeMeta(
               getPrimarySourceMetric(src)
             );
+            const isWebSource = src.source_type === "web";
+            const label = isWebSource ? src.source_id || `W${i + 1}` : `p.${src.page}`;
 
             return (
               <Tooltip key={i}>
                 <TooltipTrigger
                   type="button"
                   className="inline-flex"
-                  onClick={() =>
-                    onPageClick({
-                      page: src.page + 1,
-                      highlightRects: src.highlightRects,
-                    })
+                  onClick={() => {
+                    if (!isWebSource) {
+                      onPageClick({
+                        page: src.page,
+                        highlightRects: src.highlightRects,
+                      });
+                    }
+                  }}
+                  aria-label={
+                    isWebSource
+                      ? `Open web source ${label}. Confidence ${badgeMeta.label}`
+                      : `Go to source page ${src.page}. Confidence ${badgeMeta.label}`
                   }
-                  aria-label={`Go to source page ${src.page + 1}. Confidence ${badgeMeta.label}`}
                 >
                   <Badge
                     variant="outline"
                     className={`text-[10px] h-5 cursor-pointer hover:bg-primary/20 transition-colors ${badgeMeta.className}`}
                   >
-                    p.{src.page + 1} - {badgeMeta.label}
+                    {label} - {badgeMeta.label}
                   </Badge>
                 </TooltipTrigger>
                 <TooltipContent
@@ -167,7 +175,7 @@ export default function SourceCard({ sources = [], onPageClick }: Props) {
                     <MetricBadge label="Confianza" value={src.confidence} />
                   </div>
                   <p className="text-[11px] leading-relaxed line-clamp-6">
-                    {src.text}
+                    {src.source_type === "web" ? src.snippet || src.text : src.text}
                   </p>
                 </TooltipContent>
               </Tooltip>
@@ -186,11 +194,17 @@ export default function SourceCard({ sources = [], onPageClick }: Props) {
               <div className="flex items-center justify-between gap-2 mb-1.5">
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
                   <span className="truncate text-[10px] font-medium text-muted-foreground">
-                    {src.filename}
+                    {src.source_type === "web" ? src.title || src.filename : src.filename}
                   </span>
-                  <Badge variant="outline" className="h-5 px-1.5 text-[9px]">
-                    Page {src.page + 1}
-                  </Badge>
+                  {src.source_type === "web" ? (
+                    <Badge variant="outline" className="h-5 px-1.5 text-[9px]">
+                      {src.source_id || `W${i + 1}`}
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="h-5 px-1.5 text-[9px]">
+                      Page {src.page}
+                    </Badge>
+                  )}
                   <MetricBadge label="Score" value={src.score} />
                   <MetricBadge label="Confianza" value={src.confidence} />
                 </div>
@@ -198,13 +212,21 @@ export default function SourceCard({ sources = [], onPageClick }: Props) {
                   variant="ghost"
                   size="sm"
                   className="h-6 shrink-0 px-2 text-[10px]"
-                  onClick={() =>
+                  onClick={() => {
+                    if (src.source_type === "web" && src.url) {
+                      window.open(src.url, "_blank", "noopener,noreferrer");
+                      return;
+                    }
                     onPageClick({
-                      page: src.page + 1,
+                      page: src.page,
                       highlightRects: src.highlightRects,
-                    })
+                    });
+                  }}
+                  aria-label={
+                    src.source_type === "web"
+                      ? `View web source ${src.source_id || i + 1}`
+                      : `View source page ${src.page}`
                   }
-                  aria-label={`View source page ${src.page + 1}`}
                 >
                   <Eye className="w-3 h-3 mr-1" />
                   View
@@ -215,7 +237,7 @@ export default function SourceCard({ sources = [], onPageClick }: Props) {
                   excerptOpen.has(i) ? "" : "line-clamp-3"
                 }`}
               >
-                {src.text}
+                {src.source_type === "web" ? src.snippet || src.text : src.text}
               </p>
               {src.text.length > EXCERPT_THRESHOLD && (
                 <button

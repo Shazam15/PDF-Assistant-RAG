@@ -33,18 +33,18 @@ describe("SourceCard", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("2 sources cited")).toBeInTheDocument();
     expect(
-      screen.getByLabelText("Go to source page 3. Confidence Medium"),
-    ).toHaveTextContent("p.3 - Medium");
+      screen.getByLabelText("Go to source page 2. Confidence Medium"),
+    ).toHaveTextContent("p.2 - Medium");
     expect(
-      screen.getByLabelText("Go to source page 5. Confidence Low"),
-    ).toHaveTextContent("p.5 - Low");
+      screen.getByLabelText("Go to source page 4. Confidence Low"),
+    ).toHaveTextContent("p.4 - Low");
 
     await user.click(
-      screen.getByLabelText("Go to source page 3. Confidence Medium"),
+      screen.getByLabelText("Go to source page 2. Confidence Medium"),
     );
 
     expect(onPageClick).toHaveBeenCalledWith({
-      page: 3,
+      page: 2,
       highlightRects: sources[0].highlightRects,
     });
   });
@@ -60,7 +60,7 @@ describe("SourceCard", () => {
       screen.getByRole("button", { name: "Collapse 2 cited sources" }),
     ).toBeInTheDocument();
     expect(screen.getByText("annual-report.pdf")).toBeInTheDocument();
-    expect(screen.getByText("Page 3")).toBeInTheDocument();
+    expect(screen.getByText("Page 2")).toBeInTheDocument();
     expect(screen.getByText("Score: High")).toBeInTheDocument();
     expect(screen.getByText("Confidence: Medium")).toBeInTheDocument();
     expect(

@@ -148,10 +148,10 @@ def test_web_search_formats_duckduckgo_results(monkeypatch):
     result = web_search("agentic rag", max_results=2)
 
     assert fake_ddgs.calls == [("agentic rag", 2)]
-    assert "1. **First result**" in result
+    assert "Source [W1]: First result" in result
     assert "URL: https://example.com/one" in result
-    assert "Useful snippet" in result
-    assert "2. **Second result**" in result
+    assert "Snippet: Useful snippet" in result
+    assert "Source [W2]: Second result" in result
 
 
 def test_web_search_handles_empty_results(monkeypatch):
@@ -171,11 +171,16 @@ def test_web_search_handles_provider_errors(monkeypatch):
 
 
 def test_web_search_tool_uses_shared_search_function(monkeypatch):
-    monkeypatch.setattr(tools, "web_search", lambda query: f"searched: {query}")
+    monkeypatch.setattr(
+        tools,
+        "structured_web_search",
+        lambda query: [{"title": "Result", "url": "https://example.com", "snippet": "searched", "text": "searched"}],
+    )
 
     result = WebSearchTool().run({"query": "retrieval augmented generation"})
 
-    assert result == "searched: retrieval augmented generation"
+    assert "Source [W1]: Result" in result
+    assert "URL: https://example.com" in result
 
 
 def test_pdf_search_tool_formats_chunks_and_graph_context(monkeypatch):
@@ -256,6 +261,6 @@ def test_huggingface_tool_definitions_expose_expected_schemas():
 def test_tools_list_includes_code_review():
     from app.rag.agent import get_agent_executor
 
-    executor, _, _ = get_agent_executor("user-1")
+    executor, _, _, _ = get_agent_executor("user-1")
     tool_names = [getattr(tool, "name", None) for tool in getattr(executor, "tools", [])]
     assert "code_review" in tool_names

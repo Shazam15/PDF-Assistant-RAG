@@ -24,6 +24,10 @@ from app.rag.tracing import trace_function
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+MIN_SOURCE_CONFIDENCE = 0.01
+INSUFFICIENT_EVIDENCE_MESSAGE = (
+    "No encontré información suficiente en las fuentes recuperadas para responder esta pregunta con citas verificables."
+)
 
 
 def get_llm_client(hf_token: Optional[str] = None):
@@ -83,7 +87,8 @@ def get_agent_executor(
     """Initialize the LangChain ReAct agent executor."""
     pdf_tool = PDFSearchTool(user_id=user_id, document_id=document_id, top_k=top_k)
     code_review_tool = CodeReviewTool(user_id=user_id, document_id=document_id, top_k=top_k)
-    tools = [pdf_tool, code_review_tool, MathTool(), WebSearchTool()]
+    web_tool = WebSearchTool()
+    tools = [pdf_tool, code_review_tool, MathTool(), web_tool]
 
     chat_llm = ChatOllama(
         model=settings.LLM_MODEL,
@@ -105,7 +110,7 @@ def get_agent_executor(
     )
 
     formatted_history = _format_chat_history(chat_history) if chat_history else ""
-    return executor, pdf_tool, formatted_history
+    return executor, pdf_tool, web_tool, formatted_history
 
 
 def is_greeting(question: str) -> bool:
@@ -166,8 +171,25 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
     return number if math.isfinite(number) else default
 
 
-def _source_payload(chunk: Dict[str, Any]) -> Dict[str, Any]:
+def _source_payload(chunk: Dict[str, Any], fallback_id: Optional[str] = None) -> Dict[str, Any]:
+    if chunk.get("source_type") == "web":
+        text = chunk.get("text") or chunk.get("snippet", "")
+        return {
+            "source_type": "web",
+            "source_id": chunk.get("source_id", fallback_id or ""),
+            "title": chunk.get("title", "Web source"),
+            "url": chunk.get("url", ""),
+            "snippet": chunk.get("snippet", text),
+            "text": text,
+            "filename": chunk.get("title", "Web source"),
+            "page": int(chunk.get("page") or 0),
+            "score": _safe_float(chunk.get("score"), 1.0),
+            "confidence": _safe_float(chunk.get("confidence", 0)),
+        }
+
     source = {
+        "source_type": "document",
+        "source_id": chunk.get("source_id", fallback_id or ""),
         "text": chunk["text"][:300] + ("..." if len(chunk["text"]) > 300 else ""),
         "filename": chunk["filename"],
         "page": chunk["page"],
@@ -203,6 +225,40 @@ def _get_pdf_tool_sources(pdf_tool: PDFSearchTool) -> List[Dict[str, Any]]:
     return list(getattr(pdf_tool, "all_sources", None) or getattr(pdf_tool, "last_sources", []))
 
 
+def _get_web_tool_sources(web_tool: WebSearchTool) -> List[Dict[str, Any]]:
+    return list(getattr(web_tool, "all_sources", None) or getattr(web_tool, "last_sources", []))
+
+
+def _has_relevant_sources(sources: List[Dict[str, Any]]) -> bool:
+    return any(
+        _safe_float(source.get("confidence"), _safe_float(source.get("score"))) >= MIN_SOURCE_CONFIDENCE
+        or _safe_float(source.get("score")) >= MIN_SOURCE_CONFIDENCE
+        for source in sources
+    )
+
+
+def _validate_answer_citations(answer: str, sources: List[Dict[str, Any]]) -> str:
+    if not answer or not sources:
+        return answer
+
+    if re.search(r"\[Fuente:\s*.+?\]", answer, flags=re.IGNORECASE):
+        logger.warning("Rejected answer with legacy or unverifiable citation labels.")
+        return INSUFFICIENT_EVIDENCE_MESSAGE
+
+    valid_ids = {str(source.get("source_id")) for source in sources if source.get("source_id")}
+    cited_ids = set(re.findall(r"\[((?:D|W)\d+)\]", answer))
+    if not cited_ids:
+        logger.warning("Rejected answer without structured source citations.")
+        return INSUFFICIENT_EVIDENCE_MESSAGE
+
+    invalid_ids = cited_ids - valid_ids
+    if invalid_ids:
+        logger.warning("Rejected answer with invented citations: %s", sorted(invalid_ids))
+        return INSUFFICIENT_EVIDENCE_MESSAGE
+
+    return answer
+
+
 def _generate_agentic_document_answer(
     question: str,
     user_id: str,
@@ -211,7 +267,7 @@ def _generate_agentic_document_answer(
     top_k: Optional[int],
     chat_history: Optional[List[Dict[str, str]]],
 ) -> Dict[str, Any]:
-    executor, pdf_tool, formatted_history = get_agent_executor(
+    executor, pdf_tool, web_tool, formatted_history = get_agent_executor(
         user_id, document_id, hf_token, top_k, chat_history
     )
     result = executor.invoke({"input": question, "chat_history": formatted_history})
@@ -223,8 +279,9 @@ def _generate_agentic_document_answer(
         logger.warning(f"Rejected malformed LLM output: {e}")
         answer = MALFORMED_OUTPUT_MESSAGE
 
-    sources = [_source_payload(chunk) for chunk in _get_pdf_tool_sources(pdf_tool)]
-    answer = _ensure_answer_has_citations(answer, sources)
+    raw_sources = [*_get_pdf_tool_sources(pdf_tool), *_get_web_tool_sources(web_tool)]
+    sources = [_source_payload(chunk) for chunk in raw_sources]
+    answer = _validate_answer_citations(answer, sources)
 
     return {"answer": answer, "sources": sources}
 
@@ -258,9 +315,13 @@ def _retrieve_document_context(
         document_id=document_id,
         top_k=top_k,
     )
+    for index, chunk in enumerate(chunks, 1):
+        chunk.setdefault("source_type", "document")
+        chunk["source_id"] = f"D{index}"
+
     sources = [_source_payload(chunk) for chunk in chunks]
 
-    if not chunks:
+    if not chunks or not _has_relevant_sources(sources):
         return "", sources
 
     context_parts = [
@@ -269,6 +330,14 @@ def _retrieve_document_context(
             f"{chunk['text']}"
         )
         for index, chunk in enumerate(chunks, 1)
+    ]
+
+    context_parts = [
+        (
+            f"Fuente [{chunk['source_id']}] ({chunk['filename']}, Página {chunk['page']}):\n"
+            f"{chunk['text']}"
+        )
+        for chunk in chunks
     ]
 
     try:
@@ -352,7 +421,7 @@ def _generate_direct_document_answer(
         answer = "No pude generar una respuesta final estable. Reformulo con el contexto recuperado: " + (
             "No encontré información suficiente en los documentos cargados para responder esta pregunta."
         )
-    answer = _ensure_answer_has_citations(answer, sources)
+    answer = _validate_answer_citations(answer, sources)
     return {"answer": answer, "sources": sources}
 
 
@@ -453,7 +522,7 @@ def generate_answer_stream(
         return
 
     try:
-        executor, pdf_tool, formatted_history = get_agent_executor(
+        executor, pdf_tool, web_tool, formatted_history = get_agent_executor(
             user_id, document_id, hf_token, top_k, chat_history
         )
 
@@ -465,7 +534,7 @@ def generate_answer_stream(
                 continue
 
             if "intermediate_steps" in step:
-                tool_sources = _get_pdf_tool_sources(pdf_tool)
+                tool_sources = [*_get_pdf_tool_sources(pdf_tool), *_get_web_tool_sources(web_tool)]
                 if not sources_sent and tool_sources:
                     sources = [_source_payload(chunk) for chunk in tool_sources]
                     yield f"data: {json.dumps({'type': 'sources', 'data': sources})}\n\n"
@@ -473,7 +542,7 @@ def generate_answer_stream(
                 continue
 
             if "output" in step:
-                tool_sources = _get_pdf_tool_sources(pdf_tool)
+                tool_sources = [*_get_pdf_tool_sources(pdf_tool), *_get_web_tool_sources(web_tool)]
                 sources = [_source_payload(chunk) for chunk in tool_sources]
                 if not sources_sent:
                     yield f"data: {json.dumps({'type': 'sources', 'data': sources})}\n\n"
@@ -489,7 +558,7 @@ def generate_answer_stream(
                     logger.warning("Streaming agent stopped before a final answer; falling back to direct RAG.")
                     break
 
-                clean_answer = _ensure_answer_has_citations(clean_answer, sources)
+                clean_answer = _validate_answer_citations(clean_answer, sources)
                 yield f"data: {json.dumps({'type': 'token', 'data': clean_answer})}\n\n"
                 answer_sent = True
 
@@ -526,7 +595,7 @@ def generate_answer_stream(
             logger.error(f"Direct RAG streaming fallback error: {stream_error}")
             answer = "No pude generar una respuesta final estable."
 
-        answer = _ensure_answer_has_citations(answer, sources)
+        answer = _validate_answer_citations(answer, sources)
         yield f"data: {json.dumps({'type': 'sources', 'data': sources})}\n\n"
         if not answer_sent:
             yield f"data: {json.dumps({'type': 'token', 'data': answer})}\n\n"
@@ -557,7 +626,7 @@ def generate_answer_stream(
                     response = chat_llm.invoke([HumanMessage(content=prompt)])
                     answer = parse_agent_output(response.content)
 
-                answer = _ensure_answer_has_citations(answer, sources)
+                answer = _validate_answer_citations(answer, sources)
                 yield f"data: {json.dumps({'type': 'sources', 'data': sources})}\n\n"
                 yield f"data: {json.dumps({'type': 'token', 'data': answer})}\n\n"
         except Exception as fallback_error:

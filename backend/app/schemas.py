@@ -297,6 +297,11 @@ class SourceChunk(BaseModel):
     page: int
     score: float
     confidence: float
+    source_type: str = "document"
+    source_id: Optional[str] = None
+    title: Optional[str] = None
+    url: Optional[str] = None
+    snippet: Optional[str] = None
     bbox: Optional[str] = None
     highlightRects: Optional[List[dict]] = None
 

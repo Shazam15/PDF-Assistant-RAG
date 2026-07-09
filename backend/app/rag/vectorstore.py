@@ -179,6 +179,7 @@ def query_chunks(
                 "filename": metadata.get("filename", ""),
                 "document_id": metadata.get("document_id", ""),
                 "page": metadata.get("page", 1),
+                "chunk_index": metadata.get("chunk_index"),
                 "chunk_type": metadata.get("chunk_type", "text"),
                 "bbox": metadata.get("bbox", ""),
                 "score": round(similarity, 4),

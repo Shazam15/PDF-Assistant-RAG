@@ -22,7 +22,8 @@ def mock_agent_executor():
     with patch("app.rag.agent.get_agent_executor") as mock_get:
         executor = MagicMock()
         pdf_tool = MagicMock()
-        mock_get.return_value = (executor, pdf_tool, "")
+        web_tool = MagicMock()
+        mock_get.return_value = (executor, pdf_tool, web_tool, "")
         yield executor, pdf_tool
 
 def test_generate_answer_success(mock_llm_client, mock_retriever):
@@ -36,14 +37,15 @@ def test_generate_answer_success(mock_llm_client, mock_retriever):
         }
     ]
     mock_response = MagicMock()
-    mock_response.content = "Test answer"
+    mock_response.content = "Test answer [D1]"
     mock_llm_client.invoke.return_value = mock_response
 
     result = generate_answer("test question", "user123", "doc123")
 
-    assert result["answer"] == "Test answer\n\nFuentes consultadas: [Fuente: test.pdf, Página 1]"
+    assert result["answer"] == "Test answer [D1]"
     assert len(result["sources"]) == 1
     assert result["sources"][0]["filename"] == "test.pdf"
+    assert result["sources"][0]["source_id"] == "D1"
     assert result["sources"][0]["text"] == "This is a test chunk."
     mock_retriever.assert_called_once()
 
@@ -55,6 +57,15 @@ def test_generate_answer_empty_retrieval(mock_llm_client, mock_retriever):
     assert result["answer"] == "No encontré información suficiente en los documentos cargados para responder esta pregunta."
     assert len(result["sources"]) == 0
     mock_llm_client.invoke.assert_not_called()
+
+
+def test_validate_answer_rejects_invented_citation():
+    answer = agent_module._validate_answer_citations(
+        "Respuesta con cita inventada [D99]",
+        [{"source_id": "D1", "filename": "test.pdf", "page": 1, "text": "Source"}],
+    )
+
+    assert answer == agent_module.INSUFFICIENT_EVIDENCE_MESSAGE
 
 
 def test_load_global_style_reference_from_named_file(tmp_path, monkeypatch):
@@ -82,7 +93,7 @@ def test_generate_answer_uses_document_style_reference(mock_llm_client, mock_ret
         }
     ]
     mock_response = MagicMock()
-    mock_response.content = "Respuesta estilizada"
+    mock_response.content = "Respuesta estilizada [D1]"
     mock_llm_client.invoke.return_value = mock_response
 
     generate_answer("¿Qué sensación transmite este pasaje?", "user123", "doc123")
@@ -107,7 +118,7 @@ def test_generate_answer_stream_success(mock_llm_client, mock_retriever):
     chunk1 = MagicMock()
     chunk1.content = "Hello "
     chunk2 = MagicMock()
-    chunk2.content = "world"
+    chunk2.content = "world [D1]"
     mock_llm_client.stream.return_value = [chunk1, chunk2]
 
     stream = generate_answer_stream("test question", "user123", "doc123")
@@ -120,7 +131,7 @@ def test_generate_answer_stream_success(mock_llm_client, mock_retriever):
     assert sources_event["data"][0]["filename"] == "test.pdf"
 
     token_events = [json.loads(event.replace("data: ", "").strip()) for event in events if '"type": "token"' in event]
-    assert "".join(event["data"] for event in token_events) == "Hello world\n\nFuentes consultadas: [Fuente: test.pdf, Página 1]"
+    assert "".join(event["data"] for event in token_events) == "Hello world [D1]"
 
     # Last event: done
     done_event = json.loads(events[-1].replace("data: ", "").strip())

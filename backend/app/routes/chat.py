@@ -608,21 +608,24 @@ def ask_question(
         cached_answer = get_cached_response(
             document_id=str(payload.document_id or ""),
             question=payload.question,
+            user_id=user.id,
+            top_k=payload.top_k,
         )
         if cached_answer is not None:
+            cached_sources = _sanitize_sources(cached_answer.get("sources", []))
             logger.debug("Returning cached response for question: %s", payload.question[:40])
             _save_messages(
                 db,
                 user.id,
                 [
                     (payload.document_id, "user", payload.question, None),
-                    (payload.document_id, "assistant", cached_answer, []),
+                    (payload.document_id, "assistant", cached_answer["answer"], cached_sources),
                 ],
                 session_id=session_id,
             )
             return ChatResponse(
-                answer=cached_answer,
-                sources=[],
+                answer=cached_answer["answer"],
+                sources=[SourceChunk(**s) for s in cached_sources],
                 document_id=payload.document_id,
             )
 
@@ -635,14 +638,17 @@ def ask_question(
             chat_history=chat_history,
         )
 
+        sources = _sanitize_sources(result["sources"])
+
         # Store result in cache for future identical questions
         set_cached_response(
             document_id=str(payload.document_id or ""),
             question=payload.question,
             answer=result["answer"],
+            sources=sources,
+            user_id=user.id,
+            top_k=payload.top_k,
         )
-
-        sources = _sanitize_sources(result["sources"])
 
         # Save to chat history
         _save_messages(
@@ -745,21 +751,26 @@ def ask_question_stream(
     cached_answer = get_cached_response(
         document_id=str(payload.document_id or ""),
         question=payload.question,
+        user_id=user.id,
+        top_k=payload.top_k,
     )
     if cached_answer is not None:
+        cached_sources = _sanitize_sources(cached_answer.get("sources", []))
         logger.debug("Returning cached stream response for question: %s", payload.question[:40])
         _save_messages(
             db,
             user.id,
             [
                 (payload.document_id, "user", payload.question, None),
-                (payload.document_id, "assistant", cached_answer, []),
+                (payload.document_id, "assistant", cached_answer["answer"], cached_sources),
             ],
             session_id=session_id,
         )
 
         async def cached_event_stream():
-            payload_json = json.dumps({"type": "token", "data": cached_answer})
+            sources_json = json.dumps({"type": "sources", "data": cached_sources})
+            yield f"data: {sources_json}\n\n"
+            payload_json = json.dumps({"type": "token", "data": cached_answer["answer"]})
             yield f"data: {payload_json}\n\n"
             done_json = json.dumps({"type": "done"})
             yield f"data: {done_json}\n\n"
@@ -810,6 +821,9 @@ def ask_question_stream(
                     document_id=str(payload.document_id or ""),
                     question=payload.question,
                     answer=full_answer,
+                    sources=sources,
+                    user_id=user_id,
+                    top_k=payload.top_k,
                 )
             try:
                 if full_answer:

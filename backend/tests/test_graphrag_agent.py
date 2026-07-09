@@ -11,22 +11,27 @@ def test_generate_answer_appends_graph_context_without_changing_sources(monkeypa
             "page": 1,
             "score": 0.9,
             "confidence": 100.0,
+            "source_type": "document",
+            "source_id": "D1",
         }
     ]
 
     # Mock the executor and the tool
     mock_executor = MagicMock()
-    mock_executor.invoke.return_value = {"output": '{"answer":"Agent answer"}'}
+    mock_executor.invoke.return_value = {"output": "Agent answer [D1]"}
     
     mock_pdf_tool = MagicMock()
     mock_pdf_tool.last_sources = chunks
+    mock_pdf_tool.all_sources = []
+    mock_web_tool = MagicMock()
+    mock_web_tool.last_sources = []
+    mock_web_tool.all_sources = []
 
-    # Mock get_agent_executor to return our mocks (3 values: executor, pdf_tool, formatted_history)
-    monkeypatch.setattr(agent, "get_agent_executor", lambda *args, **kwargs: (mock_executor, mock_pdf_tool, ""))
+    monkeypatch.setattr(agent, "get_agent_executor", lambda *args, **kwargs: (mock_executor, mock_pdf_tool, mock_web_tool, ""))
 
     result = agent.generate_answer("How are OpenAI and Microsoft related?", "user-1", "doc-1")
 
-    assert result["answer"] == "Agent answer"
+    assert result["answer"] == "Agent answer [D1]"
     assert result["sources"] == [
         {
             "text": "Vector context",
@@ -34,6 +39,8 @@ def test_generate_answer_appends_graph_context_without_changing_sources(monkeypa
             "page": 1,
             "score": 0.9,
             "confidence": 100.0,
+            "source_type": "document",
+            "source_id": "D1",
             "bbox": "",
         }
     ]
@@ -49,6 +56,8 @@ def test_generate_answer_stream_appends_graph_context(monkeypatch):
             "page": 1,
             "score": 0.9,
             "confidence": 100.0,
+            "source_type": "document",
+            "source_id": "D1",
         }
     ]
 
@@ -59,13 +68,17 @@ def test_generate_answer_stream_appends_graph_context(monkeypatch):
     mock_executor.stream.return_value = iter([
         {"actions": [MagicMock(log="Thought: I should search. Action: pdf_search")]},
         {"intermediate_steps": []}, # This triggers source yielding in my implementation if last_sources is set
-        {"output": 'Final Answer: {"answer":"Streamed answer"}'}
+        {"output": "Final Answer: Streamed answer [D1]"}
     ])
     
     mock_pdf_tool = MagicMock()
     mock_pdf_tool.last_sources = chunks
+    mock_pdf_tool.all_sources = []
+    mock_web_tool = MagicMock()
+    mock_web_tool.last_sources = []
+    mock_web_tool.all_sources = []
 
-    monkeypatch.setattr(agent, "get_agent_executor", lambda *args, **kwargs: (mock_executor, mock_pdf_tool, ""))
+    monkeypatch.setattr(agent, "get_agent_executor", lambda *args, **kwargs: (mock_executor, mock_pdf_tool, mock_web_tool, ""))
 
     events = list(agent.generate_answer_stream("OpenAI Microsoft", "user-1", "doc-1"))
 
