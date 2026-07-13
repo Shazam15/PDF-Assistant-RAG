@@ -288,7 +288,7 @@ class ChatRequest(BaseModel):
     document_id: Optional[str] = None
     document_ids: Optional[List[str]] = None
     session_id: Optional[str] = None
-    top_k: Optional[int] = Field(default=None, ge=1, le=20)
+    top_k: Optional[int] = Field(default=None, ge=1, le=64)
 
 
 class SourceChunk(BaseModel):
@@ -303,6 +303,7 @@ class SourceChunk(BaseModel):
     url: Optional[str] = None
     snippet: Optional[str] = None
     bbox: Optional[str] = None
+    citation: Optional[str] = None
     highlightRects: Optional[List[dict]] = None
 
 

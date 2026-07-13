@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import type { DocInfo } from "@/app/dashboard/page";
 import { api } from "@/lib/api";
@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import {
-  FileText, Upload, Trash2, FileCheck, Clock, AlertCircle, Loader2, FolderOpen, Cloud,
+  FileText, Upload, Trash2, FileCheck, Clock, AlertCircle, Loader2, FolderOpen,
 } from "lucide-react";
 import { useDropzone } from "react-dropzone";
 import { Settings } from "lucide-react";
@@ -70,26 +70,6 @@ export default function DocumentSidebar({
   //const [driveLoading, setDriveLoading] = useState(true);
   //const [driveConnecting, setDriveConnecting] = useState(false);
   //const [driveError, setDriveError] = useState("");
-
-  useEffect(() => {
-    let cancelled = false;
-
-    //async function loadDriveStatus() {
-    //  try {
-    //    const data = await api.get<{ connected: boolean }>("/api/v1/auth/google-drive/status");
-    //    if (!cancelled) setDriveConnected(data.connected);
-    //  } catch {
-    //    if (!cancelled) setDriveError("Unable to load Google Drive status");
-    //  } finally {
-    //    if (!cancelled) setDriveLoading(false);
-    //  }
-    //}
-
-    //void loadDriveStatus();
-    //return () => {
-    //  cancelled = true;
-    //};
-  }, []);
 
   const onDrop = useCallback(
     (acceptedFiles: File[]) => {
@@ -230,7 +210,7 @@ export default function DocumentSidebar({
   //    setDriveError(err instanceof Error ? err.message : "Failed to connect Google Drive");
   //    setDriveConnecting(false);
   //  }
-  };
+  //};
 
   //const handleDisconnectDrive = async () => {
    // setDriveConnecting(true);

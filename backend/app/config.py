@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     GOOGLE_SERVICE_ACCOUNT_FILE: str = ""
 
     # Celery / Redis background processing
+    CELERY_ENABLED: bool = False
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
     CELERY_TASK_TRACK_STARTED: bool = True
@@ -110,8 +111,8 @@ class Settings(BaseSettings):
     CHUNK_SIZE: int = 1000
     CHUNK_OVERLAP: int = 200
     PDF_USE_UNSTRUCTURED: bool = False
-    TOP_K_RETRIEVAL: int = 20 # Fetch more candidates for reranking
-    TOP_K_RERANK: int = 8 # Final number of chunks to return after reranking
+    TOP_K_RETRIEVAL: int = 36 # Fetch a broad candidate pool across documents
+    TOP_K_RERANK: int = 16 # Final number of chunks to return after reranking
 
     # ── Knowledge Graph (GraphRAG) ───────────────────────
     GRAPH_PERSIST_DIR: str = "./data/graphs"
@@ -139,9 +140,12 @@ class Settings(BaseSettings):
     # ── LLM (HuggingFace Inference API) ──────────────────
     HF_TOKEN: str = os.getenv("HF_TOKEN", "")  # HuggingFace API token (set in .env)
     LLM_MODEL: str = "mistral"
-    LLM_MAX_NEW_TOKENS: int = 2048
+    LLM_CONTEXT_WINDOW: int = 8192
+    LLM_MAX_NEW_TOKENS: int = 4096
     LLM_TEMPERATURE: float = 0.3
-    AGENT_MAX_ITERATIONS: int = 8
+    AGENT_PLANNER_MAX_TOKENS: int = 768
+    AGENT_SYNTHESIS_MAX_TOKENS: int = 2048
+    AGENT_MAX_ITERATIONS: int = 4  # Three research steps plus one mandatory final synthesis
     SUMMARY_MAX_TOKENS: int = 512
 
     # ── LangSmith Tracing (optional) ─────────────────────

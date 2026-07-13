@@ -137,7 +137,7 @@ export default function SourceCard({ sources = [], onPageClick }: Props) {
               getPrimarySourceMetric(src)
             );
             const isWebSource = src.source_type === "web";
-            const label = isWebSource ? src.source_id || `W${i + 1}` : `p.${src.page}`;
+            const label = src.source_id || (isWebSource ? `W${i + 1}` : `p.${src.page}`);
 
             return (
               <Tooltip key={i}>
@@ -202,7 +202,7 @@ export default function SourceCard({ sources = [], onPageClick }: Props) {
                     </Badge>
                   ) : (
                     <Badge variant="outline" className="h-5 px-1.5 text-[9px]">
-                      Page {src.page}
+                      {src.source_id || `D${i + 1}`} · Pág. {src.page}
                     </Badge>
                   )}
                   <MetricBadge label="Score" value={src.score} />
@@ -232,6 +232,11 @@ export default function SourceCard({ sources = [], onPageClick }: Props) {
                   View
                 </Button>
               </div>
+              {src.citation && (
+                <p className="mb-1 text-[10px] font-medium text-foreground">
+                  {src.citation}
+                </p>
+              )}
               <p
                 className={`text-[11px] text-muted-foreground leading-relaxed ${
                   excerptOpen.has(i) ? "" : "line-clamp-3"

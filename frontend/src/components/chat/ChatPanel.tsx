@@ -182,6 +182,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
 
     const assistantId = `assistant-${Date.now()}`;
     let assistantCreated = false;
+    let pendingSources: SourceChunk[] = [];
 
     setStreaming(true);
     setIsTyping(true);
@@ -232,7 +233,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
                   id: assistantId,
                   role: "assistant",
                   content: event.data as string,
-                  sources: [],
+                  sources: pendingSources,
                   isStreaming: true,
                 };
 
@@ -243,7 +244,8 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
                 );
               }
             } else if (event.type === "sources") {
-              setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, sources: event.data as SourceChunk[] } : m)));
+              pendingSources = event.data as SourceChunk[];
+              setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, sources: pendingSources } : m)));
             } else if (event.type === "thought") {
               // Append thoughts as a temporary assistant note (optional UI handling)
               // For simplicity, add to assistant message content in brackets
@@ -308,9 +310,9 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
 
               const assistantMsg: ChatMsg = {
                 id: assistantId,
-                role: "assistant",
-                content: event.data as string,
-                sources: [],
+                  role: "assistant",
+                  content: event.data as string,
+                  sources: pendingSources,
                 isStreaming: true,
               };
 
@@ -321,7 +323,8 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
               );
             }
           } else if (event.type === "sources") {
-            setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, sources: event.data as SourceChunk[] } : m)));
+            pendingSources = event.data as SourceChunk[];
+            setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, sources: pendingSources } : m)));
           } else if (event.type === "error") {
             setIsTyping(false);
             setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content: `Error: ${event.data}`, isStreaming: false } : m)));

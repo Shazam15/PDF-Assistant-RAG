@@ -20,6 +20,7 @@ export interface SourceChunk {
   title?: string;
   url?: string;
   snippet?: string;
+  citation?: string;
   score?: number;
   confidence?: number;
   highlightRects?: SourceBoundingBox[];

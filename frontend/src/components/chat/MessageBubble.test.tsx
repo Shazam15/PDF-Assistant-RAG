@@ -31,7 +31,7 @@ describe("MessageBubble", () => {
 
     expect(screen.getByText("Summarize my uploaded report")).toBeInTheDocument();
     expect(screen.queryByText("Was this helpful?")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Copy response")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Copiar respuesta")).not.toBeInTheDocument();
   });
 
   it("renders an assistant message with markdown and response controls", () => {
@@ -46,8 +46,8 @@ describe("MessageBubble", () => {
     expect(screen.getByText("Here is the answer:")).toBeInTheDocument();
     expect(container.querySelector("pre")).toHaveTextContent("const ok = true;");
     expect(screen.getByText("Was this helpful?")).toBeInTheDocument();
-    expect(screen.getByLabelText("Copy response")).toBeInTheDocument();
-    expect(screen.getByLabelText("Share response")).toBeInTheDocument();
-    expect(screen.getByLabelText("Play speech")).toBeInTheDocument();
+    expect(screen.getByLabelText("Copiar respuesta")).toBeInTheDocument();
+    expect(screen.getByLabelText("Compartir respuesta")).toBeInTheDocument();
+    expect(screen.getAllByLabelText("Leer respuesta")).toHaveLength(2);
   });
 });

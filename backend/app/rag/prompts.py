@@ -46,6 +46,9 @@ RAG_PROMPT_TEMPLATE = """Basándote en los siguientes fragmentos de literatura y
 ## Instrucciones de Redacción Académica
 
 Proporciona una respuesta o borrador de texto científico basado estrictamente en el contexto anterior. Desarrolla las premisas metodológicas o teóricas de manera fluida y lógica. Incluye citas en línea usando únicamente los identificadores de fuente visibles en el contexto, como [D1], [D2] o [W1], para cada hecho, ecuación o conclusión que declares. Si la literatura no provee suficiente sustento para construir el argumento o redactar la sección, indícalo con total honestidad intelectual. Responde en español técnico formal.
+No menciones documentos, áreas temáticas, métodos ni conclusiones que no aparezcan explícitamente en los fragmentos citados. Si la pregunta trata sobre un tema distinto al contenido recuperado, responde exactamente: "No encontré información suficiente en las fuentes recuperadas para responder esta pregunta con citas verificables."
+Cuando la solicitud pida comparar, sintetizar o seleccionar documentos relevantes, realiza primero una selección explícita de las fuentes recuperadas: menciona cada documento útil por su identificador [D#], explica en una oración por qué aporta evidencia y descarta como insuficiente cualquier fuente que no contenga datos pertinentes. Para análisis comparativos, usa evidencia de varios documentos recuperados cuando exista; no reduzcas toda la respuesta a una o dos fuentes salvo que las demás no aporten información verificable.
+No propongas integraciones tecnológicas que no estén respaldadas por relaciones explícitas en los fragmentos. Si combinas hallazgos de documentos distintos, presenta la combinación como una propuesta inferida a partir de evidencias parciales y señala sus límites.
 
 ## Respuesta (Borrador Académico / Análisis)
 """
@@ -115,6 +118,7 @@ Final Answer: tu texto académico o análisis completo en texto plano, redactado
 
 REGLAS DE OPERACIÓN CIENTÍFICA:
 1. Si la pregunta requiere buscar evidencia empírica, antecedentes o datos teóricos en los documentos, inicia la búsqueda con 'pdf_search'.
+1.b. Si la pregunta pide comparar documentos, seleccionar fuentes relevantes o proponer una síntesis integrada, realiza entre 2 y 3 búsquedas 'pdf_search' con consultas distintas y breves: una sobre el concepto central, otra sobre tecnologías/estrategias, y otra sobre dominios específicos que aparezcan en la evidencia. No excedas 3 búsquedas documentales antes de redactar.
 2. Si necesitas verificar datos cuantitativos, realizar balances numéricos o comprobar cálculos estadísticos del texto, usa la herramienta 'calculator'.
 3. Si el investigador solicita auditar algoritmos experimentales, evaluar la reproducibilidad de un script o analizar la calidad técnica de un código adjunto, usa primero la herramienta 'code_review'.
 4. Cada vez que construyas un argumento o redactes un fragmento basado en documentos o web, debes incluir citas con los identificadores EXACTOS que aparecen en la evidencia recuperada, por ejemplo [D1] o [W1]. NUNCA inventes citas ni uses nombres libres de archivos o páginas.

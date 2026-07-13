@@ -171,6 +171,7 @@ def test_upload_document_handles_duplicate_original_names(
     monkeypatch.setattr(documents, "validate_upload", fake_validate_upload)
     monkeypatch.setattr(documents.settings, "UPLOAD_DIR", str(tmp_path / "uploads"))
     monkeypatch.setattr(documents.uuid, "uuid4", lambda: next(uuid_values))
+    monkeypatch.setattr(documents, "ingest_document", lambda **_kwargs: None)
     monkeypatch.setattr(
         documents.process_document,
         "delay",
@@ -197,7 +198,8 @@ def test_upload_document_handles_duplicate_original_names(
     assert [doc.original_name for doc in stored_docs] == ["same-name.pdf", "same-name.pdf"]
     assert len({doc.filename for doc in stored_docs}) == 2
     assert first.original_name == second.original_name == "same-name.pdf"
-    assert first.task_id == second.task_id == "queued-task"
+    assert first.task_id.startswith("inline_")
+    assert second.task_id.startswith("inline_")
     assert (tmp_path / "uploads" / user.id / f"{first_hex}.pdf").exists()
     assert (tmp_path / "uploads" / user.id / f"{second_hex}.pdf").exists()
     assert all(not path.exists() for path in temp_files)
