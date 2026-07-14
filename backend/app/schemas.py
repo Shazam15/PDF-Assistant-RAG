@@ -2,7 +2,7 @@
 Pydantic schemas for API request/response validation.
 """
 from pydantic import BaseModel, EmailStr, Field, field_validator
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Literal
 from datetime import datetime
 from app.models import UserRole
 # Importamos ambas funciones desde el mismo archivo por el momento
@@ -289,6 +289,7 @@ class ChatRequest(BaseModel):
     document_ids: Optional[List[str]] = None
     session_id: Optional[str] = None
     top_k: Optional[int] = Field(default=None, ge=1, le=64)
+    routing_mode: Literal["auto", "quick", "research"] = "auto"
 
 
 class SourceChunk(BaseModel):

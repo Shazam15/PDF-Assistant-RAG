@@ -34,6 +34,81 @@ def test_chat_ask_success(client, auth_headers, ready_document, monkeypatch):
     assert payload["sources"][0]["filename"] == "ready.txt"
 
 
+def test_rest_forwards_routing_mode(client, auth_headers, ready_document, monkeypatch):
+    captured = {}
+
+    def fake_generate_answer(*_args, **kwargs):
+        captured.update(kwargs)
+        return {"answer": "Research response", "sources": []}
+
+    monkeypatch.setattr("app.routes.chat.generate_answer", fake_generate_answer)
+    response = client.post(
+        "/api/v1/chat/ask",
+        headers=auth_headers,
+        json={
+            "question": "Compare transport evidence for this unique route test",
+            "document_id": ready_document.id,
+            "routing_mode": "research",
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["routing_mode"] == "research"
+
+
+def test_sse_forwards_routing_mode(client, auth_headers, ready_document, monkeypatch):
+    captured = {}
+
+    def fake_generate_answer_stream(*_args, **kwargs):
+        captured.update(kwargs)
+        yield 'data: {"type": "sources", "data": []}\n\n'
+        yield 'data: {"type": "token", "data": "Quick response"}\n\n'
+        yield 'data: {"type": "done"}\n\n'
+
+    monkeypatch.setattr("app.routes.chat.generate_answer_stream", fake_generate_answer_stream)
+    response = client.post(
+        "/api/v1/chat/ask/stream",
+        headers=auth_headers,
+        json={
+            "question": "Unique quick transport request",
+            "document_id": ready_document.id,
+            "routing_mode": "quick",
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["routing_mode"] == "quick"
+
+
+def test_websocket_forwards_routing_mode(
+    client, auth_headers, ready_document, db_session, monkeypatch
+):
+    captured = {}
+
+    def fake_generate_answer_stream(*_args, **kwargs):
+        captured.update(kwargs)
+        yield 'data: {"type": "sources", "data": []}\n\n'
+        yield 'data: {"type": "token", "data": "Auto response"}\n\n'
+        yield 'data: {"type": "done"}\n\n'
+
+    monkeypatch.setattr("app.routes.chat.generate_answer_stream", fake_generate_answer_stream)
+    monkeypatch.setattr("app.database.SessionLocal", lambda: db_session)
+    token = auth_headers["Authorization"].removeprefix("Bearer ")
+
+    with client.websocket_connect(f"/api/v1/chat/ws?token={token}") as websocket:
+        websocket.send_json(
+            {
+                "question": "Unique websocket routing request",
+                "document_id": ready_document.id,
+                "routing_mode": "auto",
+            }
+        )
+        event_types = [websocket.receive_json()["type"] for _ in range(3)]
+
+    assert event_types == ["sources", "token", "done"]
+    assert captured["routing_mode"] == "auto"
+
+
 def test_chat_ask_document_not_found(client, auth_headers):
     response = client.post(
         "/api/v1/chat/ask",

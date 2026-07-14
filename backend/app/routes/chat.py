@@ -83,7 +83,7 @@ def _load_sources(sources_json: str | None) -> list[SourceChunk]:
 
 @router.websocket("/ws")
 async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
-    """WebSocket endpoint for streaming agentic thoughts and tokens.
+    """WebSocket endpoint for streaming structured sources and answer tokens.
 
     Authenticate via `token` query param or expect first JSON message
     containing `{token, question, document_id?, session_id?}`.
@@ -146,6 +146,9 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
         question = payload.get("question")
         document_id = payload.get("document_id")
         session_id = payload.get("session_id")
+        routing_mode = payload.get("routing_mode", "auto")
+        if routing_mode not in {"auto", "quick", "research"}:
+            routing_mode = "auto"
 
         from app.rag.security import validate_user_input, UnsafePromptError
 
@@ -213,6 +216,7 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
                 document_id=document_id,
                 hf_token=user.hf_token,
                 chat_history=chat_history,
+                routing_mode=routing_mode,
             ):
                 # chunk is SSE-style string like 'data: {json}\n\n' or similar
                 try:
@@ -493,6 +497,7 @@ def generate_answer(
     hf_token: Optional[str] = None,
     top_k: Optional[int] = None,
     chat_history: Optional[list] = None,
+    routing_mode: str = "auto",
 ):
     from app.rag.agent import generate_answer as _generate_answer
 
@@ -503,6 +508,7 @@ def generate_answer(
         hf_token=hf_token,
         top_k=top_k,
         chat_history=chat_history,
+        routing_mode=routing_mode,
     )
 
 
@@ -513,6 +519,7 @@ def generate_answer_stream(
     hf_token: Optional[str] = None,
     top_k: Optional[int] = None,
     chat_history: Optional[list] = None,
+    routing_mode: str = "auto",
 ):
     from app.rag.agent import generate_answer_stream as _generate_answer_stream
 
@@ -523,6 +530,7 @@ def generate_answer_stream(
         hf_token=hf_token,
         top_k=top_k,
         chat_history=chat_history,
+        routing_mode=routing_mode,
     )
 
 
@@ -610,6 +618,7 @@ def ask_question(
             question=payload.question,
             user_id=user.id,
             top_k=payload.top_k,
+            routing_mode=payload.routing_mode,
         )
         if cached_answer is not None:
             cached_sources = _sanitize_sources(cached_answer.get("sources", []))
@@ -636,6 +645,7 @@ def ask_question(
             hf_token=user.hf_token,
             top_k=payload.top_k,
             chat_history=chat_history,
+            routing_mode=payload.routing_mode,
         )
 
         sources = _sanitize_sources(result["sources"])
@@ -648,6 +658,7 @@ def ask_question(
             sources=sources,
             user_id=user.id,
             top_k=payload.top_k,
+            routing_mode=payload.routing_mode,
         )
 
         # Save to chat history
@@ -753,6 +764,7 @@ def ask_question_stream(
         question=payload.question,
         user_id=user.id,
         top_k=payload.top_k,
+        routing_mode=payload.routing_mode,
     )
     if cached_answer is not None:
         cached_sources = _sanitize_sources(cached_answer.get("sources", []))
@@ -801,6 +813,7 @@ def ask_question_stream(
                 hf_token=user_hf_token,
                 top_k=payload.top_k,
                 chat_history=chat_history,
+                routing_mode=payload.routing_mode,
             ):
                 yield chunk
 
@@ -824,6 +837,7 @@ def ask_question_stream(
                     sources=sources,
                     user_id=user_id,
                     top_k=payload.top_k,
+                    routing_mode=payload.routing_mode,
                 )
             try:
                 if full_answer:

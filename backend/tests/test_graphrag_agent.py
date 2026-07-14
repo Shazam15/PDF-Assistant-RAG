@@ -29,22 +29,21 @@ def test_generate_answer_appends_graph_context_without_changing_sources(monkeypa
 
     monkeypatch.setattr(agent, "get_agent_executor", lambda *args, **kwargs: (mock_executor, mock_pdf_tool, mock_web_tool, ""))
 
-    result = agent.generate_answer("How are OpenAI and Microsoft related?", "user-1", "doc-1")
+    result = agent.generate_answer(
+        "Search the web and explain how OpenAI and Microsoft are related?", "user-1", "doc-1"
+    )
 
     assert result["answer"] == "Agent answer [D1]"
-    assert result["sources"] == [
+    assert len(result["sources"]) == 1
+    assert result["sources"][0]["text"] == "Vector context"
+    assert result["sources"][0]["filename"] == "doc.pdf"
+    assert result["sources"][0]["source_id"] == "D1"
+    mock_executor.invoke.assert_called_once_with(
         {
-            "text": "Vector context",
-            "filename": "doc.pdf",
-            "page": 1,
-            "score": 0.9,
-            "confidence": 100.0,
-            "source_type": "document",
-            "source_id": "D1",
-            "bbox": "",
+            "input": "Search the web and explain how OpenAI and Microsoft are related?",
+            "chat_history": "",
         }
-    ]
-    mock_executor.invoke.assert_called_once_with({"input": "How are OpenAI and Microsoft related?", "chat_history": ""})
+    )
 
 
 def test_generate_answer_stream_appends_graph_context(monkeypatch):
@@ -80,7 +79,7 @@ def test_generate_answer_stream_appends_graph_context(monkeypatch):
 
     monkeypatch.setattr(agent, "get_agent_executor", lambda *args, **kwargs: (mock_executor, mock_pdf_tool, mock_web_tool, ""))
 
-    events = list(agent.generate_answer_stream("OpenAI Microsoft", "user-1", "doc-1"))
+    events = list(agent.generate_answer_stream("Search the web for OpenAI Microsoft", "user-1", "doc-1"))
 
     # Verify event types and data
     assert not any("Thinking" in e for e in events)

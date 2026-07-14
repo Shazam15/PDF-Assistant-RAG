@@ -313,11 +313,16 @@ class ApiClient {
    * Stream a POST request as Server-Sent Events.
    * Yields parsed SSE data objects.
    */
-  async *streamPost(path: string, body: unknown): AsyncGenerator<{ type: string; data?: unknown }> {
+  async *streamPost(
+    path: string,
+    body: unknown,
+    options?: { signal?: AbortSignal }
+  ): AsyncGenerator<{ type: string; data?: unknown }> {
     let res = await this.fetchWithConnectionError(`${this.baseUrl}${path}`, {
       method: "POST",
       headers: this.getHeaders(),
       body: JSON.stringify(body),
+      signal: options?.signal,
     });
 
     // Auto-refresh on 401
@@ -328,6 +333,7 @@ class ApiClient {
           method: "POST",
           headers: this.getHeaders(newToken),
           body: JSON.stringify(body),
+          signal: options?.signal,
         });
       }
     }

@@ -5,6 +5,73 @@ import pytest
 from app.rag import agent as agent_module
 from app.rag.agent import generate_answer, generate_answer_stream
 
+
+@pytest.mark.parametrize(
+    ("question", "document_id", "mode", "expected_route"),
+    [
+        ("Hola", None, "auto", "greeting"),
+        ("Identifica el objetivo principal.", None, "auto", "simple_rag"),
+        ("Actúa como investigador y resume este documento con citas.", "doc-1", "auto", "scoped_rag"),
+        ("Redacta un abstract y keywords con estilo académico.", None, "auto", "simple_rag"),
+        ("Compara las metodologías de varios estudios.", None, "auto", "research_rag"),
+        ("Compare the methods used across multiple studies.", None, "auto", "research_rag"),
+        ("Busca en la web información actualizada.", None, "auto", "tool_agent"),
+        ("Calculate the efficiency using this formula.", None, "auto", "tool_agent"),
+        ("Audita el código de este repositorio.", None, "auto", "tool_agent"),
+        ("Busca en la web información actualizada.", None, "quick", "simple_rag"),
+        ("Resume los hallazgos.", None, "research", "research_rag"),
+        ("Compara todos los estudios.", "doc-1", "research", "scoped_rag"),
+    ],
+)
+def test_adaptive_router_bilingual_table(question, document_id, mode, expected_route):
+    decision = agent_module.route_query(question, document_id=document_id, routing_mode=mode)
+    assert decision.route == expected_route
+
+
+def test_ambiguous_synthesis_promotes_only_with_three_relevant_documents():
+    initial = agent_module.route_query("Sintetiza los hallazgos disponibles.")
+    assert initial.route == "simple_rag"
+    assert initial.provisional is True
+
+    narrow = agent_module.route_query(
+        "Sintetiza los hallazgos disponibles.", retrieved_document_count=2
+    )
+    broad = agent_module.route_query(
+        "Sintetiza los hallazgos disponibles.", retrieved_document_count=3
+    )
+    assert narrow.route == "simple_rag"
+    assert broad.route == "research_rag"
+
+
+def test_research_rag_retrieves_once_and_does_not_run_react(
+    mock_llm_client, mock_retriever, monkeypatch
+):
+    mock_retriever.return_value = [
+        {
+            "text": f"Sustainability study {index} compares energy and water outcomes.",
+            "filename": f"study-{index}.pdf",
+            "document_id": f"doc-{index}",
+            "page": index,
+            "score": 0.9,
+            "confidence": 90,
+        }
+        for index in range(1, 4)
+    ]
+    response = MagicMock()
+    response.content = "Los estudios reportan resultados complementarios [D1], [D2] y [D3]."
+    mock_llm_client.invoke.return_value = response
+    agent_executor = MagicMock()
+    monkeypatch.setattr(agent_module, "get_agent_executor", agent_executor)
+
+    result = generate_answer(
+        "Compara los resultados de múltiples estudios sobre sostenibilidad.",
+        "user123",
+    )
+
+    assert result["answer"].endswith("[D1], [D2] y [D3].")
+    mock_retriever.assert_called_once()
+    agent_executor.assert_not_called()
+
 @pytest.fixture
 def mock_llm_client():
     with patch("app.rag.agent.get_llm_client") as mock_get:
@@ -229,7 +296,7 @@ def test_complex_question_uses_agentic_path_first(monkeypatch, mock_retriever):
     )
 
     result = generate_answer(
-        "Actúa como investigador académico, identifica documentos relevantes y compara metodologías.",
+        "Actúa como investigador académico, compara metodologías y busca en la web evidencia actualizada.",
         "user123",
     )
 
@@ -274,7 +341,7 @@ def test_plain_agent_draft_after_initial_search_gets_grounded_final_synthesis(mo
     monkeypatch.setattr(agent_module, "get_llm_client", MagicMock(return_value=final_llm))
 
     result = generate_answer(
-        "Actúa como investigador académico e identifica estrategias sostenibles relevantes.",
+        "Actúa como investigador académico e identifica estrategias sostenibles; busca en la web.",
         "user123",
     )
 
@@ -380,7 +447,7 @@ def test_complex_question_does_not_fallback_to_direct_rag_on_agent_stop(monkeypa
     monkeypatch.setattr(agent_module, "get_llm_client", MagicMock(return_value=partial_llm))
 
     result = generate_answer(
-        "Actúa como investigador académico, identifica documentos relevantes y compara metodologías.",
+        "Actúa como investigador académico, compara metodologías y busca en la web.",
         "user123",
     )
 
@@ -419,7 +486,7 @@ END UNTRUSTED DOCUMENT EXCERPT"""
     monkeypatch.setattr(agent_module, "get_llm_client", MagicMock(return_value=partial_llm))
 
     result = generate_answer(
-        "Actúa como investigador académico, identifica documentos relevantes y compara estrategias.",
+        "Actúa como investigador académico, compara estrategias y busca en la web.",
         "user123",
     )
 
@@ -460,7 +527,7 @@ def test_agent_error_after_retrieval_still_synthesizes_preserved_sources(monkeyp
     monkeypatch.setattr(agent_module, "get_llm_client", MagicMock(return_value=partial_llm))
 
     result = generate_answer(
-        "Actúa como investigador académico y compara estrategias de sostenibilidad.",
+        "Actúa como investigador académico, compara sostenibilidad y busca en la web.",
         "user123",
     )
 
@@ -500,7 +567,7 @@ def test_complex_question_repairs_agent_answer_without_citations(monkeypatch, mo
     monkeypatch.setattr(agent_module, "get_llm_client", MagicMock(return_value=repair_llm))
 
     result = generate_answer(
-        "Actúa como investigador académico e identifica los estudios más relevantes sobre sostenibilidad ambiental.",
+        "Actúa como investigador académico; busca en la web estudios sobre sostenibilidad ambiental.",
         "user123",
     )
 
@@ -542,7 +609,7 @@ def test_complex_stream_does_not_fallback_to_direct_rag_on_agent_stop(monkeypatc
     monkeypatch.setattr(agent_module, "get_llm_client", MagicMock(return_value=partial_llm))
 
     stream = generate_answer_stream(
-        "Actúa como investigador académico, identifica documentos relevantes y compara metodologías.",
+        "Actúa como investigador académico, compara metodologías y busca en la web.",
         "user123",
     )
     events = [json.loads(event.replace("data: ", "").strip()) for event in stream]
@@ -581,7 +648,7 @@ END UNTRUSTED DOCUMENT EXCERPT"""
     events = [
         json.loads(event.replace("data: ", "").strip())
         for event in generate_answer_stream(
-            "Actúa como investigador académico e identifica estrategias relevantes.",
+            "Actúa como investigador académico e identifica estrategias; busca en la web.",
             "user123",
         )
     ]
@@ -623,7 +690,7 @@ END UNTRUSTED DOCUMENT EXCERPT"""
     events = [
         json.loads(event.replace("data: ", "").strip())
         for event in generate_answer_stream(
-            "Actúa como investigador académico y compara estrategias de movilidad sostenible.",
+            "Actúa como investigador académico, compara movilidad sostenible y busca en la web.",
             "user123",
         )
     ]
@@ -671,7 +738,7 @@ def test_complex_stream_repairs_agent_answer_without_citations(monkeypatch, mock
     monkeypatch.setattr(agent_module, "get_llm_client", MagicMock(return_value=repair_llm))
 
     stream = generate_answer_stream(
-        "Actúa como investigador académico e identifica los estudios más relevantes sobre sostenibilidad ambiental.",
+        "Actúa como investigador académico; busca en la web estudios sobre sostenibilidad ambiental.",
         "user123",
     )
     events = [json.loads(event.replace("data: ", "").strip()) for event in stream]
@@ -694,7 +761,7 @@ def test_generate_answer_stream_empty_retrieval(mock_llm_client, mock_retriever)
 
     token_event = json.loads(events[1].replace("data: ", "").strip())
     assert token_event["type"] == "token"
-    assert token_event["data"] == agent_module.INSUFFICIENT_EVIDENCE_MESSAGE
+    assert token_event["data"] == "No encontré información suficiente en los documentos cargados para responder esta pregunta."
 
     # Last event: done
     done_event = json.loads(events[-1].replace("data: ", "").strip())
@@ -704,7 +771,7 @@ def test_generate_answer_stream_error(mock_llm_client, mock_retriever, monkeypat
     mock_retriever.return_value = [
         {"text": "Chunk text.", "filename": "test.pdf", "page": 1, "score": 0.8, "confidence": 80}
     ]
-    mock_llm_client.stream.side_effect = Exception("LLM Down")
+    mock_llm_client.invoke.side_effect = Exception("LLM Down")
     monkeypatch.setattr(
         agent_module,
         "get_agent_executor",

@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 CACHE_TTL: int = int(os.getenv("CACHE_TTL", "3600"))  # seconds; default 1 hour
 REDIS_URL: Optional[str] = os.getenv("REDIS_URL", None)
 LRU_MAX_SIZE: int = int(os.getenv("CACHE_LRU_MAX_SIZE", "128"))
+ROUTER_CACHE_VERSION = "adaptive-v1"
 
 # ---------------------------------------------------------------------------
 # Redis client (lazy init — only created when REDIS_URL is set)
@@ -129,6 +130,7 @@ def make_cache_key(
     question: str,
     user_id: str = "",
     top_k: Optional[int] = None,
+    routing_mode: str = "auto",
 ) -> str:
     """
     Generate a stable, short cache key from document_id + question.
@@ -138,7 +140,10 @@ def make_cache_key(
     - Unique per (document_id, question) pair
     - Safe for Redis keys and dict keys
     """
-    raw = f"{user_id}:{document_id}:{top_k or ''}:{question.strip().lower()}"
+    raw = (
+        f"{ROUTER_CACHE_VERSION}:{routing_mode}:{user_id}:{document_id}:"
+        f"{top_k or ''}:{question.strip().lower()}"
+    )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -147,12 +152,15 @@ def get_cached_response(
     question: str,
     user_id: str = "",
     top_k: Optional[int] = None,
+    routing_mode: str = "auto",
 ) -> Optional[dict[str, Any]]:
     """
     Look up a cached answer for a (document_id, question) pair.
     Returns the answer string on hit, None on miss.
     """
-    key = make_cache_key(document_id, question, user_id=user_id, top_k=top_k)
+    key = make_cache_key(
+        document_id, question, user_id=user_id, top_k=top_k, routing_mode=routing_mode
+    )
     r = _get_redis()
 
     if r is not None:
@@ -192,6 +200,7 @@ def set_cached_response(
     sources: Optional[list[dict[str, Any]]] = None,
     user_id: str = "",
     top_k: Optional[int] = None,
+    routing_mode: str = "auto",
 ) -> None:
     """
     Store an answer. Tries Redis first; falls back to LRU.
@@ -201,7 +210,9 @@ def set_cached_response(
         logger.debug("Skipping invalid cache answer for question: %s", question[:40])
         return
 
-    key = make_cache_key(document_id, question, user_id=user_id, top_k=top_k)
+    key = make_cache_key(
+        document_id, question, user_id=user_id, top_k=top_k, routing_mode=routing_mode
+    )
     serialised = json.dumps({"answer": answer, "sources": sources or []})
     r = _get_redis()
 
@@ -222,9 +233,12 @@ def invalidate_cache(
     question: str,
     user_id: str = "",
     top_k: Optional[int] = None,
+    routing_mode: str = "auto",
 ) -> None:
     """Remove one cache entry — useful when a document is re-indexed."""
-    key = make_cache_key(document_id, question, user_id=user_id, top_k=top_k)
+    key = make_cache_key(
+        document_id, question, user_id=user_id, top_k=top_k, routing_mode=routing_mode
+    )
     r = _get_redis()
     if r is not None:
         try:

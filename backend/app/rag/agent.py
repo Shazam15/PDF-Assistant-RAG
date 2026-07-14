@@ -7,7 +7,8 @@ import json
 import math
 import os
 import re
-from typing import List, Dict, Any, Optional, Generator
+from dataclasses import dataclass
+from typing import List, Dict, Any, Optional, Generator, Literal
 
 from langchain_classic.agents import create_react_agent, AgentExecutor
 from langchain_classic.agents.output_parsers import ReActSingleInputOutputParser
@@ -27,6 +28,9 @@ from app.rag.tracing import trace_function
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+ROUTER_VERSION = "adaptive-v1"
+RoutingMode = Literal["auto", "quick", "research"]
+RoutingRoute = Literal["greeting", "scoped_rag", "simple_rag", "research_rag", "tool_agent"]
 _AGENT_TOOL_NAMES = {"pdf_search", "code_review", "calculator", "web_search"}
 MIN_SOURCE_SCORE = 0.2
 MIN_SOURCE_CONFIDENCE = 10.0
@@ -298,29 +302,154 @@ def is_greeting(question: str) -> bool:
     return question.lower().strip().rstrip("!?.") in greetings
 
 
-def _should_use_agentic_reasoning(question: str) -> bool:
-    """Use the ReAct path for requests that require selection, comparison, or synthesis."""
+@dataclass(frozen=True)
+class RoutingDecision:
+    route: RoutingRoute
+    reason: str
+    score: int
+    mode: RoutingMode
+    document_scope: Optional[str]
+    provisional: bool = False
+    required_tool: Optional[str] = None
+
+
+def _normalize_routing_mode(mode: str) -> RoutingMode:
+    return mode if mode in {"auto", "quick", "research"} else "auto"
+
+
+def _routing_question(question: str, chat_history: Optional[List[Dict[str, str]]]) -> str:
+    """Use the previous user turn only for short, explicitly referential follow-ups."""
     normalized = _normalize_term_text(question)
-    reasoning_markers = {
-        "actua como",
-        "analisis critico",
-        "cadena de pensamiento",
-        "compara",
-        "comparando",
-        "contradicciones",
-        "discusion",
-        "documentos relevantes",
-        "estrategias propuestas",
-        "fortalezas",
-        "identifica",
-        "limitaciones",
-        "metodologias",
-        "propone",
-        "relaciones",
-        "seleccionaste",
-        "solucion integrada",
+    follow_up_markers = (
+        "eso", "estos", "estas", "continua", "amplia", "comparalos", "compare them",
+        "those", "that result", "continue", "expand on",
+    )
+    if len(normalized.split()) > 18 or not any(marker in normalized for marker in follow_up_markers):
+        return question
+    for message in reversed(chat_history or []):
+        if message.get("role") == "user" and message.get("content"):
+            return f"{message['content']}\n{question}"
+    return question
+
+
+def _required_tool(question: str) -> Optional[str]:
+    normalized = _normalize_term_text(question)
+    tool_signals = {
+        "web": (
+            "busca en la web", "busca en internet", "fuentes externas", "consulta online",
+            "informacion actualizada", "ultimas noticias", "latest information", "search the web",
+            "search online", "external sources", "current regulations", "today's",
+        ),
+        "calculation": (
+            "calcula", "calculame", "realiza un calculo", "realiza calculos", "resuelve la ecuacion",
+            "haz el calculo", "compute", "calculate", "perform a calculation", "solve the equation",
+            "evaluate the formula",
+        ),
+        "code": (
+            "revisa el codigo", "audita el codigo", "depura el codigo", "error en el codigo",
+            "code review", "audit the code", "debug the code", "inspect the repository",
+        ),
     }
-    return any(marker in normalized for marker in reasoning_markers)
+    for tool, markers in tool_signals.items():
+        if any(marker in normalized for marker in markers):
+            return tool
+    return None
+
+
+def _multidocument_score(question: str) -> int:
+    """Score evidence breadth, deliberately ignoring academic style requirements."""
+    normalized = _normalize_term_text(question)
+    score = 0
+    breadth_markers = (
+        "multiples documentos", "varios documentos", "todos los documentos", "documentos disponibles",
+        "multiples estudios", "varios estudios", "estudios relevantes", "diferentes estudios",
+        "multiple documents", "several documents", "all documents", "available documents",
+        "multiple studies", "several studies", "relevant studies", "different studies",
+    )
+    comparison_markers = (
+        "compara", "comparacion", "contrasta", "contradiccion", "convergencias", "diferencias entre",
+        "compare", "comparison", "contrast", "contradiction", "contradictions", "differences between",
+    )
+    synthesis_markers = (
+        "sintetiza", "sintesis", "integra", "integracion", "solucion integrada", "propone una solucion",
+        "synthesize", "synthesis", "integrate", "integration", "integrated solution", "propose a solution",
+    )
+    dimension_markers = (
+        "simultaneamente", "varias dimensiones", "multiples dimensiones", "diferentes dimensiones",
+        "simultaneously", "several dimensions", "multiple dimensions", "across dimensions",
+    )
+    if any(marker in normalized for marker in breadth_markers):
+        score += 2
+    if any(marker in normalized for marker in comparison_markers):
+        score += 2
+    if any(marker in normalized for marker in synthesis_markers):
+        score += 1
+    if any(marker in normalized for marker in dimension_markers):
+        score += 1
+    return score
+
+
+def route_query(
+    question: str,
+    document_id: Optional[str] = None,
+    routing_mode: str = "auto",
+    chat_history: Optional[List[Dict[str, str]]] = None,
+    retrieved_document_count: Optional[int] = None,
+) -> RoutingDecision:
+    """Choose one route without an LLM call; shared by sync and streaming paths."""
+    mode = _normalize_routing_mode(routing_mode)
+    routing_question = _routing_question(question, chat_history)
+    score = _multidocument_score(routing_question)
+
+    if is_greeting(question):
+        return RoutingDecision("greeting", "casual_conversation", 0, mode, document_id)
+
+    if mode == "quick":
+        route: RoutingRoute = "scoped_rag" if document_id else "simple_rag"
+        return RoutingDecision(route, "manual_quick_documents_only", score, mode, document_id)
+
+    required_tool = _required_tool(routing_question)
+    if required_tool:
+        return RoutingDecision(
+            "tool_agent", f"explicit_{required_tool}_tool_required", score, mode, document_id,
+            required_tool=required_tool,
+        )
+
+    if document_id:
+        reason = "selected_document_deep_retrieval" if mode == "research" else "selected_document"
+        return RoutingDecision("scoped_rag", reason, score, mode, document_id)
+
+    if mode == "research":
+        return RoutingDecision("research_rag", "manual_research", score, mode, None)
+
+    if score >= 2:
+        return RoutingDecision("research_rag", "multidocument_intent", score, mode, None)
+
+    if score == 1:
+        if retrieved_document_count is not None:
+            if retrieved_document_count >= 3:
+                return RoutingDecision("research_rag", "evidence_breadth_promotion", score, mode, None)
+            return RoutingDecision("simple_rag", "insufficient_breadth_for_promotion", score, mode, None)
+        return RoutingDecision("simple_rag", "ambiguous_breadth_probe", score, mode, None, provisional=True)
+
+    return RoutingDecision("simple_rag", "direct_document_task", score, mode, None)
+
+
+def _log_routing_decision(decision: RoutingDecision) -> None:
+    logger.info(
+        "Adaptive routing route=%s reason=%s score=%d mode=%s scope=%s version=%s",
+        decision.route,
+        decision.reason,
+        decision.score,
+        decision.mode,
+        decision.document_scope or "all_documents",
+        ROUTER_VERSION,
+    )
+
+
+def _should_use_agentic_reasoning(question: str) -> bool:
+    """Compatibility wrapper; only true when deterministic routing requires tools."""
+    return route_query(question).route == "tool_agent"
 
 
 def _parse_highlight_rects(bbox: Any) -> List[Dict[str, Any]]:
@@ -846,12 +975,12 @@ def _is_agent_stop_answer(answer: str) -> bool:
     return any(phrase in text for phrase in stop_phrases)
 
 
-def _retrieve_document_context(
+def _retrieve_document_evidence(
     question: str,
     user_id: str,
     document_id: Optional[str],
     top_k: Optional[int],
-) -> tuple[str, List[Dict[str, Any]]]:
+) -> tuple[str, List[Dict[str, Any]], List[Dict[str, Any]]]:
     chunks = retrieve(
         query=question,
         user_id=user_id,
@@ -869,15 +998,7 @@ def _retrieve_document_context(
     # scores for generic instructions such as "summarize this document" must not
     # erase otherwise valid chunks from that document.
     if not chunks or (not document_id and not _has_relevant_sources(sources)):
-        return "", sources
-
-    context_parts = [
-        (
-            f"Fragmento {index} ({chunk['filename']}, Página {chunk['page']}):\n"
-            f"{chunk['text']}"
-        )
-        for index, chunk in enumerate(chunks, 1)
-    ]
+        return "", sources, chunks
 
     context_parts = [
         (
@@ -900,7 +1021,18 @@ def _retrieve_document_context(
     if graph_context:
         context_parts.append(f"Relaciones adicionales:\n{graph_context}")
 
-    return "\n\n".join(context_parts), sources
+    return "\n\n".join(context_parts), sources, chunks
+
+
+def _retrieve_document_context(
+    question: str,
+    user_id: str,
+    document_id: Optional[str],
+    top_k: Optional[int],
+) -> tuple[str, List[Dict[str, Any]]]:
+    """Compatibility wrapper for callers that do not need the full evidence chunks."""
+    context, sources, _ = _retrieve_document_evidence(question, user_id, document_id, top_k)
+    return context, sources
 
 
 def _build_style_reference(sources: List[Dict[str, Any]]) -> str:
@@ -1070,7 +1202,7 @@ def _build_partial_agent_answer_prompt(
 {task_description}
 Redacta ahora la mejor respuesta académica {response_kind} usando ÚNICAMENTE la evidencia recuperada abajo.
 
-## Evidencia ya recuperada por el agente
+## Evidencia recuperada
 
 {context}
 
@@ -1214,7 +1346,7 @@ def _build_evidence_only_fallback(raw_sources: List[Dict[str, Any]], notice: str
     prefix = f"{notice}\n\n" if notice else ""
     return prefix + (
         "No fue posible completar la síntesis interpretativa, pero sí conservar la evidencia verificable "
-        "recuperada en la última ejecución del agente:\n\n"
+        "recuperada durante la fase de investigación:\n\n"
         + "\n".join(evidence_lines)
         + "\n\nLas relaciones o conclusiones que no se desprendan explícitamente de estos fragmentos "
         "deben considerarse insuficientemente sustentadas."
@@ -1256,9 +1388,13 @@ def _generate_direct_document_answer(
     hf_token: Optional[str],
     top_k: Optional[int],
     chat_history: Optional[List[Dict[str, str]]],
+    evidence: Optional[tuple[str, List[Dict[str, Any]], List[Dict[str, Any]]]] = None,
 ) -> Dict[str, Any]:
     logger.info("RAG route: using direct document RAG for simple request.")
-    context, sources = _retrieve_document_context(question, user_id, document_id, top_k)
+    if evidence is None:
+        context, sources, _ = _retrieve_document_evidence(question, user_id, document_id, top_k)
+    else:
+        context, sources, _ = evidence
     if not context:
         return {
             "answer": "No encontré información suficiente en los documentos cargados para responder esta pregunta.",
@@ -1290,6 +1426,69 @@ def _generate_direct_document_answer(
     return {"answer": answer, "sources": sources}
 
 
+def _effective_retrieval_top_k(decision: RoutingDecision, top_k: Optional[int]) -> Optional[int]:
+    if decision.mode == "research" or decision.route == "research_rag":
+        return max(top_k or 0, settings.TOP_K_RERANK)
+    return top_k
+
+
+def _retrieved_document_count(raw_sources: List[Dict[str, Any]]) -> int:
+    return len({_document_key(source) for source in raw_sources if _document_key(source)})
+
+
+def _execute_document_route(
+    decision: RoutingDecision,
+    question: str,
+    user_id: str,
+    document_id: Optional[str],
+    hf_token: Optional[str],
+    top_k: Optional[int],
+    chat_history: Optional[List[Dict[str, str]]],
+) -> Dict[str, Any]:
+    """Retrieve once, then execute either scoped/simple or deep research synthesis."""
+    retrieval_top_k = _effective_retrieval_top_k(decision, top_k)
+    evidence = _retrieve_document_evidence(question, user_id, document_id, retrieval_top_k)
+    context, sources, raw_sources = evidence
+
+    if decision.provisional:
+        decision = route_query(
+            question=question,
+            document_id=document_id,
+            routing_mode=decision.mode,
+            chat_history=chat_history,
+            retrieved_document_count=_retrieved_document_count(raw_sources),
+        )
+        _log_routing_decision(decision)
+
+    if not context:
+        return {
+            "answer": "No encontré información suficiente en los documentos cargados para responder esta pregunta.",
+            "sources": [],
+        }
+
+    if decision.route == "research_rag":
+        logger.info("RAG route: deep multi-document retrieval and grounded synthesis without ReAct.")
+        answer = _generate_partial_answer_from_agent_sources(
+            question=question,
+            raw_sources=raw_sources,
+            sources=sources,
+            hf_token=hf_token,
+            chat_history=chat_history,
+            notice="",
+        )
+        return {"answer": answer, "sources": sources}
+
+    return _generate_direct_document_answer(
+        question=question,
+        user_id=user_id,
+        document_id=document_id,
+        hf_token=hf_token,
+        top_k=retrieval_top_k,
+        chat_history=chat_history,
+        evidence=evidence,
+    )
+
+
 @trace_function(
     "generate_answer",
     metadata_factory=lambda question, user_id, document_id=None, **kwargs: {
@@ -1305,11 +1504,15 @@ def generate_answer(
     hf_token: Optional[str] = None,
     top_k: Optional[int] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
+    routing_mode: RoutingMode = "auto",
 ) -> Dict[str, Any]:
-    """Agentic generation: retrieve via tools → reason → generate answer."""
+    """Generate through the deterministic adaptive router."""
+
+    decision = route_query(question, document_id, routing_mode, chat_history)
+    _log_routing_decision(decision)
 
     # ── Handle greetings ─────────────────────────────
-    if is_greeting(question):
+    if decision.route == "greeting":
         chat_llm = get_llm_client(hf_token)
         try:
             from langchain_core.messages import SystemMessage, HumanMessage
@@ -1323,15 +1526,9 @@ def generate_answer(
             answer = "¡Hola! Soy ATLAS. ¿En qué puedo ayudarte hoy?"
         return {"answer": answer, "sources": []}
 
-    use_agentic_first = _should_use_agentic_reasoning(question)
-    logger.info(
-        "RAG routing decision: %s",
-        "agent-first" if use_agentic_first else "direct-rag-simple",
-    )
-
-    if use_agentic_first:
+    if decision.route == "tool_agent":
         try:
-            result = _generate_agentic_document_answer(
+            return _generate_agentic_document_answer(
                 question=question,
                 user_id=user_id,
                 document_id=document_id,
@@ -1339,13 +1536,13 @@ def generate_answer(
                 top_k=top_k,
                 chat_history=chat_history,
             )
-            return result
         except Exception as e:
-            logger.error("Agentic RAG failed for complex request; direct RAG fallback suppressed: %s", e)
+            logger.error("Tool agent failed; direct document fallback is not equivalent: %s", e)
             return {"answer": AGENT_INCOMPLETE_MESSAGE, "sources": []}
 
     try:
-        return _generate_direct_document_answer(
+        return _execute_document_route(
+            decision=decision,
             question=question,
             user_id=user_id,
             document_id=document_id,
@@ -1354,23 +1551,7 @@ def generate_answer(
             chat_history=chat_history,
         )
     except Exception as e:
-        if use_agentic_first:
-            logger.error(f"Direct RAG generation error after agentic fallback: {e}")
-            raise ExternalServiceException("Ollama", str(e)) from e
-        logger.warning("Direct RAG failed; falling back to agentic RAG: %s", e)
-
-    try:
-        result = _generate_agentic_document_answer(
-            question=question,
-            user_id=user_id,
-            document_id=document_id,
-            hf_token=hf_token,
-            top_k=top_k,
-            chat_history=chat_history,
-        )
-        return result
-    except Exception as e:
-        logger.error(f"Agentic RAG generation error: {e}")
+        logger.error("Document RAG generation error on route %s: %s", decision.route, e)
         raise ExternalServiceException("Ollama", str(e)) from e
 
 
@@ -1391,11 +1572,15 @@ def generate_answer_stream(
     hf_token: Optional[str] = None,
     top_k: Optional[int] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
+    routing_mode: RoutingMode = "auto",
 ) -> Generator[str, None, None]:
-    """Streaming Agentic pipeline."""
+    """Stream a response using the same deterministic router as the REST path."""
+
+    decision = route_query(question, document_id, routing_mode, chat_history)
+    _log_routing_decision(decision)
 
     # ── Handle greetings ─────────────────────────────
-    if is_greeting(question):
+    if decision.route == "greeting":
         yield f"data: {json.dumps({'type': 'sources', 'data': []})}\n\n"
         chat_llm = get_llm_client(hf_token)
         try:
@@ -1408,57 +1593,28 @@ def generate_answer_stream(
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
         return
 
-    use_agentic_first = _should_use_agentic_reasoning(question)
-    logger.info(
-        "Streaming RAG routing decision: %s",
-        "agent-first" if use_agentic_first else "direct-rag-simple",
-    )
+    use_agentic_first = decision.route == "tool_agent"
 
     if not use_agentic_first:
         try:
-            context, sources = _retrieve_document_context(question, user_id, document_id, top_k)
-            if not context:
-                yield f"data: {json.dumps({'type': 'sources', 'data': []})}\n\n"
-                yield f"data: {json.dumps({'type': 'token', 'data': INSUFFICIENT_EVIDENCE_MESSAGE})}\n\n"
-                yield f"data: {json.dumps({'type': 'done'})}\n\n"
-                return
-
-            if document_id:
-                answer = _generate_grounded_selected_document_answer(
-                    question=question,
-                    context=context,
-                    sources=sources,
-                    hf_token=hf_token,
-                    chat_history=chat_history,
-                )
-                yield f"data: {json.dumps({'type': 'sources', 'data': sources})}\n\n"
-                yield f"data: {json.dumps({'type': 'token', 'data': answer})}\n\n"
-                yield f"data: {json.dumps({'type': 'done'})}\n\n"
-                return
-
-            from langchain_core.messages import HumanMessage
-
-            style_reference = _load_global_style_reference()
-            chat_llm = get_llm_client(hf_token)
-            prompt = _build_direct_rag_prompt(question, context, chat_history, style_reference=style_reference)
-            if hasattr(chat_llm, "stream"):
-                collected_chunks = []
-                for chunk in chat_llm.stream([HumanMessage(content=prompt)]):
-                    content = getattr(chunk, "content", "")
-                    if content:
-                        collected_chunks.append(str(content))
-                answer = parse_agent_output("".join(collected_chunks))
-            else:
-                response = chat_llm.invoke([HumanMessage(content=prompt)])
-                answer = parse_agent_output(response.content)
-
-            answer = _validate_answer_citations(answer, sources)
-            yield f"data: {json.dumps({'type': 'sources', 'data': sources})}\n\n"
-            yield f"data: {json.dumps({'type': 'token', 'data': answer})}\n\n"
+            result = _execute_document_route(
+                decision=decision,
+                question=question,
+                user_id=user_id,
+                document_id=document_id,
+                hf_token=hf_token,
+                top_k=top_k,
+                chat_history=chat_history,
+            )
+            yield f"data: {json.dumps({'type': 'sources', 'data': result['sources']})}\n\n"
+            yield f"data: {json.dumps({'type': 'token', 'data': result['answer']})}\n\n"
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
             return
         except Exception as e:
-            logger.warning("Direct streaming RAG failed; falling back to agentic stream: %s", e)
+            logger.error("Streaming document route %s failed: %s", decision.route, e)
+            yield f"data: {json.dumps({'type': 'error', 'data': str(e)})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            return
 
     pdf_tool = None
     web_tool = None

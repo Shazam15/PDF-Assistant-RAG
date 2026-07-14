@@ -83,3 +83,12 @@ def test_make_cache_key_is_64_chars():
     """SHA-256 hex digest is always exactly 64 characters."""
     key = cache_module.make_cache_key("any_doc", "any question")
     assert len(key) == 64
+
+
+def test_cache_is_separated_by_routing_mode():
+    cache_module.set_cached_response("doc", "Same question", "Quick", routing_mode="quick")
+    cache_module.set_cached_response("doc", "Same question", "Research", routing_mode="research")
+
+    assert cache_module.get_cached_response("doc", "Same question", routing_mode="quick")["answer"] == "Quick"
+    assert cache_module.get_cached_response("doc", "Same question", routing_mode="research")["answer"] == "Research"
+    assert cache_module.get_cached_response("doc", "Same question", routing_mode="auto") is None
