@@ -71,6 +71,7 @@ COMMON_PASSWORDS = frozenset(
 )
 
 
+
 def validate_password(password: str) -> None:
     """
     Validate password strength. Raises ValueError with a user-friendly message
@@ -99,3 +100,6 @@ def validate_password(password: str) -> None:
 
     if errors:
         raise ValueError("; ".join(errors))
+
+
+

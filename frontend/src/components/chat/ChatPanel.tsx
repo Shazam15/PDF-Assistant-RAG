@@ -5,13 +5,13 @@ import { useState, useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import type { DocInfo } from "@/app/dashboard/page";
 import { api, API_BASE } from "@/lib/api";
-import { useChatStore, type ChatMsg, type SourceBoundingBox, type SourceChunk } from "@/store/chat-store";
+import { useChatStore, type ChatMsg, type RoutingMode, type SourceBoundingBox, type SourceChunk } from "@/store/chat-store";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import MessageBubble from "./MessageBubble";
 import SourceCard from "./SourceCard";
-import { Send, Loader2, Trash2, MessageSquare, Download, Mic, MicOff, HelpCircle } from "lucide-react";
+import { Send, Square, Trash2, MessageSquare, Download, Mic, MicOff, HelpCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface ISpeechRecognitionEvent {
@@ -66,12 +66,14 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
   const isTyping = useChatStore((state) => state.isTyping);
   const historyLoading = useChatStore((state) => state.historyLoading);
   const activeSessionId = useChatStore((state) => state.activeSessionId);
+  const routingMode = useChatStore((state) => state.routingMode);
   const setMessages = useChatStore((state) => state.setMessages);
   const setInput = useChatStore((state) => state.setInput);
   const setStreaming = useChatStore((state) => state.setStreaming);
   const setIsTyping = useChatStore((state) => state.setIsTyping);
   const resetChat = useChatStore((state) => state.resetChat);
   const fetchSessionHistory = useChatStore((state) => state.fetchSessionHistory);
+  const setRoutingMode = useChatStore((state) => state.setRoutingMode);
   
   const [showExportMenu, setShowExportMenu] = useState(false);
   const MAX_CHARACTERS = 2000;
@@ -87,8 +89,20 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const prevDocId = useRef<string | null>(null);
   const exportMenuRef = useRef<HTMLDivElement>(null);
+  const activeWebSocketRef = useRef<WebSocket | null>(null);
+  const streamAbortControllerRef = useRef<AbortController | null>(null);
+  const activeAssistantIdRef = useRef<string | null>(null);
+  const activeQuestionRef = useRef("");
+  const activeRequestIdRef = useRef(0);
 
   const showEmptyState = messages.length === 0 && !isTyping && !historyLoading;
+
+  useEffect(() => {
+    const savedMode = window.localStorage.getItem("atlas-routing-mode");
+    if (savedMode === "auto" || savedMode === "quick" || savedMode === "research") {
+      setRoutingMode(savedMode);
+    }
+  }, [setRoutingMode]);
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -114,6 +128,13 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
 
   useEffect(() => {
     return () => {
+      activeRequestIdRef.current += 1;
+      try {
+        activeWebSocketRef.current?.close(1000, "chat panel closed");
+      } catch {
+        // A WebSocket can reject close() while it is still connecting.
+      }
+      streamAbortControllerRef.current?.abort();
       resetChat();
     };
   }, [resetChat]);
@@ -169,6 +190,9 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
     if (!input.trim() || streaming) return;
 
     const question = input.trim();
+    const requestId = activeRequestIdRef.current + 1;
+    activeRequestIdRef.current = requestId;
+    activeQuestionRef.current = question;
     setInput("");
 
     // Add user message
@@ -181,13 +205,15 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
     setMessages((prev) => [...prev, userMsg]);
 
     const assistantId = `assistant-${Date.now()}`;
+    activeAssistantIdRef.current = assistantId;
     let assistantCreated = false;
+    let pendingSources: SourceChunk[] = [];
 
     setStreaming(true);
     setIsTyping(true);
 
     try {
-      // Try WebSocket first for real-time agentic thought streaming
+      // Try WebSocket first for real-time source and answer streaming.
       const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
       const base = API_BASE || window.location.origin;
       const wsScheme = base.startsWith("https") ? "wss" : base.startsWith("http") ? "ws" : "wss";
@@ -195,14 +221,21 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
       const wsUrl = `${wsScheme}:${host}/api/v1/chat/ws${token ? `?token=${encodeURIComponent(token)}` : ""}`;
 
       const ws = new WebSocket(wsUrl);
+      activeWebSocketRef.current = ws;
       let questionSent = false;
+      let completed = false;
 
       const wsDone = new Promise<void>((resolve, reject) => {
         ws.onopen = () => {
           clearTimeout(connectTimeout);
           // Send initial payload
           questionSent = true;
-          ws.send(JSON.stringify({ question, document_id: activeDoc?.id || null, session_id: activeSessionId }));
+          ws.send(JSON.stringify({
+            question,
+            document_id: activeDoc?.id || null,
+            session_id: activeSessionId,
+            routing_mode: routingMode,
+          }));
         };
 
         // If WS doesn't open within 800ms, treat as failure and fallback.
@@ -220,6 +253,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
 
         ws.onmessage = (ev) => {
           clearTimeout(connectTimeout);
+          if (activeRequestIdRef.current !== requestId) return;
           try {
             const event = JSON.parse(ev.data);
             if (event.type === "token") {
@@ -231,7 +265,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
                   id: assistantId,
                   role: "assistant",
                   content: event.data as string,
-                  sources: [],
+                  sources: pendingSources,
                   isStreaming: true,
                 };
 
@@ -242,19 +276,15 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
                 );
               }
             } else if (event.type === "sources") {
-              setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, sources: event.data as SourceChunk[] } : m)));
-            } else if (event.type === "thought") {
-              // Append thoughts as a temporary assistant note (optional UI handling)
-              // For simplicity, add to assistant message content in brackets
-              setMessages((prev) =>
-                prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + `\n[thought] ${event.data}` } : m))
-              );
+              pendingSources = event.data as SourceChunk[];
+              setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, sources: pendingSources } : m)));
             } else if (event.type === "error") {
               setIsTyping(false);
               setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content: `Error: ${event.data}`, isStreaming: false } : m)));
               ws.close();
               reject(new Error(String(event.data)));
             } else if (event.type === "done") {
+              completed = true;
               setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, isStreaming: false } : m)));
               ws.close();
               resolve();
@@ -270,21 +300,44 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
         };
 
         ws.onclose = () => {
-          resolve();
+          clearTimeout(connectTimeout);
+          if (activeRequestIdRef.current !== requestId) {
+            resolve();
+            return;
+          }
+          if (completed) {
+            resolve();
+            return;
+          }
+          if (!questionSent) {
+            reject(new Error("WebSocket closed before sending the question"));
+            return;
+          }
+          if (assistantCreated) {
+            setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, isStreaming: false } : m)));
+            resolve();
+            return;
+          }
+          reject(new Error("WebSocket closed before completion"));
         };
       });
 
       await wsDone;
     } catch (err) {
+      if (activeRequestIdRef.current !== requestId) return;
       // Fallback to existing SSE stream if WebSocket fails
       try {
+        const abortController = new AbortController();
+        streamAbortControllerRef.current = abortController;
         const stream = api.streamPost("/api/v1/chat/ask/stream", {
           question,
           document_id: activeDoc?.id || null,
           session_id: activeSessionId,
-        });
+          routing_mode: routingMode,
+        }, { signal: abortController.signal });
 
         for await (const event of stream) {
+          if (activeRequestIdRef.current !== requestId) break;
           if (event.type === "token") {
             if (!assistantCreated) {
               assistantCreated = true;
@@ -292,9 +345,9 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
 
               const assistantMsg: ChatMsg = {
                 id: assistantId,
-                role: "assistant",
-                content: event.data as string,
-                sources: [],
+                  role: "assistant",
+                  content: event.data as string,
+                  sources: pendingSources,
                 isStreaming: true,
               };
 
@@ -305,7 +358,8 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
               );
             }
           } else if (event.type === "sources") {
-            setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, sources: event.data as SourceChunk[] } : m)));
+            pendingSources = event.data as SourceChunk[];
+            setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, sources: pendingSources } : m)));
           } else if (event.type === "error") {
             setIsTyping(false);
             setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content: `Error: ${event.data}`, isStreaming: false } : m)));
@@ -314,6 +368,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
           }
         }
       } catch (err2) {
+        if (activeRequestIdRef.current !== requestId) return;
         setIsTyping(false);
         setMessages((prev) =>
           prev.map((m) =>
@@ -330,10 +385,46 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
         );
       }
     } finally {
-
-      setStreaming(false);
-      setIsTyping(false);
+      if (activeRequestIdRef.current === requestId) {
+        activeWebSocketRef.current = null;
+        streamAbortControllerRef.current = null;
+        activeAssistantIdRef.current = null;
+        activeQuestionRef.current = "";
+        setStreaming(false);
+        setIsTyping(false);
+      }
     }
+  };
+
+  const handleCancelOutput = () => {
+    if (!streaming) return;
+
+    activeRequestIdRef.current += 1;
+    try {
+      activeWebSocketRef.current?.close(1000, "cancelled by user");
+    } catch {
+      // The invalidated request will still be ignored if the socket is connecting.
+    }
+    streamAbortControllerRef.current?.abort();
+
+    const assistantId = activeAssistantIdRef.current;
+    if (assistantId) {
+      setMessages((prev) =>
+        prev.map((message) =>
+          message.id === assistantId ? { ...message, isStreaming: false } : message
+        )
+      );
+    }
+
+    const cancelledQuestion = activeQuestionRef.current;
+    setInput((current) => current.trim() || cancelledQuestion);
+    activeWebSocketRef.current = null;
+    streamAbortControllerRef.current = null;
+    activeAssistantIdRef.current = null;
+    activeQuestionRef.current = "";
+    setStreaming(false);
+    setIsTyping(false);
+    window.setTimeout(() => textareaRef.current?.focus(), 0);
   };
 
   const handleClear = async () => {
@@ -621,6 +712,31 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
             </div>
           )}
 
+          <div
+            className="mb-2 inline-flex h-8 items-center rounded-md border border-border/60 bg-background/60 p-0.5"
+            role="group"
+            aria-label={t("chat.routingMode", { defaultValue: "Response mode" })}
+          >
+            {(["auto", "quick", "research"] as RoutingMode[]).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                disabled={streaming}
+                onClick={() => setRoutingMode(mode)}
+                aria-pressed={routingMode === mode}
+                title={t(`chat.mode${mode[0].toUpperCase()}${mode.slice(1)}Title`)}
+                className={cn(
+                  "h-6 px-2.5 text-xs font-medium rounded-[4px] transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                  routingMode === mode
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                )}
+              >
+                {t(`chat.mode${mode[0].toUpperCase()}${mode.slice(1)}`)}
+              </button>
+            ))}
+          </div>
+
           <div className="flex gap-2 items-end">
             <div className="relative flex-1 flex items-center">
               <Textarea
@@ -688,15 +804,17 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
             
             <div className="flex gap-1.5 shrink-0">
               <Button
-                id="send-btn"
+                id={streaming ? "cancel-output-btn" : "send-btn"}
                 size="icon"
-                onClick={handleSend}
-                disabled={!input.trim() || streaming}
+                variant={streaming ? "destructive" : "default"}
+                onClick={streaming ? handleCancelOutput : handleSend}
+                disabled={!streaming && !input.trim()}
                 className="h-[44px] w-[44px]"
-                aria-label={streaming ? "Sending message" : "Send message"}
+                title={streaming ? t("chat.cancelOutput") : t("chat.sendMessage", { defaultValue: "Send message" })}
+                aria-label={streaming ? t("chat.cancelOutput") : t("chat.sendMessage", { defaultValue: "Send message" })}
               >
                 {streaming ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <Square className="w-4 h-4" fill="currentColor" />
                 ) : (
                   <Send className="w-4 h-4" />
                 )}
@@ -723,7 +841,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
                       <div
                         id="chat-export-menu"
                         role="menu"
-                        aria-label="Export chat"
+                        aria-label="Exportar chat"
                         onKeyDown={handleExportMenuKeyDown}
                         className="absolute bottom-full mb-2 right-0 min-w-[160px] rounded-lg border border-border bg-popover p-1 shadow-lg animate-in fade-in slide-in-from-bottom-2 z-50"
                       >
@@ -766,7 +884,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
                     size="icon"
                     onClick={handleClear}
                     className="h-[44px] w-[44px] text-muted-foreground hover:text-destructive"
-                    aria-label="Clear chat history"
+                    aria-label="Borrar historial de chat"
                   >
                     <Trash2 className="w-4 h-4" />
                   </Button>

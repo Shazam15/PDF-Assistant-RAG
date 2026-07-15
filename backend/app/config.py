@@ -3,14 +3,18 @@ Application configuration via pydantic-settings.
 All config is loaded from environment variables with sensible defaults.
 """
 import os
-from pydantic_settings import BaseSettings
+import secrets
 from functools import lru_cache
 
+from pydantic import ConfigDict, model_validator
+from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
+    model_config = ConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
     # ── App ──────────────────────────────────────────────
-    APP_NAME: str = "Document AI Analyst"
-    SECRET_KEY: str = "change-me-in-production-please"
+    APP_NAME: str = "ATLAS"
+    SECRET_KEY: str = ""
     DEBUG: bool = False
     ENVIRONMENT: str = "development"
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:7860"
@@ -18,7 +22,7 @@ class Settings(BaseSettings):
     # ── Database ─────────────────────────────────────────
     DATABASE_URL: str = "sqlite:///./data/app.db"
     DATABASE_POOL_SIZE: int = 10
-    DATABASE_MAX_OVERFLOW: int = 20
+    DATABASE_MAX_OVERFLOW: int = 25
     DATABASE_POOL_PRE_PING: bool = True
 
     # ── Auth ─────────────────────────────────────────────
@@ -49,6 +53,7 @@ class Settings(BaseSettings):
     GOOGLE_SERVICE_ACCOUNT_FILE: str = ""
 
     # Celery / Redis background processing
+    CELERY_ENABLED: bool = False
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
     CELERY_TASK_TRACK_STARTED: bool = True
@@ -62,7 +67,24 @@ class Settings(BaseSettings):
     # ── File Upload ──────────────────────────────────────
     UPLOAD_DIR: str = "./data/uploads"
     MAX_UPLOAD_SIZE_MB: int = 50
-    ALLOWED_EXTENSIONS: set = {"pdf", "docx", "txt", "md"}
+    ALLOWED_EXTENSIONS: set = {
+        "pdf",
+        "docx",
+        "txt",
+        "md",
+        "py",
+        "js",
+        "ts",
+        "tsx",
+        "java",
+        "cpp",
+        "c",
+        "cs",
+        "go",
+        "rs",
+        "sql",
+        "ipynb",
+    }
     ALLOWED_MIME_TYPES: dict = {
         ".pdf": ["application/pdf"],
         ".docx": [
@@ -71,14 +93,26 @@ class Settings(BaseSettings):
         ],
         ".txt": ["text/plain"],
         ".md": ["text/markdown"],
-
+        ".py": ["text/x-python", "application/x-python-code", "text/plain"],
+        ".js": ["application/javascript", "text/javascript", "text/plain"],
+        ".ts": ["application/typescript", "text/typescript", "text/plain"],
+        ".tsx": ["application/typescript", "text/typescript", "text/plain"],
+        ".java": ["text/x-java-source", "text/x-java", "text/plain"],
+        ".cpp": ["text/x-c++src", "text/x-c++hdr", "text/plain"],
+        ".c": ["text/x-csrc", "text/x-chdr", "text/plain"],
+        ".cs": ["text/x-csharp", "text/x-csharp", "text/plain"],
+        ".go": ["text/x-go", "text/x-go-source", "text/plain"],
+        ".rs": ["text/x-rust", "text/x-rust-source", "text/plain"],
+        ".sql": ["text/x-sql", "application/sql", "text/plain"],
+        ".ipynb": ["application/json", "text/plain"],
     }
 
     # ── RAG Pipeline ─────────────────────────────────────
     CHUNK_SIZE: int = 1000
     CHUNK_OVERLAP: int = 200
-    TOP_K_RETRIEVAL: int = 10 # Fetch more candidates for reranking
-    TOP_K_RERANK: int = 5 # Final number of chunks to return after reranking
+    PDF_USE_UNSTRUCTURED: bool = False
+    TOP_K_RETRIEVAL: int = 36 # Fetch a broad candidate pool across documents
+    TOP_K_RERANK: int = 16 # Final number of chunks to return after reranking
 
     # ── Knowledge Graph (GraphRAG) ───────────────────────
     GRAPH_PERSIST_DIR: str = "./data/graphs"
@@ -106,9 +140,12 @@ class Settings(BaseSettings):
     # ── LLM (HuggingFace Inference API) ──────────────────
     HF_TOKEN: str = os.getenv("HF_TOKEN", "")  # HuggingFace API token (set in .env)
     LLM_MODEL: str = "mistral"
-    LLM_MAX_NEW_TOKENS: int = 1024
+    LLM_CONTEXT_WINDOW: int = 8192
+    LLM_MAX_NEW_TOKENS: int = 4096
     LLM_TEMPERATURE: float = 0.3
-    AGENT_MAX_ITERATIONS: int = 5
+    AGENT_PLANNER_MAX_TOKENS: int = 768
+    AGENT_SYNTHESIS_MAX_TOKENS: int = 2048
+    AGENT_MAX_ITERATIONS: int = 4  # Three research steps plus one mandatory final synthesis
     SUMMARY_MAX_TOKENS: int = 512
 
     # ── LangSmith Tracing (optional) ─────────────────────
@@ -133,16 +170,26 @@ class Settings(BaseSettings):
     SMTP_USER: str = ""
     SMTP_PASSWORD: str = ""
 
+    #--- Code Help --------------------------------
+    CODE_REVIEW_LLM_MODEL: str = "qwen3-coder"
+    CODE_REVIEW_TEMPERATURE: float = 0
+    CODE_REVIEW_MAX_CHARS: int = 12000
+
+    @model_validator(mode="after")
+    def validate_secret_key(self):
+        environment = str(self.ENVIRONMENT).lower()
+        if self.SECRET_KEY:
+            return self
+        if environment == "production":
+            raise ValueError("SECRET_KEY must be set when ENVIRONMENT=production")
+        self.SECRET_KEY = secrets.token_urlsafe(32)
+        return self
+
     @property
     def cors_origins(self) -> list[str]:
         if self.ENVIRONMENT == "production":
             return [o.strip() for o in self.ALLOWED_ORIGINS.split(",")]
         return ["*"]
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        extra = "ignore"
 
 
 @lru_cache()

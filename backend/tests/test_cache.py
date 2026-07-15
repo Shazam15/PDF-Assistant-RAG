@@ -23,23 +23,31 @@ def test_cache_miss_returns_none():
 
 
 def test_set_and_get_roundtrip():
-    cache_module.set_cached_response("doc123", "What is this?", "It is a test.")
+    cache_module.set_cached_response(
+        "doc123",
+        "What is this?",
+        "It is a test. [D1]",
+        sources=[{"source_id": "D1", "filename": "doc.pdf"}],
+    )
     result = cache_module.get_cached_response("doc123", "What is this?")
-    assert result == "It is a test."
+    assert result == {
+        "answer": "It is a test. [D1]",
+        "sources": [{"source_id": "D1", "filename": "doc.pdf"}],
+    }
 
 
 def test_different_documents_do_not_collide():
     cache_module.set_cached_response("doc_A", "Same question?", "Answer A")
     cache_module.set_cached_response("doc_B", "Same question?", "Answer B")
-    assert cache_module.get_cached_response("doc_A", "Same question?") == "Answer A"
-    assert cache_module.get_cached_response("doc_B", "Same question?") == "Answer B"
+    assert cache_module.get_cached_response("doc_A", "Same question?")["answer"] == "Answer A"
+    assert cache_module.get_cached_response("doc_B", "Same question?")["answer"] == "Answer B"
 
 
 def test_question_normalised_to_lowercase():
     """Cache should match regardless of question casing."""
     cache_module.set_cached_response("doc1", "What is AI?", "AI is artificial intelligence.")
     result = cache_module.get_cached_response("doc1", "WHAT IS AI?")
-    assert result == "AI is artificial intelligence."
+    assert result["answer"] == "AI is artificial intelligence."
 
 
 def test_invalidate_removes_entry():
@@ -56,7 +64,7 @@ def test_lru_eviction_removes_oldest():
     cache_module.set_cached_response("doc", "Q3", "A3")
     cache_module.set_cached_response("doc", "Q4", "A4")  # should evict Q1
     assert cache_module.get_cached_response("doc", "Q1") is None
-    assert cache_module.get_cached_response("doc", "Q4") == "A4"
+    assert cache_module.get_cached_response("doc", "Q4")["answer"] == "A4"
 
 
 def test_make_cache_key_is_deterministic():
@@ -75,3 +83,12 @@ def test_make_cache_key_is_64_chars():
     """SHA-256 hex digest is always exactly 64 characters."""
     key = cache_module.make_cache_key("any_doc", "any question")
     assert len(key) == 64
+
+
+def test_cache_is_separated_by_routing_mode():
+    cache_module.set_cached_response("doc", "Same question", "Quick", routing_mode="quick")
+    cache_module.set_cached_response("doc", "Same question", "Research", routing_mode="research")
+
+    assert cache_module.get_cached_response("doc", "Same question", routing_mode="quick")["answer"] == "Quick"
+    assert cache_module.get_cached_response("doc", "Same question", routing_mode="research")["answer"] == "Research"
+    assert cache_module.get_cached_response("doc", "Same question", routing_mode="auto") is None

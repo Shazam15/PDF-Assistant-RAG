@@ -2,25 +2,27 @@ from app.rag import retriever
 
 
 def test_transform_query_includes_original_and_dedupes(monkeypatch):
-    monkeypatch.setattr(
-        retriever,
-        "_generate_query_variants",
-        lambda _query: [
-            "How do taxes work?",
-            "how do taxes work?",
-            "How does healthcare work?",
-            "healthcare overview",
-        ],
-    )
-
     queries = retriever.transform_query("How do taxes and healthcare work?")
 
-    assert queries == [
-        "How do taxes and healthcare work?",
-        "How do taxes work?",
-        "How does healthcare work?",
-        "healthcare overview",
-    ]
+    assert queries[0] == "How do taxes and healthcare work?"
+    assert "taxes healthcare work" in queries
+
+
+def test_transform_query_extracts_core_question_and_adds_bilingual_hints():
+    queries = retriever.transform_query(
+        'Actúa como investigador. Responde: "¿Qué combinación de tecnologías y estrategias '
+        'mejora la sostenibilidad ambiental?". Primero identifica documentos relevantes.'
+    )
+
+    assert queries[0] == "¿Qué combinación de tecnologías y estrategias mejora la sostenibilidad ambiental?"
+    assert "environmental sustainability technologies strategies" in queries
+
+
+def test_transform_summary_query_searches_document_structure():
+    queries = retriever.transform_query("Haz un resumen de este documento.")
+
+    assert "abstract research objective methodology principal results conclusions" in queries
+    assert "resumen objetivo metodologia resultados principales conclusiones" in queries
 
 
 def test_retrieve_fans_out_transformed_queries_and_merges_duplicates(monkeypatch):
@@ -73,5 +75,6 @@ def test_retrieve_fans_out_transformed_queries_and_merges_duplicates(monkeypatch
 
     assert searched_queries == ["embedding:taxes", "embedding:healthcare"]
     assert [chunk["id"] for chunk in chunks] == ["shared", "taxes", "healthcare"]
-    assert chunks[0]["score"] == 1.0
+    assert chunks[0]["score"] == 0.9
+    assert chunks[0]["retrieval_score"] == 1.0
     assert chunks[0]["confidence"] == 100.0

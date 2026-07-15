@@ -12,7 +12,6 @@ import Link from "next/link";
 import GoogleSignInButton from "@/components/auth/GoogleSignInButton";
 import { PasswordField } from "@/components/auth/PasswordField";
 import { isPasswordValid } from "@/lib/password-validation";
-import HuggingFaceSignInButton from "@/components/auth/HuggingFaceSignInButton";
 
 export default function RegisterPage() {
   const { register, user, initialized } = useAuth();
@@ -77,7 +76,6 @@ export default function RegisterPage() {
 
         <CardContent>
           <div className="flex flex-col gap-2.5 mb-4">
-            <HuggingFaceSignInButton onError={setError} />
             <GoogleSignInButton
               onError={setError}
               onSuccess={handleGoogleSuccess}
@@ -131,7 +129,7 @@ export default function RegisterPage() {
               <Input
                 id="reg-email"
                 type="email"
-                placeholder="you@example.com"
+                placeholder="ejemplo@utp.ac.pa"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required

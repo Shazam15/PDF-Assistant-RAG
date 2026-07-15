@@ -54,6 +54,35 @@ def test_validate_upload_accepts_valid_pdf() -> None:
             Path(temp_path).unlink(missing_ok=True)
 
 
+@pytest.mark.parametrize(
+    ("filename", "content", "mime_type"),
+    [
+        ("script.py", b"print('hello')\n", "text/plain"),
+        ("main.cpp", b"int main() { return 0; }\n", "text/plain"),
+    ],
+)
+def test_validate_upload_accepts_source_code_files(
+    monkeypatch: pytest.MonkeyPatch,
+    filename: str,
+    content: bytes,
+    mime_type: str,
+) -> None:
+    monkeypatch.setitem(
+        sys.modules,
+        "magic",
+        types.SimpleNamespace(from_file=lambda *_args, **_kwargs: mime_type),
+    )
+
+    temp_path = None
+    try:
+        temp_path = _run(documents.validate_upload(_upload_file(filename, content)))
+        assert Path(temp_path).exists()
+        assert Path(temp_path).suffix == Path(filename).suffix
+    finally:
+        if temp_path:
+            Path(temp_path).unlink(missing_ok=True)
+
+
 def test_validate_upload_rejects_invalid_file_type() -> None:
     with pytest.raises(ValidationException) as exc:
         _run(documents.validate_upload(_upload_file("notes.exe", b"not a document")))
@@ -142,6 +171,7 @@ def test_upload_document_handles_duplicate_original_names(
     monkeypatch.setattr(documents, "validate_upload", fake_validate_upload)
     monkeypatch.setattr(documents.settings, "UPLOAD_DIR", str(tmp_path / "uploads"))
     monkeypatch.setattr(documents.uuid, "uuid4", lambda: next(uuid_values))
+    monkeypatch.setattr(documents, "ingest_document", lambda **_kwargs: None)
     monkeypatch.setattr(
         documents.process_document,
         "delay",
@@ -168,7 +198,8 @@ def test_upload_document_handles_duplicate_original_names(
     assert [doc.original_name for doc in stored_docs] == ["same-name.pdf", "same-name.pdf"]
     assert len({doc.filename for doc in stored_docs}) == 2
     assert first.original_name == second.original_name == "same-name.pdf"
-    assert first.task_id == second.task_id == "queued-task"
+    assert first.task_id.startswith("inline_")
+    assert second.task_id.startswith("inline_")
     assert (tmp_path / "uploads" / user.id / f"{first_hex}.pdf").exists()
     assert (tmp_path / "uploads" / user.id / f"{second_hex}.pdf").exists()
     assert all(not path.exists() for path in temp_files)

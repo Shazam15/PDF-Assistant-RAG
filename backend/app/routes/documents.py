@@ -66,6 +66,9 @@ ALLOWED_MIME_TYPES = settings.ALLOWED_MIME_TYPES
 
 def _celery_workers_available() -> bool:
     """Return True only when a Celery worker is reachable through the broker."""
+    if not settings.CELERY_ENABLED:
+        return False
+
     try:
         replies = celery_app.control.inspect(timeout=1).ping()
     except Exception as exc:
@@ -105,7 +108,7 @@ def _queue_or_run_ingestion(
             original_name=original_name,
             user_id=user_id,
         )
-        return f"local_{uuid.uuid4().hex}"
+        return f"local_{document_id}"
 
     logger.warning("No background task runner available; processing document inline")
     ingest_document(
@@ -114,7 +117,7 @@ def _queue_or_run_ingestion(
         original_name=original_name,
         user_id=user_id,
     )
-    return f"inline_{uuid.uuid4().hex}"
+    return f"inline_{document_id}"
 
 def _deserialize_doc(doc: Document) -> DocumentResponse:
     import json as _json
@@ -163,7 +166,7 @@ async def validate_upload(file: UploadFile):
 
     # extension without leading dot in settings
     if ext.lstrip(".") not in settings.ALLOWED_EXTENSIONS:
-        raise ValidationException("Only PDF, DOCX, TEXT, AND MARKDOWN files are allowed")
+        raise ValidationException("Only PDF, DOCX, TXT, Markdown, and source-code files are allowed")
 
     # save to a temporary file
     with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
@@ -285,7 +288,7 @@ async def upload_document(
     ext = file.filename.rsplit(".", 1)[-1].lower()
     if ext not in settings.ALLOWED_EXTENSIONS:
         raise ValidationException(
-            f"File type '.{ext}' not supported. Allowed: {', '.join(settings.ALLOWED_EXTENSIONS)}",
+            "File extension not supported. Only PDF, DOCX, TXT, Markdown, and source-code files are allowed",
         )
 
     # ── Validate and save file to disk ───────────────

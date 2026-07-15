@@ -109,13 +109,8 @@ async def lifespan(app: FastAPI):
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
     os.makedirs(settings.CHROMA_PERSIST_DIR, exist_ok=True)
 
-    # Pre-load embedding model (warm up)
-    try:
-        from app.rag.embeddings import get_embedding_model
-        get_embedding_model()
-        logger.info("Embedding model pre-loaded")
-    except Exception as e:
-        logger.warning(f"Failed to pre-load embedding model: {e}")
+    # Defer embedding model loading until the first retrieval request so startup stays lightweight.
+    logger.info("Startup completed; embedding model will load on demand")
 
     # Start background cleanup task
     import asyncio

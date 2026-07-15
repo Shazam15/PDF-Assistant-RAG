@@ -323,7 +323,7 @@ def verify_email(token: str, db: Session = Depends(get_db)):
     user.verification_token_created_at = None
     db.commit()
 
-    return MessageResponse(message="Email verified successfully. You can now log in.")
+    return MessageResponse(message="Correo verificado, ya puede ingresar!")
 
 
 @router.post("/resend-verification", response_model=MessageResponse)
@@ -369,7 +369,7 @@ def refresh_token(payload: RefreshRequest, db: Session = Depends(get_db)):
     
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
-        raise UnauthorizedException("User not found")
+        raise UnauthorizedException("Usuario no encontrado")
         
     return _create_token_response(user)
 

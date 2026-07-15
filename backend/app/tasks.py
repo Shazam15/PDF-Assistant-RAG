@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
     default_retry_delay=30,
     autoretry_for=(Exception,),
     acks_late=True,
-    reject_on_worker_lost=True,
+    reject_on_worker_lost=False,
 )
 def process_document(
     self,
@@ -52,4 +52,3 @@ def process_document(
                 doc.processing_progress = 0
                 db.commit()
         raise
-

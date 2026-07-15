@@ -55,6 +55,14 @@ export interface DocInfo {
   uploaded_at: string;
 }
 
+interface DocumentListPayload {
+  documents?: DocInfo[];
+  items?: DocInfo[];
+  total?: number;
+  page?: number;
+  pages?: number;
+}
+
 export default function DashboardPage() {
   const { user, loading, initialized } = useAuth();
   const router = useRouter();
@@ -78,11 +86,56 @@ export default function DashboardPage() {
   const [connectionError, setConnectionError] = useState("");
   const [documentsLoading, setDocumentsLoading] = useState(true);
 
+  const resetViewerState = useCallback(() => {
+    setViewerOpen(false);
+    setActiveDoc(null);
+    setPdfPage(1);
+    setPdfHighlightTarget(null);
+  }, []);
+
+  const handleSelectDoc = useCallback((doc: DocInfo) => {
+    setActiveDoc(doc);
+    setPdfPage(1);
+    setPdfHighlightTarget(null);
+    if (doc.original_name.toLowerCase().endsWith(".pdf")) {
+      setViewerOpen(true);
+    } else {
+      setViewerOpen(false);
+    }
+  }, []);
+
   const handleDocumentRenamed = useCallback((renamedDocument: DocInfo) => {
     setDocuments((current) =>
       current.map((document) => (document.id === renamedDocument.id ? renamedDocument : document))
     );
     setActiveDoc((current) => (current?.id === renamedDocument.id ? renamedDocument : current));
+  }, []);
+
+  const documentsEqual = useCallback((a: DocInfo[], b: DocInfo[]) => {
+    if (a.length !== b.length) return false;
+
+    for (let i = 0; i < a.length; i += 1) {
+      const lhs = a[i];
+      const rhs = b[i];
+
+      if (
+        lhs.id !== rhs.id ||
+        lhs.original_name !== rhs.original_name ||
+        lhs.file_size !== rhs.file_size ||
+        lhs.page_count !== rhs.page_count ||
+        lhs.chunk_count !== rhs.chunk_count ||
+        lhs.status !== rhs.status ||
+        lhs.error_message !== rhs.error_message ||
+        lhs.uploaded_at !== rhs.uploaded_at ||
+        lhs.summary !== rhs.summary ||
+        lhs.chunk_size !== rhs.chunk_size ||
+        lhs.chunk_overlap !== rhs.chunk_overlap
+      ) {
+        return false;
+      }
+    }
+
+    return true;
   }, []);
 
   // Auth guard
@@ -98,7 +151,7 @@ export default function DashboardPage() {
 
       if (!hasHfToken) {
         console.info(
-          "Hugging Face API token is not configured. Personal model access will fall back to the system default unless set in the user profile menu."
+          "No hay token de API de Hugging Face configurado. El acceso al modelo personal volverá al valor predeterminado del sistema a menos que se establezca en el menú del perfil del usuario."
         );
       }
     }
@@ -106,13 +159,39 @@ export default function DashboardPage() {
 
 
   // Load documents
-  const loadDocuments = useCallback(async () => {
-    setDocumentsLoading(true);
+  const loadDocuments = useCallback(async (skipLoading = false) => {
+    if (!skipLoading) {
+      setDocumentsLoading(true);
+    }
+
     try {
-      const data = await api.get<{ documents?: DocInfo[]; items?: DocInfo[] }>(
-        "/api/v1/documents/"
+      const firstPage = await api.get<DocumentListPayload>("/api/v1/documents/");
+      const firstPageDocuments = firstPage?.documents ?? firstPage?.items ?? [];
+      let nextDocuments = firstPageDocuments;
+
+      if (firstPage?.items && (firstPage.pages ?? 1) > 1) {
+        const remainingPages = Array.from(
+          { length: (firstPage.pages ?? 1) - 1 },
+          (_, index) => index + 2
+        );
+
+        const remainingResponses = await Promise.all(
+          remainingPages.map((page) =>
+            api.get<DocumentListPayload>(`/api/v1/documents/?page=${page}`)
+          )
+        );
+
+        nextDocuments = [
+          ...firstPageDocuments,
+          ...remainingResponses.flatMap(
+            (response) => response?.items ?? response?.documents ?? []
+          ),
+        ];
+      }
+
+      setDocuments((current) =>
+        documentsEqual(current, nextDocuments) ? current : nextDocuments
       );
-      setDocuments(data?.documents ?? data?.items ?? []);
       setConnectionError("");
     } catch (err) {
       const message = err instanceof Error ? err.message : CONNECTION_ERROR_MESSAGE;
@@ -122,9 +201,11 @@ export default function DashboardPage() {
           : `⚠️ ${message}`
       );
     } finally {
-      setDocumentsLoading(false);
+      if (!skipLoading) {
+        setDocumentsLoading(false);
+      }
     }
-  }, []);
+  }, [documentsEqual]);
 
   useEffect(() => {
     if (!user) return;
@@ -143,9 +224,9 @@ export default function DashboardPage() {
       const oldStatus = prev[doc.id];
       if (oldStatus && oldStatus !== doc.status) {
         if (doc.status === "ready") {
-          toast.success(`🎉 Ingestion complete: '${doc.original_name}' is ready!`);
+          toast.success(`🎉 Ingestion completa: '${doc.original_name}' está listo!`);
         } else if (doc.status === "failed") {
-          toast.error(`❌ Ingestion failed for '${doc.original_name}': ${doc.error_message || "Unknown error"}`);
+          toast.error(`❌ Ingestion fallida para '${doc.original_name}': ${doc.error_message || "Error desconocido"}`);
         }
       }
     });
@@ -159,7 +240,7 @@ export default function DashboardPage() {
     );
     if (!hasPending) return;
 
-    const interval = setInterval(loadDocuments, 3000);
+    const interval = setInterval(() => void loadDocuments(true), 3000);
     return () => clearInterval(interval);
   }, [documents, loadDocuments]);
 
@@ -177,10 +258,7 @@ export default function DashboardPage() {
       documents={documents}
       activeDoc={activeDoc}
       loading={documentsLoading}
-      onSelectDoc={(doc) => {
-        setActiveDoc(doc);
-        setPdfPage(1);
-      }}
+      onSelectDoc={handleSelectDoc}
       onDocumentsChange={loadDocuments}
       onDocumentRenamed={handleDocumentRenamed}
     />
@@ -192,7 +270,13 @@ export default function DashboardPage() {
         sidebarOpen={sidebarOpen}
         onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
         viewerOpen={viewerOpen}
-        onToggleViewer={() => setViewerOpen(!viewerOpen)}
+        onToggleViewer={() => {
+          if (viewerOpen) {
+            resetViewerState();
+          } else if (activeDoc?.original_name.toLowerCase().endsWith(".pdf")) {
+            setViewerOpen(true);
+          }
+        }}
         mobileSheetContent={sidebarContent}
       />
 
@@ -242,6 +326,7 @@ export default function DashboardPage() {
               }}
               totalPages={activeDoc.page_count}
               highlightTarget={pdfHighlightTarget}
+              onClose={resetViewerState}
             />
           </div>
         )}

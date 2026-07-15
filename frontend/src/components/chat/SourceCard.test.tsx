@@ -33,18 +33,18 @@ describe("SourceCard", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("2 sources cited")).toBeInTheDocument();
     expect(
-      screen.getByLabelText("Go to source page 3. Confidence Medium"),
-    ).toHaveTextContent("p.3 - Medium");
+      screen.getByLabelText("Go to source page 2. Confidence Media"),
+    ).toHaveTextContent("p.2 - Media");
     expect(
-      screen.getByLabelText("Go to source page 5. Confidence Low"),
-    ).toHaveTextContent("p.5 - Low");
+      screen.getByLabelText("Go to source page 4. Confidence Baja"),
+    ).toHaveTextContent("p.4 - Baja");
 
     await user.click(
-      screen.getByLabelText("Go to source page 3. Confidence Medium"),
+      screen.getByLabelText("Go to source page 2. Confidence Media"),
     );
 
     expect(onPageClick).toHaveBeenCalledWith({
-      page: 3,
+      page: 2,
       highlightRects: sources[0].highlightRects,
     });
   });
@@ -60,9 +60,11 @@ describe("SourceCard", () => {
       screen.getByRole("button", { name: "Collapse 2 cited sources" }),
     ).toBeInTheDocument();
     expect(screen.getByText("annual-report.pdf")).toBeInTheDocument();
-    expect(screen.getByText("Page 3")).toBeInTheDocument();
-    expect(screen.getByText("Score: High")).toBeInTheDocument();
-    expect(screen.getByText("Confidence: Medium")).toBeInTheDocument();
+    expect(
+      screen.getByText((_, element) => element?.textContent === "D1 · Pág. 2"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Score: Alta")).toBeInTheDocument();
+    expect(screen.getByText("Confianza: Media")).toBeInTheDocument();
     expect(
       screen.getByText("Revenue increased after the new pricing plan rolled out."),
     ).toBeInTheDocument();

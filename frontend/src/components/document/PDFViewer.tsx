@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Loader2, AlertCircle, RotateCw } from "lucide-react";
+import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Loader2, AlertCircle, RotateCw, X } from "lucide-react";
 import { API_BASE } from "@/lib/api";
 
 // Import styles for react-pdf layers
@@ -36,6 +36,7 @@ interface Props {
   onPageChange: (page: number) => void;
   totalPages: number;
   highlightTarget?: PdfHighlightTarget | null;
+  onClose?: () => void;
 }
 
 const isNormalizedRect = (rect: PdfHighlightRect) =>
@@ -54,6 +55,7 @@ export default function PDFViewer({
   onPageChange,
   totalPages,
   highlightTarget,
+  onClose,
 }: Props) {
   const [scale, setScale] = useState(1.0);
   const [rotation, setRotation] = useState(0);
@@ -199,6 +201,18 @@ export default function PDFViewer({
         </div>
 
         <div className="flex items-center gap-1">
+          {onClose && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={onClose}
+              aria-label="Close PDF viewer"
+              title="Close PDF viewer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="icon"

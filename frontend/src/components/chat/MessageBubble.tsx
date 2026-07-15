@@ -201,7 +201,7 @@ export default function MessageBubble({ message }: Props) {
                         : "opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto"
                     }`}
                     onClick={handleShare}
-                    aria-label={shared ? "Link copied" : shareFailed ? "Share failed" : "Share response"}
+                    aria-label={shared ? "Link copiado" : shareFailed ? "Compartir fallido" : "Compartir respuesta"}
                   >
                     {shared ? (
                       <Link2 className="w-3.5 h-3.5 text-emerald-400" />
@@ -225,7 +225,7 @@ export default function MessageBubble({ message }: Props) {
                         : "opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto"
                     }`}
                     onClick={handleSpeech}
-                    aria-label={isSpeaking ? "Stop reading" : "Read response"}
+                    aria-label={isSpeaking ? "Detener lectura" : "Leer respuesta"}
                   >
                     {isSpeaking ? (
                       <Pause className="w-3.5 h-3.5" />
@@ -246,7 +246,7 @@ export default function MessageBubble({ message }: Props) {
                       : "opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto"
                   }`}
                   onClick={handleCopy}
-                  aria-label={copied ? "Copied" : "Copy response"}
+                  aria-label={copied ? "Copiado" : "Copiar respuesta"}
                 >
                   {copied ? (
                     <Check className="w-3.5 h-3.5 text-emerald-400" />
@@ -276,7 +276,7 @@ export default function MessageBubble({ message }: Props) {
                   }`}
                   onClick={handleSpeech}
                   disabled={message.isStreaming}
-                  aria-label={isSpeaking ? "Stop speech" : "Play speech"}
+                  aria-label={isSpeaking ? "Detener lectura" : "Leer respuesta"}
                 >
                   {isSpeaking ? (
                     <Pause className="w-3.5 h-3.5 text-primary" />

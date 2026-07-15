@@ -85,7 +85,7 @@ function DocumentSettingsBody({
               <label htmlFor="chunk-size-slider" className="text-sm font-medium">Chunk size</label>
               <span
                 className="text-xs text-muted-foreground cursor-help"
-                title="Maximum characters per chunk. Larger chunks preserve more context but cost more."
+                title="Máximo de caracteres por fragmento. Fragmentos más grandes preservan más contexto pero cuestan más."
               >
                 ⓘ
               </span>
@@ -124,7 +124,7 @@ function DocumentSettingsBody({
               <label htmlFor="chunk-overlap-slider" className="text-sm font-medium">Overlap</label>
               <span
                 className="text-xs text-muted-foreground cursor-help"
-                title="Characters overlapped between consecutive chunks. Helps maintain context across boundaries."
+                title="Caracteres superpuestos entre fragmentos consecutivos. Ayuda a mantener el contexto a través de los límites."
               >
                 ⓘ
               </span>
@@ -169,11 +169,11 @@ function DocumentSettingsBody({
         <div className="flex justify-between items-center pt-2">
           <Button variant="outline" size="sm" onClick={handleReset} disabled={loading} className="cursor-pointer">
             <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
-            Reset
+            Reiniciar
           </Button>
           <div className="flex gap-2">
             <Button variant="ghost" size="sm" onClick={() => onOpenChange(false)} className="cursor-pointer">
-              Cancel
+              Cancelar
             </Button>
             <Button size="sm" onClick={handleSave} disabled={loading} className="cursor-pointer">
               {loading ? "Saving..." : "Save & Re-index"}

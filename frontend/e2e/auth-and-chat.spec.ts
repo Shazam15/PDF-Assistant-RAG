@@ -38,13 +38,19 @@ async function mockDashboardApis(page: Page, documents: typeof uploadedDocument[
     }
   });
 
-  await page.route("**/api/v1/documents/", async (route) => {
+  await page.route(/\/api\/v1\/documents\/(?:\?.*)?$/, async (route) => {
+    const url = new URL(route.request().url());
+    const requestedPage = Number(url.searchParams.get("page") || "1");
+    const perPage = Number(url.searchParams.get("per_page") || "20");
+    const start = (requestedPage - 1) * perPage;
+    const paginatedDocuments = documents.slice(start, start + perPage);
+
     await route.fulfill({
       json: {
-        items: documents,
+        items: paginatedDocuments,
         total: documents.length,
-        page: 1,
-        pages: documents.length > 0 ? 1 : 0,
+        page: requestedPage,
+        pages: documents.length > 0 ? Math.ceil(documents.length / perPage) : 0,
       },
     });
   });
@@ -168,6 +174,26 @@ test("uploads a PDF document and chats with it", async ({ page }) => {
   await expect(page.getByRole("columnheader", { name: "Field" })).toBeVisible();
   await expect(page.getByRole("cell", { name: "Format" })).toBeVisible();
   await expect(page.getByText("const isPdf = true;")).toBeVisible();
+});
+
+test("shows documents across paginated API results", async ({ page }) => {
+  const documents = Array.from({ length: 25 }, (_, index) => ({
+    ...uploadedDocument,
+    id: `doc-${index + 1}`,
+    original_name: `document-${String(index + 1).padStart(2, "0")}.pdf`,
+  }));
+
+  await page.addInitScript(() => {
+    localStorage.setItem("token", "access-token");
+    localStorage.setItem("refresh_token", "refresh-token");
+  });
+
+  await mockDashboardApis(page, documents);
+  await page.goto("/dashboard");
+
+  await expect(page.getByRole("button", { name: /document-01\.pdf/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /document-25\.pdf/ })).toBeVisible();
+  await expect(page.getByText("25 Documents")).toBeVisible();
 });
 
 test("deletes a document successfully", async ({ page }) => {

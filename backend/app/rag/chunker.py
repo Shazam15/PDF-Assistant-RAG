@@ -7,12 +7,17 @@ import re
 import fitz  # PyMuPDF
 import docx
 import logging
+import os
+import shutil
 from typing import List, Dict, Any
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from app.config import get_settings
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
+
+CODE_EXTENSIONS = {"py", "js", "ts", "tsx", "java", "cpp", "c", "cs", "go", "rs", "sql", "ipynb"}
+OCR_MIN_TEXT_CHARS_PER_PAGE = 40
 
 
 def _is_word_inside_bbox(word: Dict[str, Any], bbox: tuple) -> bool:
@@ -78,23 +83,122 @@ def _table_to_markdown(rows: List[List[Any]]) -> str:
     return "\n".join([fmt(header), fmt(separator), *[fmt(row) for row in body]])
 
 
+def _page_has_enough_text(page_items: List[Dict[str, Any]]) -> bool:
+    """Return True when extracted page text looks useful enough to skip OCR."""
+    text = "\n".join(
+        item.get("text", "")
+        for item in page_items
+        if item.get("chunk_type", "text") == "text"
+    )
+    return len(re.sub(r"\s+", "", text)) >= OCR_MIN_TEXT_CHARS_PER_PAGE
+
+
+def _merge_ocr_for_sparse_pages(filepath: str, pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """OCR only pages where normal extraction produced no meaningful text."""
+    if not pages:
+        return extract_pdf_with_ocr(filepath)
+
+    doc = None
+    try:
+        doc = fitz.open(filepath)
+        page_count = len(doc)
+    except Exception as exc:
+        logger.warning(f"Could not inspect PDF page count before OCR merge: {exc}")
+        return pages
+    finally:
+        if doc:
+            doc.close()
+
+    pages_by_num: Dict[int, List[Dict[str, Any]]] = {}
+    for page_data in pages:
+        pages_by_num.setdefault(page_data.get("page", 1), []).append(page_data)
+
+    sparse_page_numbers = [
+        page_num
+        for page_num in range(1, page_count + 1)
+        if not _page_has_enough_text(pages_by_num.get(page_num, []))
+    ]
+    if not sparse_page_numbers:
+        return pages
+
+    try:
+        ocr_pages = extract_pdf_with_ocr(filepath, page_numbers=sparse_page_numbers)
+    except Exception as exc:
+        logger.warning(f"OCR merge failed for sparse PDF pages: {exc}")
+        return pages
+
+    if not ocr_pages:
+        return pages
+
+    merged_pages = [
+        page_data
+        for page_data in pages
+        if page_data.get("page") not in {ocr_page["page"] for ocr_page in ocr_pages}
+        or page_data.get("chunk_type") == "table"
+    ]
+    merged_pages.extend(ocr_pages)
+    return sorted(merged_pages, key=lambda item: (item.get("page", 1), item.get("table_index", -1)))
+
+
+def _resolve_tesseract_languages(pytesseract_module: Any, requested_languages: str) -> str:
+    """Use only OCR languages installed in the local Tesseract data path."""
+    requested = [lang.strip() for lang in requested_languages.split("+") if lang.strip()]
+    try:
+        installed = set(pytesseract_module.get_languages(config=""))
+    except Exception as exc:
+        logger.warning(f"Could not inspect installed Tesseract languages: {exc}")
+        return "eng"
+
+    available = [lang for lang in requested if lang in installed]
+    if available:
+        return "+".join(available)
+    if "eng" in installed:
+        return "eng"
+    return installed.pop() if installed else "eng"
+
+
 def extract_pdf(filepath: str) -> List[Dict[str, Any]]:
     """Extract PDF text while preserving tables as separate chunks.
 
-    Prefer Unstructured for robust table extraction. Fall back to pdfplumber
-    if Unstructured is not available, then to PyMuPDF as a last resort.
+    Prefer stable Python PDF extractors by default. Unstructured can be enabled
+    with PDF_USE_UNSTRUCTURED=true for advanced table extraction, but it is not
+    the default because its native PDF stack can crash worker processes.
     """
-    try:
-        return extract_pdf_with_unstructured(filepath)
-    except Exception as e:
-        # Unstructured may be installed but require native deps (poppler/pdfinfo).
-        # If anything goes wrong, fall back to pdfplumber then PyMuPDF.
-        logger.warning(f"Unstructured extraction failed, falling back: {e}")
+    if settings.PDF_USE_UNSTRUCTURED:
         try:
-            return extract_pdf_with_tables(filepath)
-        except Exception as e2:
-            logger.warning(f"pdfplumber extraction failed, falling back: {e2}")
-            return extract_pdf_with_pymupdf(filepath)
+            result = extract_pdf_with_unstructured(filepath)
+            if result:
+                return _merge_ocr_for_sparse_pages(filepath, result)
+        except Exception as e:
+            # Unstructured may be installed but require native deps (poppler/pdfinfo).
+            logger.warning(f"Unstructured extraction failed, falling back: {e}")
+    
+    try:
+        result = extract_pdf_with_tables(filepath)
+        if result:
+            return _merge_ocr_for_sparse_pages(filepath, result)
+    except Exception as e2:
+        logger.warning(f"pdfplumber extraction failed, falling back: {e2}")
+    
+    try:
+        result = extract_pdf_with_pymupdf(filepath)
+        if result:
+            return _merge_ocr_for_sparse_pages(filepath, result)
+    except Exception as e3:
+        logger.warning(f"PyMuPDF extraction failed, falling back to OCR: {e3}")
+    
+    # Last resort: try OCR for image-based PDFs
+    try:
+        result = extract_pdf_with_ocr(filepath)
+        if result:
+            logger.info(f"Successfully extracted text from {filepath} using OCR")
+            return result
+    except Exception as e4:
+        logger.warning(f"OCR extraction failed: {e4}")
+    
+    # If all extraction methods fail, return empty list
+    logger.error(f"Could not extract text from {filepath} using any method")
+    return []
 
 
 def extract_pdf_with_pymupdf(filepath: str) -> List[Dict[str, Any]]:
@@ -219,6 +323,96 @@ def extract_pdf_with_tables(filepath: str) -> List[Dict[str, Any]]:
                         "table_index": table_index,
                     })
 
+    return pages
+
+
+def extract_pdf_with_ocr(filepath: str, page_numbers: List[int] = None) -> List[Dict[str, Any]]:
+    """Extract text from image-based PDFs using OCR (Tesseract via pdf2image).
+    
+    This function converts PDF pages to images and applies optical character recognition
+    to extract text. Useful for scanned documents or PDFs where other extraction methods
+    fail to retrieve sufficient text.
+    
+    Args:
+        filepath: Path to the PDF file.
+    
+    Returns:
+        List of dicts with keys: 'text', 'page', 'chunk_type' (always 'text').
+        Returns empty list if pdf2image or pytesseract are unavailable.
+    """
+    try:
+        from pdf2image import convert_from_path
+        import pytesseract
+    except ImportError as e:
+        logger.warning(f"OCR dependencies not available (pdf2image/pytesseract): {e}")
+        return []
+
+    if not shutil.which("tesseract"):
+        logger.warning("OCR skipped because the tesseract binary is not installed or not on PATH")
+        return []
+    
+    pages: List[Dict[str, Any]] = []
+    
+    try:
+        selected_pages = sorted(set(page_numbers or [])) or None
+        convert_kwargs = {
+            "dpi": int(os.getenv("OCR_DPI", "300")),
+            "fmt": "ppm",
+            "thread_count": int(os.getenv("OCR_THREAD_COUNT", "2")),
+        }
+        ocr_languages = _resolve_tesseract_languages(
+            pytesseract,
+            os.getenv("OCR_LANGUAGES", "spa+eng"),
+        )
+        tesseract_config = os.getenv("OCR_TESSERACT_CONFIG", "")
+
+        if selected_pages:
+            page_iterable = selected_pages
+        else:
+            doc = None
+            try:
+                doc = fitz.open(filepath)
+                page_iterable = range(1, len(doc) + 1)
+            except Exception:
+                page_iterable = [None]
+            finally:
+                if doc:
+                    doc.close()
+
+        for requested_page in page_iterable:
+            try:
+                page_convert_kwargs = dict(convert_kwargs)
+                if requested_page is not None:
+                    page_convert_kwargs["first_page"] = requested_page
+                    page_convert_kwargs["last_page"] = requested_page
+
+                images = convert_from_path(filepath, **page_convert_kwargs)
+                for image_offset, image in enumerate(images):
+                    page_num = requested_page or image_offset + 1
+                    # Apply OCR to extract text from image
+                    text = pytesseract.image_to_string(
+                        image,
+                        lang=ocr_languages,
+                        config=tesseract_config,
+                    )
+                    text = text.strip()
+                    
+                    if text:
+                        pages.append({
+                            "text": text,
+                            "page": page_num,
+                            "chunk_type": "text",
+                            "ocr_source": True,  # Flag to indicate this came from OCR
+                        })
+                    else:
+                        logger.debug(f"OCR returned empty text for page {page_num}")
+            except Exception as e:
+                logger.warning(f"OCR failed for page {requested_page or 'unknown'}: {e}")
+                continue
+    except Exception as e:
+        logger.warning(f"PDF to image conversion failed: {e}")
+        return []
+    
     return pages
 
 
@@ -347,6 +541,7 @@ def chunk_document(filepath: str, chunk_size: int = None, chunk_overlap: int = N
     If chunk size and overlap are not provided, defaults from settings will be used.
     Returns list of dicts with 'text', 'page', and 'chunk_index'.
     """
+
     ext = filepath.rsplit(".", 1)[-1].lower()
 
     # ── Extract text by file type ────────────────────
@@ -354,7 +549,7 @@ def chunk_document(filepath: str, chunk_size: int = None, chunk_overlap: int = N
         pages = extract_pdf(filepath)
     elif ext == "docx":
         pages = extract_docx(filepath)
-    elif ext in ("txt", "md"):
+    elif ext in ("txt", "md") or ext in CODE_EXTENSIONS:
         pages = extract_txt(filepath)
     else:
         raise ValueError(f"Unsupported file type: {ext}")

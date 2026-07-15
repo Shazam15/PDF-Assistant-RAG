@@ -14,10 +14,10 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Document AI Analyst — Enterprise RAG System",
+  title: "A.T.L.A.S. - AI Text and Language Analysis System",
   description:
-    "Upload complex PDFs and chat with an AI agent that pulls specific insights, summarizes data, and accurately cites sources using Retrieval-Augmented Generation.",
-  keywords: ["RAG", "Document AI", "PDF Analysis", "LLM", "Vector Search"],
+    "Suba archivos PDF complejos y chatee con un agente de IA que extrae información específica, resume datos y cita fuentes con precisión utilizando Generación Aumentada por Recuperación.",
+  keywords: ["RAG", "Document AI", "Análisis de PDF", "LLM", "Vector Search"],
 };
 
 export default function RootLayout({

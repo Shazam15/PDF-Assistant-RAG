@@ -3,6 +3,8 @@
 import { create } from "zustand";
 import { api } from "@/lib/api";
 
+export type RoutingMode = "auto" | "quick" | "research";
+
 export interface SourceBoundingBox {
   left: number;
   top: number;
@@ -15,6 +17,12 @@ export interface SourceChunk {
   text: string;
   filename: string;
   page: number;
+  source_type?: "document" | "web";
+  source_id?: string;
+  title?: string;
+  url?: string;
+  snippet?: string;
+  citation?: string;
   score?: number;
   confidence?: number;
   highlightRects?: SourceBoundingBox[];
@@ -45,6 +53,7 @@ interface ChatStore {
   historyLoading: boolean;
   sessions: ChatSession[];
   activeSessionId: string | null;
+  routingMode: RoutingMode;
   setMessages: (value: Setter<ChatMsg[]>) => void;
   setInput: (value: Setter<string>) => void;
   setStreaming: (value: Setter<boolean>) => void;
@@ -52,6 +61,7 @@ interface ChatStore {
   setHistoryLoading: (value: Setter<boolean>) => void;
   setSessions: (value: Setter<ChatSession[]>) => void;
   setActiveSessionId: (value: Setter<string | null>) => void;
+  setRoutingMode: (value: RoutingMode) => void;
   fetchSessions: () => Promise<void>;
   createSession: (title: string) => Promise<string>;
   renameSession: (id: string, title: string) => Promise<void>;
@@ -71,6 +81,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   historyLoading: false,
   sessions: [],
   activeSessionId: null,
+  routingMode: "auto",
 
   setMessages(value) {
     set((state) => ({ messages: resolveValue(value, state.messages) }));
@@ -98,6 +109,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   setActiveSessionId(value) {
     set((state) => ({ activeSessionId: resolveValue(value, state.activeSessionId) }));
+  },
+
+  setRoutingMode(value) {
+    set({ routingMode: value });
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("atlas-routing-mode", value);
+    }
   },
 
   async fetchSessions() {

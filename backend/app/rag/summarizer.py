@@ -25,7 +25,7 @@ def generate_document_summary_from_chunks(
     chunks: List[Dict[str, Any]],
     max_sentences: int = 3,
 ) -> str | None:
-    """Generate a short document summary from already extracted chunks."""
+    """Generar un resumen corto del documento usando chunk extraidos"""
     if not chunks:
         return None
 
@@ -39,15 +39,19 @@ def generate_document_summary_from_chunks(
     if not text_to_summarise:
         return None
 
-    prompt = f"Summarise the following text in {max_sentences} sentences:\n\n{text_to_summarise}"
+    prompt = f"Resume el siguiente texto en {max_sentences} oraciones:\n\n{text_to_summarise}"
 
     try:
         from langchain_ollama import ChatOllama
         from langchain_core.messages import SystemMessage, HumanMessage
 
-        chat_llm = ChatOllama(model=settings.LLM_MODEL, temperature=0.3)
+        chat_llm = ChatOllama(
+            model=settings.LLM_MODEL, 
+            temperature=0.3,
+            num_predict=settings.SUMMARY_MAX_TOKENS
+            )
         response = chat_llm.invoke([
-            SystemMessage(content="You are a helpful assistant that summarizes documents."),
+            SystemMessage(content="Eres un asistente útil y conciso que resume documentos de manera clara y precisa."),
             HumanMessage(content=prompt),
         ])
         summary = response.content.strip()
@@ -59,19 +63,20 @@ def generate_document_summary_from_chunks(
 
 def generate_document_summary(filePath: str, max_sentences: int = 3) -> str | None:
     """
-    Extract text from the first few chunks of the document and ask LLM to summarise.
-    Returns a short summary string, or None on failure.
+    Extraer el texto de los primeros fragmentos del documento y pedir al LLM que resuma.
+    Devuelve un resumen corto como cadena, o None si falla.
+
 
     Args:
-        filePath (str): Path to the document file.
-        max_sentences (int): Maximum number of sentences in the summary.
+        filePath (str): Path al archivo del documento.
+        max_sentences (int): Maximo de oraciones que puede tener el resumen.
     
     Returns:
-        str | None: Summary text or None if summarisation fails.
+        str | None: Texto del resumen o None si falla la generación del resumen.
     
-    Note:
-        - This function is designed to be called after a document is uploaded and processed.
-        - It uses the first few chunks of the document to generate a summary, which is then stored in the database.        
+    Nota:
+        - Esta función está diseñada para ser llamada después de que un documento se haya subido y procesado.
+        - Usa los primeros fragmentos del documento para generar un resumen, que luego se almacena en la base de datos.      
     """
     from app.rag.chunker import chunk_document
 

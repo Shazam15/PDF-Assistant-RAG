@@ -14,39 +14,38 @@ import {
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import ContributorsPanel from "@/components/layout/ContributorsPanel";
-import OpenSourceBadge from "@/components/layout/OpenSourceBadge";
 
 // ─── Feature card data ───────────────────────────────────────────────────────
 const FEATURES = [
   {
     icon: FileText,
-    title: "Multi-Format Upload",
-    desc: "PDF, DOCX, TXT, and Markdown with smart chunking",
+    title: "Carga de múltiples formatos",
+    desc: "PDF, DOCX, TXT, y Markdown usando chunking inteligente",
   },
   {
     icon: Search,
-    title: "Semantic Search",
-    desc: "Two-stage retrieval with cross-encoder reranking",
+    title: "Búsqueda Semántica",
+    desc: "Recuperación en dos etapas con reordenación mediante codificadores cruzados",
   },
   {
     icon: MessageSquare,
-    title: "Streaming Chat",
-    desc: "Real-time AI responses with source citations",
+    title: "Chat en vivo",
+    desc: "Respuestas en tiempo real de IA con citas de fuentes",
   },
   {
     icon: Zap,
-    title: "Instant Insights",
-    desc: "Extract key facts, summaries, and data points",
+    title: "Información al Instante",
+    desc: "Extraer datos clave, resúmenes y puntos de información",
   },
   {
     icon: Shield,
-    title: "Data Isolation",
-    desc: "Per-user vector collections for complete privacy",
+    title: "Aislamiento de Datos",
+    desc: "Colecciones vectoriales por usuario para privacidad completa",
   },
   {
     icon: Brain,
-    title: "Open-Source LLMs",
-    desc: "Powered by Mistral and HuggingFace ecosystem",
+    title: "LLMs de Código Abierto",
+    desc: "Con tecnología de Mistral y el ecosistema de HuggingFace",
   },
 ];
 
@@ -112,20 +111,12 @@ export default function HomePage() {
                           bg-primary/10 border border-primary/20
                           text-xs font-medium tracking-wide text-primary uppercase">
             <span className="w-1.5 h-1.5 rounded-full bg-green-400 shadow-[0_0_6px_theme(colors.green.400)] animate-pulse" />
-            Enterprise Agentic RAG System
+            Agentic Text Learning & Analysis System
           </div>
 
           {/* Headline */}
           <h1 className="text-5xl sm:text-6xl lg:text-7xl font-bold tracking-tight leading-[1.08]">
-            Chat with your{" "}
-            <span className="bg-gradient-to-r from-primary via-primary/80 to-primary/60
-                             bg-clip-text text-transparent">
-              documents
-            </span>
-            <br />
-            <span className="text-foreground/80 font-semibold text-4xl sm:text-5xl lg:text-6xl">
-              intelligently.
-            </span>
+            A.T.L.A.S
           </h1>
 
           {/* Divider glow line */}
@@ -133,9 +124,9 @@ export default function HomePage() {
 
           {/* Sub-copy */}
           <p className="text-base sm:text-lg text-muted-foreground max-w-xl mx-auto leading-relaxed font-light">
-            Upload financial reports, legal contracts, or research papers and get
-            accurate, <span className="text-foreground/70 font-normal">cited insights</span> powered
-            by advanced AI retrieval.
+            Transforma tus documentos, papers académicos y literatura científica en un entorno de conocimiento 
+            interactivo. Consulta a tu agente, descubre conexiones ocultas y obtén respuestas precisas con citas 
+            directas a las fuentes
           </p>
 
           {/* CTAs */}
@@ -147,7 +138,7 @@ export default function HomePage() {
                            hover:shadow-primary/30 hover:-translate-y-0.5
                            transition-all duration-200"
               >
-                Get Started Free
+                Registrarse
               </Button>
             </Link>
 
@@ -158,31 +149,11 @@ export default function HomePage() {
                 className="px-8 text-base h-12
                            hover:-translate-y-0.5 transition-all duration-200"
               >
-                Sign In
+                Ingresar
               </Button>
             </Link>
 
-            <a
-              href="/docs"
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label="Open Developer API Swagger documentation"
-            >
-              <Button
-                size="lg"
-                variant="secondary"
-                className="px-8 text-base h-12
-                           hover:-translate-y-0.5 transition-all duration-200"
-              >
-                Developer API
-              </Button>
-            </a>
           </div>
-
-          {/* Social proof strip */}
-          <p className="text-xs text-muted-foreground/60 tracking-wide pt-1">
-            No credit card required &nbsp;·&nbsp; Open-source &nbsp;·&nbsp; Self-hostable
-          </p>
         </div>
 
         {/* ── Feature cards ────────────────────────────────────────────────── */}
@@ -214,8 +185,8 @@ export default function HomePage() {
       {/* ── Footer ────────────────────────────────────────────────────────── */}
       <footer className="py-6 border-t border-border/40">
         <p className="text-center text-xs text-muted-foreground/60 tracking-wide">
-          Built with{" "}
-          {["FastAPI", "LangChain", "ChromaDB", "HuggingFace", "Next.js"].map(
+          Creado con{" "}
+          {["FastAPI", "LangChain", "ChromaDB", "HuggingFace", "Next.js", "Ollama"].map(
             (tech, i, arr) => (
               <span key={tech}>
                 <span className="text-muted-foreground">{tech}</span>
@@ -232,9 +203,6 @@ export default function HomePage() {
       {hallOfFameOpen && (
         <ContributorsPanel onClose={() => setHallOfFameOpen(false)} />
       )}
-
-      {/* Floating open-source badge */}
-      <OpenSourceBadge onOpenHallOfFame={() => setHallOfFameOpen(true)} />
     </div>
   );
 }

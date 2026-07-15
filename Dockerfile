@@ -26,6 +26,10 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libmagic1 \
+    poppler-utils \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    tesseract-ocr-spa \
     --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
 
@@ -59,6 +63,10 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     libmagic1 \
+    poppler-utils \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    tesseract-ocr-spa \
     --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
 
@@ -82,4 +90,3 @@ USER appuser
 EXPOSE 7860
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "7860"]
-

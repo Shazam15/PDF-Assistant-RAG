@@ -32,6 +32,9 @@ PyMuPDF
 pdfplumber
 python-docx
 unstructured[pdf]
+pdf2image
+pytesseract
+pillow
 
 # LangChain & RAG
 langchain

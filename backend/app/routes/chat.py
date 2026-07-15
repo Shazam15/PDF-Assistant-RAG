@@ -4,6 +4,7 @@ Chat routes — ask questions with RAG, stream responses via SSE, manage history
 
 import html
 import json
+import math
 import time
 from datetime import datetime, timezone
 from io import BytesIO
@@ -44,9 +45,45 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
 
+def _json_safe_value(value):
+    if isinstance(value, float):
+        return value if math.isfinite(value) else 0.0
+    if isinstance(value, list):
+        return [_json_safe_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _json_safe_value(item) for key, item in value.items()}
+    return value
+
+
+def _sanitize_source(source: dict) -> dict:
+    safe_source = _json_safe_value(source)
+    for key in ("score", "confidence"):
+        try:
+            value = float(safe_source.get(key, 0))
+        except (TypeError, ValueError):
+            value = 0.0
+        safe_source[key] = value if math.isfinite(value) else 0.0
+    return safe_source
+
+
+def _sanitize_sources(sources: list | None) -> list:
+    if not sources:
+        return []
+    return [_sanitize_source(source) for source in sources if isinstance(source, dict)]
+
+
+def _load_sources(sources_json: str | None) -> list[SourceChunk]:
+    if not sources_json:
+        return []
+    try:
+        return [SourceChunk(**source) for source in _sanitize_sources(json.loads(sources_json))]
+    except Exception:
+        return []
+
+
 @router.websocket("/ws")
 async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
-    """WebSocket endpoint for streaming agentic thoughts and tokens.
+    """WebSocket endpoint for streaming structured sources and answer tokens.
 
     Authenticate via `token` query param or expect first JSON message
     containing `{token, question, document_id?, session_id?}`.
@@ -109,6 +146,9 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
         question = payload.get("question")
         document_id = payload.get("document_id")
         session_id = payload.get("session_id")
+        routing_mode = payload.get("routing_mode", "auto")
+        if routing_mode not in {"auto", "quick", "research"}:
+            routing_mode = "auto"
 
         from app.rag.security import validate_user_input, UnsafePromptError
 
@@ -166,9 +206,6 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
         recent_messages.reverse()
         chat_history = [{"role": m.role, "content": m.content} for m in recent_messages]
 
-        # Save user message
-        _save_message(db, user.id, document_id, "user", question, session_id=session_id)
-
         # Stream answer using existing generator and forward structured events
         try:
             full_answer = ""
@@ -179,6 +216,7 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
                 document_id=document_id,
                 hf_token=user.hf_token,
                 chat_history=chat_history,
+                routing_mode=routing_mode,
             ):
                 # chunk is SSE-style string like 'data: {json}\n\n' or similar
                 try:
@@ -187,8 +225,9 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
                         if payload.get("type") == "token":
                             full_answer += payload.get("data", "")
                         elif payload.get("type") == "sources":
-                            sources = payload.get("data", [])
-                        await websocket.send_json(payload)
+                            sources = _sanitize_sources(payload.get("data", []))
+                            payload["data"] = sources
+                        await websocket.send_json(_json_safe_value(payload))
                     else:
                         # Fallback: send raw token
                         full_answer += chunk
@@ -198,7 +237,15 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
                     await websocket.send_json({"type": "token", "data": chunk})
 
             if full_answer:
-                _save_message(db, user.id, document_id, "assistant", full_answer, sources, session_id=session_id)
+                _save_messages(
+                    db,
+                    user.id,
+                    [
+                        (document_id, "user", question, None),
+                        (document_id, "assistant", full_answer, sources),
+                    ],
+                    session_id=session_id,
+                )
 
             # Notify client
             await websocket.send_json({"type": "done"})
@@ -428,12 +475,7 @@ def get_session_history(
 
     formatted = []
     for msg in messages:
-        sources = []
-        if msg.sources_json:
-            try:
-                sources = [SourceChunk(**s) for s in json.loads(msg.sources_json)]
-            except Exception:
-                pass
+        sources = _load_sources(msg.sources_json)
 
         formatted.append(
             ChatMessageResponse(
@@ -455,6 +497,7 @@ def generate_answer(
     hf_token: Optional[str] = None,
     top_k: Optional[int] = None,
     chat_history: Optional[list] = None,
+    routing_mode: str = "auto",
 ):
     from app.rag.agent import generate_answer as _generate_answer
 
@@ -465,6 +508,7 @@ def generate_answer(
         hf_token=hf_token,
         top_k=top_k,
         chat_history=chat_history,
+        routing_mode=routing_mode,
     )
 
 
@@ -475,6 +519,7 @@ def generate_answer_stream(
     hf_token: Optional[str] = None,
     top_k: Optional[int] = None,
     chat_history: Optional[list] = None,
+    routing_mode: str = "auto",
 ):
     from app.rag.agent import generate_answer_stream as _generate_answer_stream
 
@@ -485,6 +530,7 @@ def generate_answer_stream(
         hf_token=hf_token,
         top_k=top_k,
         chat_history=chat_history,
+        routing_mode=routing_mode,
     )
 
 
@@ -570,14 +616,25 @@ def ask_question(
         cached_answer = get_cached_response(
             document_id=str(payload.document_id or ""),
             question=payload.question,
+            user_id=user.id,
+            top_k=payload.top_k,
+            routing_mode=payload.routing_mode,
         )
         if cached_answer is not None:
+            cached_sources = _sanitize_sources(cached_answer.get("sources", []))
             logger.debug("Returning cached response for question: %s", payload.question[:40])
-            _save_message(db, user.id, payload.document_id, "user", payload.question, session_id=session_id)
-            _save_message(db, user.id, payload.document_id, "assistant", cached_answer, [], session_id=session_id)
+            _save_messages(
+                db,
+                user.id,
+                [
+                    (payload.document_id, "user", payload.question, None),
+                    (payload.document_id, "assistant", cached_answer["answer"], cached_sources),
+                ],
+                session_id=session_id,
+            )
             return ChatResponse(
-                answer=cached_answer,
-                sources=[],
+                answer=cached_answer["answer"],
+                sources=[SourceChunk(**s) for s in cached_sources],
                 document_id=payload.document_id,
             )
 
@@ -588,24 +645,36 @@ def ask_question(
             hf_token=user.hf_token,
             top_k=payload.top_k,
             chat_history=chat_history,
+            routing_mode=payload.routing_mode,
         )
+
+        sources = _sanitize_sources(result["sources"])
 
         # Store result in cache for future identical questions
         set_cached_response(
             document_id=str(payload.document_id or ""),
             question=payload.question,
             answer=result["answer"],
+            sources=sources,
+            user_id=user.id,
+            top_k=payload.top_k,
+            routing_mode=payload.routing_mode,
         )
 
         # Save to chat history
-        _save_message(db, user.id, payload.document_id, "user", payload.question, session_id=session_id)
-        _save_message(
-            db, user.id, payload.document_id, "assistant", result["answer"], result["sources"], session_id=session_id
+        _save_messages(
+            db,
+            user.id,
+            [
+                (payload.document_id, "user", payload.question, None),
+                (payload.document_id, "assistant", result["answer"], sources),
+            ],
+            session_id=session_id,
         )
 
         return ChatResponse(
             answer=result["answer"],
-            sources=[SourceChunk(**s) for s in result["sources"]],
+            sources=[SourceChunk(**s) for s in sources],
             document_id=payload.document_id,
         )
     finally:
@@ -689,20 +758,31 @@ def ask_question_stream(
     recent_messages.reverse()
     chat_history = [{"role": m.role, "content": m.content} for m in recent_messages]
 
-    # Save user message immediately
-    _save_message(db, user.id, payload.document_id, "user", payload.question, session_id=session_id)
-
     # Cache check before starting the stream
     cached_answer = get_cached_response(
         document_id=str(payload.document_id or ""),
         question=payload.question,
+        user_id=user.id,
+        top_k=payload.top_k,
+        routing_mode=payload.routing_mode,
     )
     if cached_answer is not None:
+        cached_sources = _sanitize_sources(cached_answer.get("sources", []))
         logger.debug("Returning cached stream response for question: %s", payload.question[:40])
-        _save_message(db, user.id, payload.document_id, "assistant", cached_answer, [], session_id=session_id)
+        _save_messages(
+            db,
+            user.id,
+            [
+                (payload.document_id, "user", payload.question, None),
+                (payload.document_id, "assistant", cached_answer["answer"], cached_sources),
+            ],
+            session_id=session_id,
+        )
 
         async def cached_event_stream():
-            payload_json = json.dumps({"type": "token", "data": cached_answer})
+            sources_json = json.dumps({"type": "sources", "data": cached_sources})
+            yield f"data: {sources_json}\n\n"
+            payload_json = json.dumps({"type": "token", "data": cached_answer["answer"]})
             yield f"data: {payload_json}\n\n"
             done_json = json.dumps({"type": "done"})
             yield f"data: {done_json}\n\n"
@@ -733,6 +813,7 @@ def ask_question_stream(
                 hf_token=user_hf_token,
                 top_k=payload.top_k,
                 chat_history=chat_history,
+                routing_mode=payload.routing_mode,
             ):
                 yield chunk
 
@@ -743,7 +824,7 @@ def ask_question_stream(
                         if data.get("type") == "token":
                             full_answer += data.get("data", "")
                         elif data.get("type") == "sources":
-                            sources = data.get("data", [])
+                            sources = _sanitize_sources(data.get("data", []))
                 except Exception:
                     pass
 
@@ -753,14 +834,22 @@ def ask_question_stream(
                     document_id=str(payload.document_id or ""),
                     question=payload.question,
                     answer=full_answer,
+                    sources=sources,
+                    user_id=user_id,
+                    top_k=payload.top_k,
+                    routing_mode=payload.routing_mode,
                 )
             try:
-                from app.database import get_db_session
                 if full_answer:
-                    with get_db_session() as save_db:
-                        _save_message(
-                            save_db, user_id, payload.document_id, "assistant", full_answer, sources, session_id=session_id
-                        )
+                    _save_messages(
+                        db,
+                        user_id,
+                        [
+                            (payload.document_id, "user", payload.question, None),
+                            (payload.document_id, "assistant", full_answer, sources),
+                        ],
+                        session_id=session_id,
+                    )
                     logger.info(f"Assistant message saved for session {session_id}, length: {len(full_answer)}")
             except Exception as e:
                 logger.error(f"Failed to save assistant message: {e}")
@@ -804,12 +893,7 @@ def get_chat_history(
 
     formatted = []
     for msg in messages:
-        sources = []
-        if msg.sources_json:
-            try:
-                sources = [SourceChunk(**s) for s in json.loads(msg.sources_json)]
-            except Exception:
-                pass
+        sources = _load_sources(msg.sources_json)
 
         formatted.append(
             ChatMessageResponse(
@@ -969,6 +1053,36 @@ def submit_feedback(
     )
 
 
+def _save_messages(
+    db: Session,
+    user_id: str,
+    messages: list[tuple[Optional[str], str, str, list | None]],
+    session_id: Optional[str] = None,
+):
+    """Persist one or more chat messages in a single transaction."""
+    if not session_id:
+        session = db.query(ChatSession).filter(ChatSession.user_id == user_id).first()
+        if not session:
+            session = ChatSession(user_id=user_id, title="Default Chat")
+            db.add(session)
+            db.commit()
+            db.refresh(session)
+        session_id = session.id
+
+    for document_id, role, content, sources in messages:
+        safe_sources = _sanitize_sources(sources)
+        msg = ChatMessage(
+            user_id=user_id,
+            document_id=document_id,
+            session_id=session_id,
+            role=role,
+            content=content,
+            sources_json=json.dumps(safe_sources, allow_nan=False) if safe_sources else None,
+        )
+        db.add(msg)
+    db.commit()
+
+
 def _save_message(
     db: Session,
     user_id: str,
@@ -979,35 +1093,17 @@ def _save_message(
     session_id: Optional[str] = None,
 ):
     """Save a chat message to the database."""
-    if not session_id:
-        session = db.query(ChatSession).filter(ChatSession.user_id == user_id).first()
-        if not session:
-            session = ChatSession(user_id=user_id, title="Default Chat")
-            db.add(session)
-            db.commit()
-            db.refresh(session)
-        session_id = session.id
-
-    msg = ChatMessage(
-        user_id=user_id,
-        document_id=document_id,
+    _save_messages(
+        db,
+        user_id,
+        [(document_id, role, content, sources)],
         session_id=session_id,
-        role=role,
-        content=content,
-        sources_json=json.dumps(sources) if sources else None,
     )
-    db.add(msg)
-    db.commit()
 
 
 def _share_answer_response(message: ChatMessage) -> ShareAnswerResponse:
     """Format a shared assistant message with only safe public fields."""
-    sources = []
-    if message.sources_json:
-        try:
-            sources = [SourceChunk(**item) for item in json.loads(message.sources_json)]
-        except Exception:
-            sources = []
+    sources = _load_sources(message.sources_json)
 
     return ShareAnswerResponse(
         id=str(message.id),
@@ -1042,7 +1138,7 @@ def _format_markdown(doc, messages) -> str:
 
         if msg.role == "assistant" and msg.sources_json:
             try:
-                sources = json.loads(msg.sources_json)
+                sources = _sanitize_sources(json.loads(msg.sources_json))
                 if sources:
                     lines.append("**Sources:**")
                     lines.append("")
@@ -1085,7 +1181,7 @@ def _format_plaintext(doc, messages) -> str:
 
         if msg.role == "assistant" and msg.sources_json:
             try:
-                sources = json.loads(msg.sources_json)
+                sources = _sanitize_sources(json.loads(msg.sources_json))
                 if sources:
                     lines.append("")
                     lines.append("Sources:")

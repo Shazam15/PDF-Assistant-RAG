@@ -2,6 +2,9 @@ flask
 python-dotenv
 pymupdf
 pdfplumber
+pdf2image
+pytesseract
+pillow
 flask-login
 pymongo
 werkzeug

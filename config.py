@@ -10,7 +10,10 @@ MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/rag_app")
 
 # ── Upload Config ────────────────────────────────────
 UPLOAD_FOLDER = "uploads"
-ALLOWED_EXTENSIONS = {"pdf", "docx", "txt", "md"}
+ALLOWED_EXTENSIONS = {
+    "pdf", "docx", "txt", "md",
+    "py", "js", "ts", "tsx", "java", "cpp", "c", "cs", "go", "rs", "sql", "ipynb"
+    }
 
 # ── RAG Config ───────────────────────────────────────
 TOP_K = 5
