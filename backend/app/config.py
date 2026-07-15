@@ -142,6 +142,8 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "intfloat/multilingual-e5-small"
     EMBEDDING_DIMENSION: int = 384
     EMBEDDING_INDEX_VERSION: str = "hierarchical-e5-v2"
+    EMBEDDING_BATCH_SIZE: int = 32
+    CPU_THREADS: int = 0  # 0 lets PyTorch choose from the available Xeon cores.
 
     # ── ChromaDB ─────────────────────────────────────────
     CHROMA_PERSIST_DIR: str = "./data/chroma_db"
@@ -205,9 +207,17 @@ class Settings(BaseSettings):
         environment = str(self.ENVIRONMENT).lower()
         profile = str(self.MODEL_PROFILE).lower()
         if profile == "research_gpu":
-            self.DEVICE = "cuda"
-            self.EMBEDDING_DEVICE = "cpu"
-            self.RERANKER_DEVICE = "cuda"
+            # Keep large, parallel embedding batches on the host CPU/RAM and
+            # reserve NVIDIA memory for reranking and Ollama. Explicit env
+            # overrides remain available for CPU-only deployments.
+            if "DEVICE" not in self.model_fields_set:
+                self.DEVICE = "cuda"
+            if "EMBEDDING_DEVICE" not in self.model_fields_set:
+                self.EMBEDDING_DEVICE = "cpu"
+            if "RERANKER_DEVICE" not in self.model_fields_set:
+                self.RERANKER_DEVICE = "cuda"
+            if "EMBEDDING_BATCH_SIZE" not in self.model_fields_set:
+                self.EMBEDDING_BATCH_SIZE = 64
             self.EMBEDDING_MODEL = "Qwen/Qwen3-Embedding-0.6B"
             self.EMBEDDING_DIMENSION = 1024
             self.EMBEDDING_INDEX_VERSION = "hierarchical-qwen3-1024-v1"
@@ -228,6 +238,10 @@ class Settings(BaseSettings):
             raise ValueError("The postgres corpus backend requires a PostgreSQL DATABASE_URL")
         if self.RESEARCH_MAX_ROUNDS < 1 or self.RESEARCH_MAX_ROUNDS > 4:
             raise ValueError("RESEARCH_MAX_ROUNDS must be between 1 and 4")
+        if self.EMBEDDING_BATCH_SIZE < 1:
+            raise ValueError("EMBEDDING_BATCH_SIZE must be positive")
+        if self.CPU_THREADS < 0:
+            raise ValueError("CPU_THREADS cannot be negative")
         if self.RESEARCH_TIMEOUT_SECONDS < 30 or self.RESEARCH_TIMEOUT_SECONDS > 600:
             raise ValueError("RESEARCH_TIMEOUT_SECONDS must be between 30 and 600")
         if self.LLM_REQUEST_TIMEOUT_SECONDS < 10 or self.LLM_REQUEST_TIMEOUT_SECONDS > 300:

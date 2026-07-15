@@ -4,6 +4,7 @@ import logging
 from typing import List, Dict, Any, Optional
 
 from sentence_transformers import CrossEncoder
+import torch
 from torch import nn
 
 from app.config import get_settings
@@ -32,9 +33,16 @@ class Reranker:
         """Lazy-load the cross-encoder model."""
         if self._model is None:
             logger.info(f"Loading reranker: {self.model_name}")
+            requested_device = self.device or get_settings().RERANKER_DEVICE
+            device = requested_device
+            if requested_device.startswith("cuda") and not torch.cuda.is_available():
+                device = "cpu"
+                logger.warning(
+                    "CUDA was requested for the reranker but is unavailable; falling back to CPU."
+                )
             kwargs = {
                 "max_length": get_settings().RERANK_MAX_LENGTH,
-                "device": self.device or get_settings().RERANKER_DEVICE,
+                "device": device,
             }
             if "qwen3-reranker" in self.model_name.lower():
                 kwargs.update({

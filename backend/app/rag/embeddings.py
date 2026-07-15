@@ -5,6 +5,7 @@ Loads the model once via singleton pattern for efficiency.
 import logging
 from typing import List
 from langchain_huggingface import HuggingFaceEmbeddings
+import torch
 from app.config import get_settings
 from app.rag.tracing import trace_call
 
@@ -23,11 +24,16 @@ def get_embedding_model() -> HuggingFaceEmbeddings:
     global _embedding_model
 
     if _embedding_model is None:
+        if settings.EMBEDDING_DEVICE == "cpu" and settings.CPU_THREADS:
+            torch.set_num_threads(settings.CPU_THREADS)
         logger.info(f"Loading embedding model: {settings.EMBEDDING_MODEL}")
         _embedding_model = HuggingFaceEmbeddings(
             model_name=settings.EMBEDDING_MODEL,
             model_kwargs={"device": settings.EMBEDDING_DEVICE},
-            encode_kwargs={"normalize_embeddings": True, "batch_size": 32},
+            encode_kwargs={
+                "normalize_embeddings": True,
+                "batch_size": settings.EMBEDDING_BATCH_SIZE,
+            },
         )
         logger.info("Embedding model loaded successfully")
 

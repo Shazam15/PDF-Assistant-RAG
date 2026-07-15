@@ -3,6 +3,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.rag import retriever
+from app.rag import reranker as reranker_module
 from app.rag.reranker import Reranker
 
 
@@ -163,6 +164,16 @@ def test_reranker_exposes_query_relative_rank_and_raw_score(monkeypatch):
     assert ranked[0]["relevance_score"] == 1.0
     assert ranked[1]["rerank_score"] == 0.0
     assert ranked[1]["relevance_score"] == 0.5
+
+
+def test_reranker_falls_back_to_cpu_when_cuda_is_unavailable(monkeypatch):
+    cross_encoder = MagicMock()
+    monkeypatch.setattr(reranker_module, "CrossEncoder", cross_encoder)
+    monkeypatch.setattr(reranker_module.torch.cuda, "is_available", lambda: False)
+
+    Reranker(model_name="test", device="cuda")._load_model()
+
+    assert cross_encoder.call_args.kwargs["device"] == "cpu"
 
 
 def test_rrf_fuses_rankings_without_comparing_raw_scores():
