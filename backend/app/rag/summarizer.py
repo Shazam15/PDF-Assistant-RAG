@@ -1,11 +1,32 @@
 import logging
 from app.config import get_settings
 from typing import Any, Dict, List
+from pydantic import BaseModel, Field, field_validator
 
 #from app.rag.agent import get_llm_client
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+
+class EvidenceDraft(BaseModel):
+    evidence_kind: str
+    claim: str
+    exact_quote: str
+    chunk_index: int
+
+
+class DocumentMemoryDraft(BaseModel):
+    summary: str
+    methodology: str = ""
+    findings: str = ""
+    limitations: str = ""
+    evidence: List[EvidenceDraft] = Field(default_factory=list)
+
+    @field_validator("evidence")
+    @classmethod
+    def limit_evidence(cls, values: List[EvidenceDraft]) -> List[EvidenceDraft]:
+        return values[:24]
 
 
 def _extractive_summary(text: str, max_sentences: int) -> str | None:
@@ -59,6 +80,90 @@ def generate_document_summary_from_chunks(
     except Exception as e:
         logger.warning("LLM summary generation failed; using extractive summary: %s", e)
         return _extractive_summary(text_to_summarise, max_sentences)
+
+
+def build_document_memory(chunks: List[Dict[str, Any]], use_llm: bool = True) -> Dict[str, Any]:
+    """Create a hierarchical profile and only retain evidence with literal provenance."""
+    sections: Dict[str, Dict[str, Any]] = {}
+    for chunk in chunks:
+        section_id = str(chunk.get("section_id") or "S0")
+        section = sections.setdefault(section_id, {
+            "id": section_id,
+            "title": chunk.get("section_title") or chunk.get("section") or "Document",
+            "page_start": int(chunk.get("page_start") or chunk.get("page") or 1),
+            "page_end": int(chunk.get("page_end") or chunk.get("page") or 1),
+            "texts": [],
+        })
+        section["page_start"] = min(section["page_start"], int(chunk.get("page") or 1))
+        section["page_end"] = max(section["page_end"], int(chunk.get("page") or 1))
+        section["texts"].append(str(chunk.get("text") or ""))
+
+    section_payloads = []
+    for section in sections.values():
+        section_text = "\n\n".join(section.pop("texts")).strip()
+        section_payloads.append({
+            **section,
+            "text": section_text,
+            "summary": _extractive_summary(section_text, 3) or "",
+        })
+
+    representative_chunks = []
+    total_chars = 0
+    for chunk in chunks:
+        text = str(chunk.get("text") or "").strip()
+        if not text or total_chars >= 18000:
+            continue
+        excerpt = text[: min(len(text), 18000 - total_chars)]
+        representative_chunks.append(f"[chunk {chunk.get('chunk_index', 0)}]\n{excerpt}")
+        total_chars += len(excerpt)
+    corpus_text = "\n\n".join(representative_chunks)
+    fallback_text = " ".join(str(chunk.get("text") or "") for chunk in chunks[:20])
+    fallback_summary = (
+        generate_document_summary_from_chunks(chunks, max_sentences=5)
+        if use_llm
+        else _extractive_summary(fallback_text, 5)
+    ) or ""
+    draft = DocumentMemoryDraft(summary=fallback_summary)
+
+    if corpus_text and use_llm:
+        try:
+            from langchain_ollama import ChatOllama
+            from langchain_core.messages import SystemMessage, HumanMessage
+
+            llm = ChatOllama(
+                model=settings.LLM_MODEL,
+                temperature=0,
+                num_predict=min(1200, settings.LLM_MAX_NEW_TOKENS),
+            )
+            structured = llm.with_structured_output(DocumentMemoryDraft, method="json_mode")
+            draft = structured.invoke([
+                SystemMessage(content=(
+                    "Build a neutral document memory from the supplied chunks. Summarize scope, methodology, "
+                    "findings, and limitations only when visible. Evidence kinds may be method, result, limitation, "
+                    "definition, or context. Every exact_quote must be copied verbatim from its referenced chunk. "
+                    "Do not add outside knowledge. Return JSON matching the schema."
+                )),
+                HumanMessage(content=corpus_text),
+            ])
+        except Exception as exc:
+            logger.warning("Structured document memory generation failed: %s", exc)
+
+    chunks_by_index = {int(chunk.get("chunk_index") or 0): chunk for chunk in chunks}
+    verified_evidence = []
+    for evidence in draft.evidence:
+        chunk = chunks_by_index.get(evidence.chunk_index)
+        if not chunk or evidence.exact_quote not in str(chunk.get("text") or ""):
+            continue
+        verified_evidence.append(evidence.model_dump())
+
+    return {
+        "summary": draft.summary or fallback_summary,
+        "methodology": draft.methodology,
+        "findings": draft.findings,
+        "limitations": draft.limitations,
+        "sections": section_payloads,
+        "evidence": verified_evidence,
+    }
 
 
 def generate_document_summary(filePath: str, max_sentences: int = 3) -> str | None:

@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     DATABASE_POOL_SIZE: int = 10
     DATABASE_MAX_OVERFLOW: int = 25
     DATABASE_POOL_PRE_PING: bool = True
+    CORPUS_STORE_BACKEND: str = "auto"
 
     # ── Auth ─────────────────────────────────────────────
     JWT_ALGORITHM: str = "HS256"
@@ -108,8 +109,11 @@ class Settings(BaseSettings):
     }
 
     # ── RAG Pipeline ─────────────────────────────────────
-    CHUNK_SIZE: int = 1000
-    CHUNK_OVERLAP: int = 200
+    CHUNK_SIZE: int = 420
+    CHUNK_OVERLAP: int = 80
+    PARENT_CHUNK_SIZE: int = 1600
+    PARENT_CHUNK_OVERLAP: int = 160
+    PDF_USE_DOCLING: bool = True
     PDF_USE_UNSTRUCTURED: bool = False
     TOP_K_RETRIEVAL: int = 36 # Fetch a broad candidate pool across documents
     TOP_K_RERANK: int = 16 # Final number of chunks to return after reranking
@@ -131,8 +135,13 @@ class Settings(BaseSettings):
     GRAPH_MAX_RELATIONSHIPS: int = 12
 
     # ── Embeddings (local HuggingFace model) ─────────────
-    EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
+    MODEL_PROFILE: str = "local"
+    DEVICE: str = "cpu"
+    EMBEDDING_DEVICE: str = "cpu"
+    RERANKER_DEVICE: str = "cpu"
+    EMBEDDING_MODEL: str = "intfloat/multilingual-e5-small"
     EMBEDDING_DIMENSION: int = 384
+    EMBEDDING_INDEX_VERSION: str = "hierarchical-e5-v2"
 
     # ── ChromaDB ─────────────────────────────────────────
     CHROMA_PERSIST_DIR: str = "./data/chroma_db"
@@ -143,9 +152,16 @@ class Settings(BaseSettings):
     LLM_CONTEXT_WINDOW: int = 8192
     LLM_MAX_NEW_TOKENS: int = 4096
     LLM_TEMPERATURE: float = 0.3
+    LLM_REQUEST_TIMEOUT_SECONDS: int = 90
     AGENT_PLANNER_MAX_TOKENS: int = 768
     AGENT_SYNTHESIS_MAX_TOKENS: int = 2048
     AGENT_MAX_ITERATIONS: int = 4  # Three research steps plus one mandatory final synthesis
+    RESEARCH_MAX_ROUNDS: int = 2
+    RESEARCH_TIMEOUT_SECONDS: int = 180
+    RESEARCH_SYNTHESIS_RESERVE_SECONDS: int = 90
+    RESEARCH_MAX_FACETS: int = 6
+    RESEARCH_MIN_EVIDENCE_PER_FACET: int = 1
+    RESEARCH_PIPELINE_VERSION: str = "evidence-agent-v2"
     SUMMARY_MAX_TOKENS: int = 512
 
     # ── LangSmith Tracing (optional) ─────────────────────
@@ -155,7 +171,16 @@ class Settings(BaseSettings):
     LANGSMITH_PROJECT: str = "pdf-assistant-rag"
 
     # ── Reranker ─────────────────────────────────────────
-    RERANKER_MODEL: str = "cross-encoder/ms-marco-MiniLM-L-6v2" # Lightweight 384-dim model fine-tuned for relevance ranking
+    RERANKER_MODEL: str = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
+    RERANK_MAX_LENGTH: int = 2048
+    RERANK_RELEVANCE_THRESHOLD: float = 0.5
+    RERANK_SCORE_MARGIN: float = 0.15
+    RETRIEVAL_PLANNER_MAX_TOKENS: int = 256
+    RETRIEVAL_PLANNER_TIMEOUT_SECONDS: int = 30
+    RETRIEVAL_PLANNER_VERSION: str = "facets-json-mode-v2"
+    NLI_MODEL: str = "MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli"
+    NLI_ENTAILMENT_THRESHOLD: float = 0.65
+    NLI_VERIFIER_VERSION: str = "multilingual-nli-v1"
     # ── Vision / Image captioning ─────────────────────
     VISION_PROVIDER: str | None = None  # e.g. 'openai'
     VISION_MODEL: str | None = None
@@ -176,13 +201,46 @@ class Settings(BaseSettings):
     CODE_REVIEW_MAX_CHARS: int = 12000
 
     @model_validator(mode="after")
-    def validate_secret_key(self):
+    def validate_runtime(self):
         environment = str(self.ENVIRONMENT).lower()
-        if self.SECRET_KEY:
-            return self
-        if environment == "production":
-            raise ValueError("SECRET_KEY must be set when ENVIRONMENT=production")
-        self.SECRET_KEY = secrets.token_urlsafe(32)
+        profile = str(self.MODEL_PROFILE).lower()
+        if profile == "research_gpu":
+            self.DEVICE = "cuda"
+            self.EMBEDDING_DEVICE = "cpu"
+            self.RERANKER_DEVICE = "cuda"
+            self.EMBEDDING_MODEL = "Qwen/Qwen3-Embedding-0.6B"
+            self.EMBEDDING_DIMENSION = 1024
+            self.EMBEDDING_INDEX_VERSION = "hierarchical-qwen3-1024-v1"
+            self.RERANKER_MODEL = "Qwen/Qwen3-Reranker-0.6B"
+            self.LLM_MODEL = "qwen3:30b-a3b"
+            self.LLM_CONTEXT_WINDOW = max(self.LLM_CONTEXT_WINDOW, 32768)
+            self.RETRIEVAL_PLANNER_VERSION = "research-brief-qwen3-v1"
+        elif profile not in {"local", "custom"}:
+            raise ValueError("MODEL_PROFILE must be local, custom, or research_gpu")
+
+        if self.CORPUS_STORE_BACKEND == "auto":
+            self.CORPUS_STORE_BACKEND = (
+                "postgres" if self.DATABASE_URL.startswith("postgresql") else "local"
+            )
+        if self.CORPUS_STORE_BACKEND not in {"local", "postgres"}:
+            raise ValueError("CORPUS_STORE_BACKEND must be local, postgres, or auto")
+        if self.CORPUS_STORE_BACKEND == "postgres" and not self.DATABASE_URL.startswith("postgresql"):
+            raise ValueError("The postgres corpus backend requires a PostgreSQL DATABASE_URL")
+        if self.RESEARCH_MAX_ROUNDS < 1 or self.RESEARCH_MAX_ROUNDS > 4:
+            raise ValueError("RESEARCH_MAX_ROUNDS must be between 1 and 4")
+        if self.RESEARCH_TIMEOUT_SECONDS < 30 or self.RESEARCH_TIMEOUT_SECONDS > 600:
+            raise ValueError("RESEARCH_TIMEOUT_SECONDS must be between 30 and 600")
+        if self.LLM_REQUEST_TIMEOUT_SECONDS < 10 or self.LLM_REQUEST_TIMEOUT_SECONDS > 300:
+            raise ValueError("LLM_REQUEST_TIMEOUT_SECONDS must be between 10 and 300")
+        if not 10 <= self.RESEARCH_SYNTHESIS_RESERVE_SECONDS < self.RESEARCH_TIMEOUT_SECONDS:
+            raise ValueError(
+                "RESEARCH_SYNTHESIS_RESERVE_SECONDS must be at least 10 and below RESEARCH_TIMEOUT_SECONDS"
+            )
+
+        if not self.SECRET_KEY:
+            if environment == "production":
+                raise ValueError("SECRET_KEY must be set when ENVIRONMENT=production")
+            self.SECRET_KEY = secrets.token_urlsafe(32)
         return self
 
     @property

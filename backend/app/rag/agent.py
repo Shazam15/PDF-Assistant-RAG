@@ -18,9 +18,12 @@ from langchain_core.prompts import PromptTemplate
 from langchain_ollama import ChatOllama
 
 from app.config import get_settings
-from app.rag.retriever import retrieve
+from pydantic import BaseModel, Field
+
+from app.rag.retriever import ResearchBrief, ResearchPlan, build_research_plan, retrieve
+from app.rag.research_agent import ResearchDependencies, run_research_agent, stream_research_agent
 from app.rag.graph_retriever import get_entity_context
-from app.rag.prompts import AGENT_SYSTEM_PROMPT, RAG_PROMPT_TEMPLATE, CODE_REVIEW_PROMPT
+from app.rag.prompts import AGENT_SYSTEM_PROMPT, RAG_PROMPT_TEMPLATE
 from app.exceptions import ExternalServiceException
 from app.rag.security import MALFORMED_OUTPUT_MESSAGE, OutputParserError, parse_agent_output
 from app.rag.tools import PDFSearchTool, MathTool, CodeReviewTool, WebSearchTool
@@ -28,13 +31,11 @@ from app.rag.tracing import trace_function
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
-ROUTER_VERSION = "adaptive-v1"
+ROUTER_VERSION = "semantic-facets-v1"
 RoutingMode = Literal["auto", "quick", "research"]
 RoutingRoute = Literal["greeting", "scoped_rag", "simple_rag", "research_rag", "tool_agent"]
 _AGENT_TOOL_NAMES = {"pdf_search", "code_review", "calculator", "web_search"}
-MIN_SOURCE_SCORE = 0.2
-MIN_SOURCE_CONFIDENCE = 10.0
-MIN_LEXICAL_OVERLAP = 0.14
+MIN_SOURCE_SCORE = settings.RERANK_RELEVANCE_THRESHOLD
 INSUFFICIENT_EVIDENCE_MESSAGE = (
     "No encontré información suficiente en las fuentes recuperadas para responder esta pregunta con citas verificables."
 )
@@ -43,131 +44,6 @@ AGENT_INCOMPLETE_MESSAGE = (
     "Tampoco recuperó evidencia suficiente durante sus iteraciones para redactar una respuesta parcial verificable. "
     "Intenta reformular la pregunta en subpreguntas más específicas o aumenta el límite de iteraciones del agente."
 )
-_GENERIC_DOCUMENT_TERMS = {
-    "documento",
-    "documentos",
-    "paper",
-    "papers",
-    "articulo",
-    "articulos",
-    "artículo",
-    "artículos",
-    "texto",
-    "contenido",
-    "fuente",
-    "fuentes",
-    "resumen",
-    "resume",
-    "resumir",
-    "explica",
-    "explicar",
-    "analiza",
-    "analizar",
-    "actua",
-    "actuar",
-    "academico",
-    "academica",
-    "academicos",
-    "academicas",
-    "afirmacion",
-    "afirmaciones",
-    "analisis",
-    "citas",
-    "citar",
-    "conclusion",
-    "conclusiones",
-    "contenida",
-    "contenidas",
-    "contenidos",
-    "contradiccion",
-    "contradicciones",
-    "critico",
-    "critica",
-    "disponible",
-    "disponibles",
-    "discusion",
-    "evidencia",
-    "evidencias",
-    "explicito",
-    "explicitamente",
-    "finalmente",
-    "fortaleza",
-    "fortalezas",
-    "identifica",
-    "identificar",
-    "informacion",
-    "introduccion",
-    "investigador",
-    "investigadora",
-    "limitacion",
-    "limitaciones",
-    "metodologia",
-    "metodologias",
-    "pagina",
-    "paginas",
-    "posible",
-    "pregunta",
-    "redacta",
-    "redactar",
-    "relacion",
-    "relaciones",
-    "relevante",
-    "relevantes",
-    "responde",
-    "respuesta",
-    "resultados",
-    "seccion",
-    "seleccion",
-    "seleccionaste",
-    "seleccionados",
-    "solucion",
-    "suposicion",
-    "suposiciones",
-    "unicamente",
-    "utilizando",
-}
-_STOPWORDS = {
-    "acerca",
-    "algunas",
-    "algunos",
-    "como",
-    "cómo",
-    "cual",
-    "cuál",
-    "cuales",
-    "cuáles",
-    "cuando",
-    "cuándo",
-    "donde",
-    "dónde",
-    "este",
-    "esta",
-    "estos",
-    "estas",
-    "para",
-    "pero",
-    "porque",
-    "sobre",
-    "tiene",
-    "tienen",
-    "what",
-    "when",
-    "where",
-    "which",
-    "with",
-    "from",
-    "that",
-    "this",
-    "these",
-    "those",
-    "the",
-    "and",
-    "or",
-    "for",
-    "about",
-}
-
-
 class GroundedReActOutputParser(ReActSingleInputOutputParser):
     """Finish substantive drafts instead of spending every iteration on format retries."""
 
@@ -201,7 +77,9 @@ def get_llm_client(hf_token: Optional[str] = None, max_tokens: Optional[int] = N
         model=settings.LLM_MODEL, 
         temperature=0,
         num_ctx=settings.LLM_CONTEXT_WINDOW,
-        num_predict=max_tokens or settings.LLM_MAX_NEW_TOKENS)
+        num_predict=max_tokens or settings.LLM_MAX_NEW_TOKENS,
+        client_kwargs={"timeout": settings.LLM_REQUEST_TIMEOUT_SECONDS},
+    )
 
 
 def _format_chat_history(messages: List[Dict[str, str]]) -> str:
@@ -261,6 +139,7 @@ def get_agent_executor(
         temperature=settings.LLM_TEMPERATURE,
         num_ctx=settings.LLM_CONTEXT_WINDOW,
         num_predict=min(settings.LLM_MAX_NEW_TOKENS, settings.AGENT_PLANNER_MAX_TOKENS),
+        client_kwargs={"timeout": settings.LLM_REQUEST_TIMEOUT_SECONDS},
     )
 
     global_style_reference = _load_global_style_reference()
@@ -506,55 +385,78 @@ def _normalize_term_text(text: str) -> str:
     return str(text or "").translate(replacements).lower()
 
 
-def _meaningful_terms(text: str) -> set[str]:
-    normalized = _normalize_term_text(text)
-    terms = set()
-    for term in re.findall(r"[a-z0-9]{4,}", normalized):
-        if term not in _STOPWORDS:
-            terms.add(term)
-    return terms
+def _location_label(chunk: Dict[str, Any]) -> str:
+    if chunk.get("source_type") == "web":
+        return str(chunk.get("url") or "fuente web")
+
+    page_start = chunk.get("page_start") or chunk.get("page", "?")
+    page_end = chunk.get("page_end") or page_start
+    page_label = f"Paginas {page_start}-{page_end}" if page_end != page_start else f"Pagina {page_start}"
+    parts = [page_label]
+    section = chunk.get("section") or chunk.get("section_title") or chunk.get("heading")
+    if section:
+        parts.append(f"seccion {str(section).strip()}")
+    chunk_type = str(chunk.get("chunk_type") or "").lower()
+    if chunk_type == "table":
+        table_index = chunk.get("table_index")
+        parts.append(f"tabla {int(table_index) + 1}" if isinstance(table_index, int) else "tabla")
+    elif chunk_type in {"figure", "image"}:
+        parts.append("figura")
+    return ", ".join(parts)
 
 
-def _stem_term(term: str) -> str:
-    for suffix in ("ciones", "cion", "idades", "idad", "mente", "ables", "ible", "ibles", "ados", "adas", "icos", "icas", "es", "s"):
-        if len(term) > len(suffix) + 3 and term.endswith(suffix):
-            return term[: -len(suffix)]
-    return term
+def _evidence_rank(chunk: Dict[str, Any]) -> float:
+    semantic = _safe_float(
+        chunk.get("relevance_score"),
+        _safe_float(chunk.get("score"), _safe_float(chunk.get("retrieval_score"))),
+    )
+    return round(max(0.0, min(1.0, semantic)), 4)
 
 
-def _has_term_match(query_terms: set[str], text_terms: set[str]) -> bool:
-    text_stems = {_stem_term(term) for term in text_terms}
-    return any(term in text_terms or _stem_term(term) in text_stems for term in query_terms)
+def _diversify_relevant_chunks(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Order relevant evidence by document coverage first, then by evidentiary rank."""
+    ranked = sorted(chunks, key=_evidence_rank, reverse=True)
+    diverse: List[Dict[str, Any]] = []
+    deferred: List[Dict[str, Any]] = []
+    seen_documents = set()
+    for chunk in ranked:
+        document_key = _document_key(chunk)
+        if document_key and document_key not in seen_documents:
+            diverse.append(chunk)
+            seen_documents.add(document_key)
+        else:
+            deferred.append(chunk)
+    return [*diverse, *deferred]
 
 
-def _lexical_overlap(query: str, text: str) -> float:
-    query_terms = _meaningful_terms(query) - _GENERIC_DOCUMENT_TERMS
-    if not query_terms:
-        return 1.0
-    text_terms = _meaningful_terms(text)
-    matches = sum(1 for term in query_terms if _has_term_match({term}, text_terms))
-    return matches / len(query_terms)
+def _filter_evidence_chunks(
+    question: str,
+    chunks: List[Dict[str, Any]],
+    allow_scoped_fallback: bool = False,
+) -> List[Dict[str, Any]]:
+    del question
+    if any(chunk.get("rerank_rank") for chunk in chunks):
+        for chunk in chunks:
+            chunk["evidence_rank"] = 1.0 / max(1, int(chunk.get("rerank_rank") or 1))
+        return _diversify_relevant_chunks(chunks)
 
-
-def _filter_evidence_chunks(question: str, chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    query_terms = _meaningful_terms(question) - _GENERIC_DOCUMENT_TERMS
-    if not query_terms:
-        return chunks
-
-    filtered = []
+    filtered: List[Dict[str, Any]] = []
     for chunk in chunks:
-        text = str(chunk.get("text", ""))
-        overlap = _lexical_overlap(question, text)
-        score = _safe_float(chunk.get("score"), _safe_float(chunk.get("retrieval_score")))
-        confidence = _safe_float(chunk.get("confidence"))
-        if overlap >= MIN_LEXICAL_OVERLAP or (overlap > 0 and score >= MIN_SOURCE_SCORE):
-            chunk["lexical_overlap"] = round(overlap, 3)
-            filtered.append(chunk)
-        elif confidence >= MIN_SOURCE_CONFIDENCE:
-            chunk["lexical_overlap"] = round(overlap, 3)
+        score = _evidence_rank(chunk)
+        if score >= MIN_SOURCE_SCORE:
+            chunk["evidence_rank"] = _evidence_rank(chunk)
             filtered.append(chunk)
 
-    return filtered or chunks
+    if filtered:
+        return _diversify_relevant_chunks(filtered)
+
+    if allow_scoped_fallback:
+        for chunk in chunks:
+            chunk["evidence_rank"] = _evidence_rank(chunk)
+        return _diversify_relevant_chunks(chunks)
+
+    logger.info("Evidence filter rejected %d tangential chunks for an unscoped query.", len(chunks))
+    return []
 
 
 def _source_payload(chunk: Dict[str, Any], fallback_id: Optional[str] = None) -> Dict[str, Any]:
@@ -584,9 +486,21 @@ def _source_payload(chunk: Dict[str, Any], fallback_id: Optional[str] = None) ->
         "page": chunk["page"],
         "score": _safe_float(chunk.get("score")),
         "confidence": _safe_float(chunk.get("confidence", 0)),
-        "lexical_overlap": _safe_float(chunk.get("lexical_overlap", 0)),
+        "relevance_score": _safe_float(chunk.get("relevance_score"), _safe_float(chunk.get("score"))),
+        "evidence_rank": _safe_float(chunk.get("evidence_rank", 0)),
+        "facet_ids": list(chunk.get("facet_ids") or []),
+        "facet_scores": dict(chunk.get("facet_scores") or {}),
+        "facet_queries": dict(chunk.get("facet_queries") or {}),
+        "requested_facets": dict(chunk.get("requested_facets") or {}),
+        "document_id": chunk.get("document_id"),
+        "page_start": chunk.get("page_start", chunk.get("page")),
+        "page_end": chunk.get("page_end", chunk.get("page")),
+        "parent_id": chunk.get("parent_id"),
+        "chunk_type": chunk.get("chunk_type", "text"),
+        "section": chunk.get("section") or chunk.get("section_title") or chunk.get("heading"),
+        "location": _location_label(chunk),
         "bbox": chunk.get("bbox", ""),
-        "citation": f"[{source_id}] {chunk['filename']}, Página {chunk['page']}".strip(),
+        "citation": f"[{source_id}] {chunk['filename']}, {_location_label(chunk)}".strip(),
     }
     highlight_rects = _parse_highlight_rects(chunk.get("bbox"))
     if highlight_rects:
@@ -785,9 +699,7 @@ def _collect_agent_sources(
 
 def _has_relevant_sources(sources: List[Dict[str, Any]]) -> bool:
     return any(
-        _safe_float(source.get("score")) >= MIN_SOURCE_SCORE
-        or _safe_float(source.get("confidence")) >= MIN_SOURCE_CONFIDENCE
-        or _safe_float(source.get("lexical_overlap")) >= MIN_LEXICAL_OVERLAP
+        _safe_float(source.get("relevance_score"), _safe_float(source.get("score"))) >= MIN_SOURCE_SCORE
         for source in sources
     )
 
@@ -824,34 +736,6 @@ def _document_key(source: Dict[str, Any]) -> str:
     return str(source.get("document_id") or source.get("filename") or "").strip()
 
 
-def _required_document_citations(question: str, sources: List[Dict[str, Any]]) -> int:
-    """Require broad comparative requests to actually synthesize multiple documents."""
-    available_documents = {
-        _document_key(source)
-        for source in sources
-        if source.get("source_type", "document") == "document" and _document_key(source)
-    }
-    available_count = len(available_documents)
-    if available_count <= 1:
-        return available_count
-
-    normalized = _normalize_term_text(question)
-    broad_markers = (
-        "compara",
-        "comparando",
-        "multiples",
-        "documentos disponibles",
-        "estudios relevantes",
-        "sintetiza",
-        "sintesis",
-        "tecnologias",
-        "solucion integrada",
-    )
-    if any(marker in normalized for marker in broad_markers):
-        return min(5, available_count)
-    return min(2, available_count)
-
-
 def _cited_document_count(answer: str, sources: List[Dict[str, Any]]) -> int:
     sources_by_id = {
         str(source.get("source_id")): source
@@ -868,6 +752,260 @@ def _cited_document_count(answer: str, sources: List[Dict[str, Any]]) -> int:
             and _document_key(sources_by_id[source_id])
         }
     )
+
+
+def _evidence_coverage(
+    question: str,
+    evidence_chunks: List[Dict[str, Any]],
+) -> tuple[List[str], List[str]]:
+    """Derive coverage from dynamically planned facets, never from topic vocabularies."""
+    del question
+    requested: Dict[str, str] = {}
+    supported = set()
+    for chunk in evidence_chunks:
+        requested.update(dict(chunk.get("requested_facets") or {}))
+        requested.update(dict(chunk.get("facet_queries") or {}))
+        supported.update(chunk.get("facet_ids") or [])
+    found = [query for facet_id, query in requested.items() if facet_id in supported]
+    missing = [query for facet_id, query in requested.items() if facet_id not in supported]
+    return found, missing
+
+
+def _build_evidence_coverage_guide(
+    question: str,
+    evidence_chunks: List[Dict[str, Any]],
+) -> str:
+    found, missing = _evidence_coverage(question, evidence_chunks)
+    if not found and not missing:
+        return ""
+    found_text = ", ".join(found) if found else "ninguno de los ejes solicitados"
+    missing_text = ", ".join(missing) if missing else "ninguno"
+    return (
+        "## Cobertura temática detectada\n"
+        f"- Con evidencia recuperada: {found_text}.\n"
+        f"- Sin evidencia recuperada: {missing_text}.\n"
+        "La cobertura proviene de las facetas de recuperación. Verifica cada decisión contra el extracto citado y no "
+        "propongas valores numéricos para los ejes sin evidencia."
+    )
+
+
+_nli_tokenizer = None
+_nli_model = None
+_nli_unavailable = False
+
+
+def _nli_scores(premise: str, hypothesis: str) -> Optional[Dict[str, float]]:
+    """Return multilingual entailment scores for one evidence-claim pair."""
+    global _nli_tokenizer, _nli_model, _nli_unavailable
+    if _nli_unavailable or not premise.strip() or not hypothesis.strip():
+        return None
+    try:
+        import torch
+        from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+        if _nli_tokenizer is None or _nli_model is None:
+            logger.info("Loading NLI verifier: %s", settings.NLI_MODEL)
+            _nli_tokenizer = AutoTokenizer.from_pretrained(settings.NLI_MODEL)
+            _nli_model = AutoModelForSequenceClassification.from_pretrained(settings.NLI_MODEL)
+            _nli_model.eval()
+        inputs = _nli_tokenizer(
+            premise,
+            hypothesis,
+            truncation=True,
+            max_length=512,
+            return_tensors="pt",
+        )
+        with torch.no_grad():
+            probabilities = torch.softmax(_nli_model(**inputs).logits[0], dim=-1).tolist()
+        labels = {
+            str(_nli_model.config.id2label[index]).lower(): float(probability)
+            for index, probability in enumerate(probabilities)
+        }
+        return {
+            "entailment": labels.get("entailment", 0.0),
+            "neutral": labels.get("neutral", 0.0),
+            "contradiction": labels.get("contradiction", 0.0),
+        }
+    except Exception as exc:
+        _nli_unavailable = True
+        logger.warning("NLI verification unavailable for this process: %s", exc)
+        return None
+
+
+def _answer_sentences(answer: str) -> List[str]:
+    sentences: List[str] = []
+    for line in (answer or "").splitlines():
+        cleaned = re.sub(r"^\s*(?:[-*]|\d+[.)])\s*", "", line).strip()
+        if not cleaned or cleaned.startswith("#"):
+            continue
+        if re.match(r"^(?:keywords?|palabras clave|fuentes consultadas)\s*:", cleaned, re.IGNORECASE):
+            continue
+        sentences.extend(part.strip() for part in re.split(r"(?<=[.!?])\s+", cleaned) if part.strip())
+    return sentences
+
+
+def _is_substantive_claim(sentence: str) -> bool:
+    plain = re.sub(r"\[((?:D|W)\d+)\]", "", sentence)
+    words = re.findall(r"[A-Za-zÀ-ÿ0-9]+", plain)
+    if len(words) < 8:
+        return False
+    return bool(re.search(r"\[((?:D|W)\d+)\]", sentence)) or len(words) >= 8
+
+
+def _numeric_tokens(text: str) -> set[str]:
+    without_citations = re.sub(r"\[((?:D|W)\d+)\]", "", text or "")
+    tokens = re.findall(
+        r"(?<!\w)\d+(?:[.,]\d+)?(?:\s*(?:%|[A-Za-zÀ-ÿ°]+(?:/[A-Za-z0-9À-ÿ°]+)?))?",
+        without_citations,
+    )
+    return {re.sub(r"\s+", "", token).replace(",", ".").lower() for token in tokens}
+
+
+def _claim_support_issue(
+    claim: str,
+    premise: str,
+    verify_entailment: bool,
+    nli_stats: Optional[List[Dict[str, float]]] = None,
+) -> Optional[str]:
+    unsupported_numbers = _numeric_tokens(claim) - _numeric_tokens(premise)
+    if unsupported_numbers:
+        return "valores no presentes en la evidencia: " + ", ".join(sorted(unsupported_numbers))
+    if not verify_entailment:
+        return None
+    scores = _nli_scores(premise, re.sub(r"\[((?:D|W)\d+)\]", "", claim).strip())
+    if scores is None:
+        return None
+    if nli_stats is not None:
+        nli_stats.append(scores)
+    entailment = scores["entailment"]
+    if entailment < settings.NLI_ENTAILMENT_THRESHOLD or entailment <= max(
+        scores["neutral"], scores["contradiction"]
+    ):
+        return (
+            f"entailment={entailment:.2f}, neutral={scores['neutral']:.2f}, "
+            f"contradiction={scores['contradiction']:.2f}"
+        )
+    return None
+
+
+def _source_support_texts(
+    sources: List[Dict[str, Any]],
+    evidence_chunks: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, str]:
+    texts = {
+        str(source.get("source_id")): str(source.get("text") or source.get("snippet") or "")
+        for source in sources
+        if source.get("source_id")
+    }
+    for chunk in evidence_chunks or []:
+        source_id = str(chunk.get("source_id") or "")
+        if source_id:
+            texts[source_id] = str(chunk.get("text") or chunk.get("snippet") or texts.get(source_id, ""))
+    return texts
+
+
+def _answer_evidence_issues(
+    answer: str,
+    sources: List[Dict[str, Any]],
+    evidence_chunks: Optional[List[Dict[str, Any]]] = None,
+    verify_entailment: bool = False,
+) -> List[str]:
+    """Check citation proximity, numeric fidelity, and optional multilingual entailment."""
+    issues: List[str] = []
+    uncited_claims = 0
+    unsupported_pairs = []
+    nli_stats: List[Dict[str, float]] = []
+    support_texts = _source_support_texts(sources, evidence_chunks)
+
+    for sentence in _answer_sentences(answer):
+        if not _is_substantive_claim(sentence):
+            continue
+        cited_ids = set(re.findall(r"\[((?:D|W)\d+)\]", sentence))
+        if not cited_ids:
+            uncited_claims += 1
+            continue
+
+        premise = "\n".join(support_texts.get(source_id, "") for source_id in sorted(cited_ids))
+        support_issue = _claim_support_issue(
+            sentence,
+            premise,
+            verify_entailment,
+            nli_stats=nli_stats,
+        )
+        if support_issue:
+            unsupported_pairs.append(f"{', '.join(sorted(cited_ids))}: {support_issue}")
+
+    if verify_entailment:
+        verified_count = len(nli_stats)
+        mean_entailment = (
+            sum(scores["entailment"] for scores in nli_stats) / verified_count
+            if verified_count
+            else 0.0
+        )
+        logger.info(
+            "NLI verification: model=%s version=%s claims=%d unsupported=%d mean_entailment=%.3f",
+            settings.NLI_MODEL,
+            settings.NLI_VERIFIER_VERSION,
+            verified_count,
+            len(unsupported_pairs),
+            mean_entailment,
+        )
+
+    if uncited_claims:
+        issues.append(f"{uncited_claims} afirmaciones sustantivas no tienen una cita inmediata")
+    if unsupported_pairs:
+        issues.append("posibles asociaciones afirmacion-fuente incorrectas: " + "; ".join(unsupported_pairs[:3]))
+    return issues
+
+
+def _prune_unsupported_claims(
+    answer: str,
+    sources: List[Dict[str, Any]],
+    evidence_chunks: Optional[List[Dict[str, Any]]] = None,
+    verify_entailment: bool = False,
+) -> str:
+    """Keep headings and sentences whose substantive claims have nearby supporting citations."""
+    support_texts = _source_support_texts(sources, evidence_chunks)
+    valid_ids = set(support_texts)
+    output_lines: List[str] = []
+
+    for line in (answer or "").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            output_lines.append(line)
+            continue
+
+        prefix_match = re.match(r"^(\s*(?:[-*]|\d+[.)])\s*)", line)
+        prefix = prefix_match.group(1) if prefix_match else ""
+        body = line[len(prefix):].strip() if prefix else stripped
+        kept_sentences = []
+        for sentence in re.split(r"(?<=[.!?])\s+", body):
+            sentence = sentence.strip()
+            if not sentence:
+                continue
+            if not _is_substantive_claim(sentence):
+                kept_sentences.append(sentence)
+                continue
+            cited_ids = set(re.findall(r"\[((?:D|W)\d+)\]", sentence))
+            if not cited_ids or not cited_ids.issubset(valid_ids):
+                continue
+            premise = "\n".join(support_texts.get(source_id, "") for source_id in sorted(cited_ids))
+            if _claim_support_issue(sentence, premise, verify_entailment):
+                continue
+            kept_sentences.append(sentence)
+
+        if kept_sentences:
+            output_lines.append(prefix + " ".join(kept_sentences))
+
+    return "\n".join(output_lines).strip()
+
+
+def _refine_recovered_sources(
+    question: str,
+    raw_sources: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Reapply the model-derived relevance threshold to recovered evidence."""
+    return _filter_evidence_chunks(question, [dict(source) for source in raw_sources])
 
 
 def _generate_agentic_document_answer(
@@ -980,14 +1118,16 @@ def _retrieve_document_evidence(
     user_id: str,
     document_id: Optional[str],
     top_k: Optional[int],
+    research_plan: Optional[ResearchPlan] = None,
 ) -> tuple[str, List[Dict[str, Any]], List[Dict[str, Any]]]:
     chunks = retrieve(
         query=question,
         user_id=user_id,
         document_id=document_id,
         top_k=top_k,
+        facets=research_plan.facets if research_plan else None,
     )
-    chunks = _filter_evidence_chunks(question, chunks)
+    chunks = _filter_evidence_chunks(question, chunks, allow_scoped_fallback=bool(document_id))
     for index, chunk in enumerate(chunks, 1):
         chunk.setdefault("source_type", "document")
         chunk["source_id"] = f"D{index}"
@@ -1002,8 +1142,8 @@ def _retrieve_document_evidence(
 
     context_parts = [
         (
-            f"Fuente [{chunk['source_id']}] ({chunk['filename']}, Página {chunk['page']}):\n"
-            f"{chunk['text']}"
+            f"Fuente [{chunk['source_id']}] ({chunk['filename']}, {_location_label(chunk)}):\n"
+            f"Extracto: {chunk.get('context_text') or chunk['text']}"
         )
         for chunk in chunks
     ]
@@ -1080,6 +1220,8 @@ def _generate_grounded_selected_document_answer(
     sources: List[Dict[str, Any]],
     hf_token: Optional[str],
     chat_history: Optional[List[Dict[str, str]]],
+    raw_sources: Optional[List[Dict[str, Any]]] = None,
+    verify_entailment: bool = False,
 ) -> str:
     """Generate and verify a response for an explicitly selected document."""
     from langchain_core.messages import HumanMessage
@@ -1095,17 +1237,25 @@ def _generate_grounded_selected_document_answer(
         "genérica, como resumir, explicar o redactar. Usa citas [D#] en línea y no confundas una omisión "
         "de formato de cita con falta de evidencia."
     )
+    coverage_guide = _build_evidence_coverage_guide(question, sources)
+    if coverage_guide:
+        prompt += f"\n\n{coverage_guide}"
     chat_llm = get_llm_client(hf_token, max_tokens=settings.AGENT_SYNTHESIS_MAX_TOKENS)
     last_error: Optional[Exception] = None
     completed_generation = False
+    revision_issues: List[str] = []
+    best_answer = ""
 
     for attempt in range(2):
         attempt_prompt = prompt
         if attempt:
             attempt_prompt += (
-                "\n\nLa respuesta anterior omitió o inventó identificadores de fuente. Redacta nuevamente la "
-                "respuesta completa y usa únicamente las citas [D#] visibles en el contexto. No menciones "
-                "esta revisión."
+                "\n\nLa respuesta anterior omitió o inventó identificadores, o no superó la revisión de evidencia. "
+                "Redacta nuevamente la respuesta "
+                "completa y usa únicamente las citas [D#] visibles en el contexto. Coloca cada cita justo "
+                "después de la afirmación que respalda y elimina cualquier dimensión que no aparezca en el "
+                f"fragmento citado. Problemas detectados: {'; '.join(revision_issues) or 'citas no verificables'}. "
+                "No menciones esta revisión."
             )
         try:
             response = chat_llm.invoke([HumanMessage(content=attempt_prompt)])
@@ -1118,11 +1268,25 @@ def _generate_grounded_selected_document_answer(
 
         answer = _validate_answer_citations(answer, sources)
         if answer != INSUFFICIENT_EVIDENCE_MESSAGE:
+            best_answer = answer
+        revision_issues = _answer_evidence_issues(
+            answer,
+            sources,
+            raw_sources,
+            verify_entailment=verify_entailment,
+        )
+        if answer != INSUFFICIENT_EVIDENCE_MESSAGE and not revision_issues:
             return answer
+        if answer == INSUFFICIENT_EVIDENCE_MESSAGE:
+            revision_issues = ["identificadores de cita ausentes o no verificables"]
 
     if not completed_generation and last_error is not None:
         raise last_error
-    return _build_evidence_only_fallback(sources, "")
+    if best_answer:
+        return _prune_unsupported_claims(
+            best_answer, sources, raw_sources, verify_entailment=verify_entailment
+        ) or best_answer
+    return "No fue posible generar una respuesta con citas verificables a partir del documento seleccionado."
 
 
 def _build_agent_source_context(raw_sources: List[Dict[str, Any]]) -> str:
@@ -1130,7 +1294,7 @@ def _build_agent_source_context(raw_sources: List[Dict[str, Any]]) -> str:
     context_parts = []
     seen_ids = set()
     total_chars = 0
-    max_context_chars = 14000
+    max_context_chars = min(100000, max(28000, settings.LLM_CONTEXT_WINDOW * 3))
 
     # Put one excerpt from every document first so repeated chunks from the
     # highest-ranked papers cannot consume the context window by themselves.
@@ -1154,11 +1318,11 @@ def _build_agent_source_context(raw_sources: List[Dict[str, Any]]) -> str:
             continue
         seen_ids.add(source_id)
 
-        text = str(source.get("text") or source.get("snippet") or "").strip()
+        text = str(source.get("context_text") or source.get("text") or source.get("snippet") or "").strip()
         if not text:
             continue
         remaining_chars = max_context_chars - total_chars
-        source_limit = min(1000, remaining_chars)
+        source_limit = min(2400, remaining_chars)
         if len(text) > source_limit:
             text = text[: max(0, source_limit - 3)] + "..."
 
@@ -1175,9 +1339,9 @@ def _build_agent_source_context(raw_sources: List[Dict[str, Any]]) -> str:
             continue
 
         filename = source.get("filename", "documento")
-        page = source.get("page", "?")
         context_part = (
-            f"Fuente [{source_id}] ({filename}, Página {page}):\n{text}"
+            f"Fuente [{source_id}] ({filename}, {_location_label(source)}):\n"
+            f"Extracto: {text}"
         )
         context_parts.append(context_part)
         total_chars += len(context_part)
@@ -1215,12 +1379,16 @@ Redacta ahora la mejor respuesta académica {response_kind} usando ÚNICAMENTE l
 - Responde en español académico.
 - No hagas una nueva búsqueda ni asumas información externa.
 - Antes de redactar, construye internamente una matriz de evidencia: tema, metodología, resultado, fortaleza y limitación de cada documento. No muestres esa matriz ni tu razonamiento interno.
-- Examina TODAS las fuentes proporcionadas. Para solicitudes comparativas, integra al menos cinco documentos distintos si están disponibles; no centres toda la respuesta en los dos primeros.
+- Examina todas las fuentes proporcionadas, usa cada documento que aporte evidencia directa y omite los tangenciales. No centres la respuesta en las primeras fuentes ni cites documentos para alcanzar una cuota.
 - Organiza la respuesta exactamente según los productos y el idioma pedidos por el usuario. No repitas la pregunta ni estas instrucciones.
 - Redacta con densidad académica y sin redundancias; completa todos los productos solicitados dentro del espacio disponible.
-- Distingue resultados explícitos de inferencias. No afirmes beneficios sobre aire, agua o energía si el fragmento citado no los respalda.
+- Distingue resultados explícitos de inferencias. No atribuyas efectos, mecanismos o beneficios que el fragmento citado no respalde.
+- No inventes valores de diseño, rangos, dimensiones, presiones, relaciones, eficiencias ni configuraciones. Si un parámetro solicitado no aparece en la evidencia, escribe expresamente que no puede determinarse con los documentos recuperados.
 - Cita cada afirmación sustantiva usando solo los identificadores visibles en la evidencia, por ejemplo [D1], [D2] o [W1].
-- Distribuye las citas a lo largo del análisis y compara convergencias, contradicciones y limitaciones entre estudios.
+- Para cada conclusión o recomendación visible, presenta de forma concisa la evidencia, la inferencia que permite y su límite; esto es trazabilidad argumental, no cadena de pensamiento interna.
+- Compara convergencias, contradicciones, complementariedades, métodos y límites. Pondera resultados experimentales, observacionales, revisiones, simulaciones y propuestas conceptuales según lo que realmente sea visible en cada fragmento.
+- Integra los hallazgos en una narrativa por temas o decisiones; no concatenes resúmenes documento por documento.
+- Coloca el identificador [D#] inmediatamente después de la afirmación respaldada. Cada identificador ya está vinculado en la interfaz con archivo, página y, cuando existe, sección, tabla o figura; no alteres su formato.
 - Si una conclusión queda incompleta por falta de evidencia, indícalo explícitamente.
 - No menciones límites de iteraciones, borradores, prompts, herramientas, razonamiento interno ni cadena de pensamiento.
 
@@ -1237,51 +1405,64 @@ def _generate_partial_answer_from_agent_sources(
     chat_history: Optional[List[Dict[str, str]]],
     draft_answer: Optional[str] = None,
     notice: str = "",
+    verify_entailment: bool = False,
+    argument_outline: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     """Synthesize an answer from the agent's already-recovered evidence after an iteration stop."""
     if not raw_sources or not sources:
-        return AGENT_INCOMPLETE_MESSAGE
+        return (
+            "No se recuperó evidencia documental suficiente para responder de forma verificable. "
+            "No se completaron los vacíos con conocimiento externo."
+        )
 
     context = _build_agent_source_context(raw_sources)
     if not context:
-        return AGENT_INCOMPLETE_MESSAGE
+        return "Los documentos recuperados no contienen texto utilizable para elaborar una respuesta verificable."
 
     from langchain_core.messages import HumanMessage
+
+    if settings.MODEL_PROFILE == "research_gpu":
+        from app.rag.embeddings import release_embedding_model
+        from app.rag.reranker import release_reranker
+
+        release_reranker()
+        release_embedding_model()
 
     chat_llm = get_llm_client(hf_token, max_tokens=settings.AGENT_SYNTHESIS_MAX_TOKENS)
     # Do not pass the planner draft to the writer. Early planner answers tend to
     # anchor the synthesis on the first one or two documents it noticed.
     prompt = _build_partial_agent_answer_prompt(question, context, chat_history)
-    required_documents = _required_document_citations(question, sources)
-    document_source_ids: Dict[str, List[str]] = {}
-    for source in sources:
-        if source.get("source_type", "document") != "document":
-            continue
-        document_key = _document_key(source)
-        source_id = str(source.get("source_id") or "")
-        if document_key and source_id:
-            document_source_ids.setdefault(document_key, []).append(source_id)
-    coverage_guide = "\n".join(
-        f"- {document}: {', '.join(f'[{source_id}]' for source_id in source_ids)}"
-        for document, source_ids in document_source_ids.items()
-    )
-    if required_documents:
-        prompt += (
-            "\n\n## Cobertura documental obligatoria\n"
-            f"La respuesta debe citar evidencia de al menos {required_documents} documentos distintos de esta lista:\n"
-            f"{coverage_guide}\n"
-            "Los identificadores de varias páginas del mismo archivo cuentan como un solo documento. "
-            "No muestres esta lista de control en la respuesta."
+    if argument_outline:
+        outline_text = "\n".join(
+            f"- {item.get('question')}: {', '.join(item.get('source_ids') or [])}"
+            for item in argument_outline
+            if item.get("source_ids")
         )
+        if outline_text:
+            prompt += (
+                "\n\n## Esquema interno afirmación-evidencia\n"
+                "Usa este mapa solo para organizar la cobertura; verifica cada afirmación contra los extractos y no "
+                "reproduzcas el mapa literalmente en la respuesta.\n"
+                f"{outline_text}"
+            )
+    required_documents = 1 if sources else 0
 
+    revision_issues: List[str] = []
+    previous_answer = ""
+    best_answer = ""
+    best_penalty = float("inf")
     for attempt in range(2):
         attempt_prompt = prompt
         if attempt:
             attempt_prompt += (
                 "\n\n## Revisión obligatoria\n"
-                f"La versión anterior no integró el mínimo de {required_documents} documentos distintos. "
-                "Redacta la respuesta completa nuevamente desde la evidencia, ampliando la comparación y "
-                "manteniendo citas válidas. No comentes esta revisión en la respuesta."
+                "La versión anterior no superó la revisión de trazabilidad. Redacta la respuesta completa "
+                "nuevamente desde la evidencia, corrigiendo estos problemas: "
+                f"{'; '.join(revision_issues) or 'cobertura o citas insuficientes'}. "
+                "Integra todos los documentos que aporten evidencia directa, sin imponer una cuota ni incluir fuentes tangenciales. "
+                "No añadas afirmaciones para forzar más fuentes y no comentes esta revisión en la respuesta.\n\n"
+                "## Versión que debes corregir\n"
+                f"{previous_answer[:6000]}"
             )
         try:
             response = chat_llm.invoke([HumanMessage(content=attempt_prompt)])
@@ -1294,7 +1475,25 @@ def _generate_partial_answer_from_agent_sources(
             continue
         answer = _validate_answer_citations(answer, sources)
         cited_documents = _cited_document_count(answer, sources)
-        if answer != INSUFFICIENT_EVIDENCE_MESSAGE and cited_documents >= required_documents:
+        revision_issues = _answer_evidence_issues(
+            answer,
+            sources,
+            raw_sources,
+            verify_entailment=verify_entailment,
+        )
+        if cited_documents < required_documents:
+            revision_issues.append(
+                f"solo se citaron {cited_documents} de {required_documents} documentos relevantes requeridos"
+            )
+        if answer == INSUFFICIENT_EVIDENCE_MESSAGE:
+            revision_issues.append("hay identificadores de cita ausentes o no verificables")
+        else:
+            penalty = (len(revision_issues) * 10) + max(0, required_documents - cited_documents)
+            if penalty < best_penalty:
+                best_answer = answer
+                best_penalty = penalty
+        previous_answer = answer
+        if answer != INSUFFICIENT_EVIDENCE_MESSAGE and not revision_issues:
             logger.info(
                 "Grounded synthesis accepted with %d cited documents (required=%d).",
                 cited_documents,
@@ -1302,55 +1501,45 @@ def _generate_partial_answer_from_agent_sources(
             )
             return answer
         logger.warning(
-            "Grounded synthesis cited %d distinct documents; %d required. Retrying.",
+            "Grounded synthesis cited %d distinct documents; %d required; issues=%s. Retrying.",
             cited_documents,
             required_documents,
+            revision_issues,
         )
 
-    return _build_evidence_only_fallback(raw_sources, "")
-
-
-def _build_evidence_only_fallback(raw_sources: List[Dict[str, Any]], notice: str) -> str:
-    """Guarantee a cited, evidence-only response when the final synthesis call fails."""
-    evidence_lines = []
-    diverse_sources = []
-    repeated_sources = []
-    seen_documents = set()
-    for source in raw_sources:
-        document_key = _document_key(source) or str(source.get("url") or "")
-        if document_key and document_key not in seen_documents:
-            diverse_sources.append(source)
-            seen_documents.add(document_key)
-        else:
-            repeated_sources.append(source)
-
-    for source in [*diverse_sources, *repeated_sources][:12]:
-        source_id = source.get("source_id")
-        text = re.sub(
-            r"\s+",
-            " ",
-            str(source.get("text") or source.get("snippet") or "").strip(),
+    if best_answer:
+        pruned_answer = _prune_unsupported_claims(
+            best_answer,
+            sources,
+            raw_sources,
+            verify_entailment=verify_entailment,
         )
-        if not source_id or not text:
-            continue
-        excerpt = text[:420] + ("..." if len(text) > 420 else "")
-        if source.get("source_type") == "web":
-            label = source.get("title") or source.get("filename") or "Fuente web"
-        else:
-            label = f"{source.get('filename', 'documento')}, página {source.get('page', '?')}"
-        evidence_lines.append(f"- [{source_id}] **{label}**: {excerpt}")
+        if pruned_answer and _cited_document_count(pruned_answer, sources) >= required_documents:
+            return (
+                "**Limitación de cobertura:** la evidencia recuperada no permitió respaldar todos los ejes "
+                "solicitados; se omiten las decisiones sin sustento documental.\n\n"
+                + pruned_answer
+            )
 
-    if not evidence_lines:
-        return AGENT_INCOMPLETE_MESSAGE
-
-    prefix = f"{notice}\n\n" if notice else ""
-    return prefix + (
-        "No fue posible completar la síntesis interpretativa, pero sí conservar la evidencia verificable "
-        "recuperada durante la fase de investigación:\n\n"
-        + "\n".join(evidence_lines)
-        + "\n\nLas relaciones o conclusiones que no se desprendan explícitamente de estos fragmentos "
-        "deben considerarse insuficientemente sustentadas."
+    return (
+        "No fue posible producir una síntesis cuyas afirmaciones pudieran verificarse contra los fragmentos "
+        "recuperados. La evidencia disponible no se completó con supuestos externos."
     )
+
+
+def _requested_report_sections(question: str) -> List[str]:
+    match = re.search(
+        r"secciones?\s*:\s*(.+?)(?:\.\s*(?:todas|cada|si\s+la|all)|$)",
+        question or "",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if not match:
+        return []
+    sections = [
+        re.sub(r"\s+", " ", item).strip(" .:-")
+        for item in re.split(r",|\s+y\s+|\s+and\s+", match.group(1), flags=re.IGNORECASE)
+    ]
+    return [section for section in sections if 2 <= len(section) <= 60][:8]
 
 
 def _validate_or_regenerate_agent_answer(
@@ -1389,12 +1578,13 @@ def _generate_direct_document_answer(
     top_k: Optional[int],
     chat_history: Optional[List[Dict[str, str]]],
     evidence: Optional[tuple[str, List[Dict[str, Any]], List[Dict[str, Any]]]] = None,
+    verify_entailment: bool = False,
 ) -> Dict[str, Any]:
     logger.info("RAG route: using direct document RAG for simple request.")
     if evidence is None:
-        context, sources, _ = _retrieve_document_evidence(question, user_id, document_id, top_k)
+        context, sources, raw_sources = _retrieve_document_evidence(question, user_id, document_id, top_k)
     else:
-        context, sources, _ = evidence
+        context, sources, raw_sources = evidence
     if not context:
         return {
             "answer": "No encontré información suficiente en los documentos cargados para responder esta pregunta.",
@@ -1408,6 +1598,8 @@ def _generate_direct_document_answer(
             sources=sources,
             hf_token=hf_token,
             chat_history=chat_history,
+            raw_sources=raw_sources,
+            verify_entailment=verify_entailment,
         )
         return {"answer": answer, "sources": sources}
 
@@ -1416,13 +1608,45 @@ def _generate_direct_document_answer(
     style_reference = _load_global_style_reference()
     chat_llm = get_llm_client(hf_token)
     prompt = _build_direct_rag_prompt(question, context, chat_history, style_reference=style_reference)
-    response = chat_llm.invoke([HumanMessage(content=prompt)])
-    answer = parse_agent_output(response.content)
-    if _is_agent_stop_answer(answer):
-        answer = "No pude generar una respuesta final estable. Reformulo con el contexto recuperado: " + (
-            "No encontré información suficiente en los documentos cargados para responder esta pregunta."
+    coverage_guide = _build_evidence_coverage_guide(question, raw_sources)
+    if coverage_guide:
+        prompt += f"\n\n{coverage_guide}"
+    revision_issues: List[str] = []
+    best_answer = ""
+    for attempt in range(2):
+        attempt_prompt = prompt
+        if attempt:
+            attempt_prompt += (
+                "\n\nReescribe la respuesta completa para corregir la trazabilidad de evidencia. "
+                f"Problemas detectados: {'; '.join(revision_issues)}. Usa únicamente hechos visibles en los "
+                "fragmentos, coloca cada [D#] inmediatamente después de la afirmación respaldada y no "
+                "menciones esta revisión."
+            )
+        response = chat_llm.invoke([HumanMessage(content=attempt_prompt)])
+        answer = parse_agent_output(response.content)
+        if _is_agent_stop_answer(answer):
+            revision_issues = ["la salida no contiene una respuesta final"]
+            continue
+        answer = _validate_answer_citations(answer, sources)
+        if answer != INSUFFICIENT_EVIDENCE_MESSAGE:
+            best_answer = answer
+        revision_issues = _answer_evidence_issues(
+            answer,
+            sources,
+            raw_sources,
+            verify_entailment=verify_entailment,
         )
-    answer = _validate_answer_citations(answer, sources)
+        if answer == INSUFFICIENT_EVIDENCE_MESSAGE:
+            revision_issues.append("hay identificadores de cita ausentes o no verificables")
+        if answer != INSUFFICIENT_EVIDENCE_MESSAGE and not revision_issues:
+            return {"answer": answer, "sources": sources}
+
+    if best_answer:
+        answer = _prune_unsupported_claims(
+            best_answer, sources, raw_sources, verify_entailment=verify_entailment
+        ) or best_answer
+    else:
+        answer = "No fue posible generar una respuesta con citas verificables a partir de la evidencia recuperada."
     return {"answer": answer, "sources": sources}
 
 
@@ -1436,6 +1660,200 @@ def _retrieved_document_count(raw_sources: List[Dict[str, Any]]) -> int:
     return len({_document_key(source) for source in raw_sources if _document_key(source)})
 
 
+class _CoverageAudit(BaseModel):
+    supported_indices: List[int] = Field(default_factory=list)
+    missing_indices: List[int] = Field(default_factory=list)
+    relevant_evidence_indices: List[int] = Field(default_factory=list)
+    conflicts: List[str] = Field(default_factory=list)
+
+
+class _ClaimAudit(BaseModel):
+    unsupported_claims: List[str] = Field(default_factory=list)
+    unmarked_inferences: List[str] = Field(default_factory=list)
+    wrong_citations: List[str] = Field(default_factory=list)
+
+
+def _audit_research_coverage(brief: ResearchBrief, evidence: List[Dict[str, Any]]) -> Dict[str, List[str]]:
+    """Let the model judge evidence sufficiency; facet text is never treated as evidence."""
+    if not evidence:
+        return {"supported": [], "missing": list(brief.facets), "conflicts": [], "relevant_indices": []}
+    if settings.MODEL_PROFILE == "research_gpu":
+        from app.rag.embeddings import release_embedding_model
+        from app.rag.reranker import release_reranker
+
+        release_reranker()
+        release_embedding_model()
+    evidence_text = "\n\n".join(
+        f"[E{index}] {item.get('filename', 'document')}, {_location_label(item)}\n"
+        f"{str(item.get('text') or '')[:1200]}"
+        for index, item in enumerate(evidence[:24], 1)
+    )
+    facets_text = "\n".join(f"{index}. {facet}" for index, facet in enumerate(brief.facets, 1))
+    try:
+        from langchain_core.messages import SystemMessage, HumanMessage
+
+        judge = get_llm_client(max_tokens=768).with_structured_output(_CoverageAudit, method="json_mode")
+        audit = judge.invoke([
+            SystemMessage(content=(
+                "Audit whether the retrieved excerpts contain direct, usable evidence for each numbered facet. "
+                "Do not answer the research question and do not infer missing facts. Mark a facet supported only "
+                "when at least one excerpt addresses it substantively. Also return the numbers of every excerpt "
+                "that contributes direct evidence; exclude merely tangential excerpts. Return concise conflicts."
+            )),
+            HumanMessage(content=f"FACETS\n{facets_text}\n\nEXCERPTS\n{evidence_text}"),
+        ])
+        if not isinstance(audit, _CoverageAudit):
+            raise ValueError("coverage judge returned an invalid schema")
+        valid = set(range(1, len(brief.facets) + 1))
+        supported_indices = set(audit.supported_indices) & valid
+        missing_indices = (set(audit.missing_indices) & valid) | (valid - supported_indices)
+        return {
+            "supported": [brief.facets[index - 1] for index in sorted(supported_indices)],
+            "missing": [brief.facets[index - 1] for index in sorted(missing_indices - supported_indices)],
+            "conflicts": audit.conflicts[:8],
+            "relevant_indices": [
+                index - 1
+                for index in audit.relevant_evidence_indices
+                if 1 <= index <= len(evidence)
+            ],
+        }
+    except Exception as exc:
+        logger.warning("Semantic evidence audit failed; using retrieval provenance: %s", exc)
+        supported_queries = {
+            query for item in evidence for query in dict(item.get("facet_queries") or {}).values()
+        }
+        supported = [facet for facet in brief.facets if facet in supported_queries]
+        return {
+            "supported": supported,
+            "missing": [facet for facet in brief.facets if facet not in supported],
+            "conflicts": [],
+            "relevant_indices": [
+                index for index, item in enumerate(evidence) if item.get("facet_ids")
+            ] or list(range(len(evidence))),
+        }
+
+
+def _semantic_claim_issues(
+    answer: str,
+    sources: List[Dict[str, Any]],
+    evidence: List[Dict[str, Any]],
+) -> List[str]:
+    deterministic = _answer_evidence_issues(answer, sources, evidence, verify_entailment=False)
+    if not answer or answer == INSUFFICIENT_EVIDENCE_MESSAGE:
+        return [*deterministic, "la salida no contiene una respuesta verificable"]
+    context = _build_agent_source_context(evidence)
+    if not context:
+        return deterministic
+    try:
+        from langchain_core.messages import SystemMessage, HumanMessage
+
+        judge = get_llm_client(max_tokens=900).with_structured_output(_ClaimAudit, method="json_mode")
+        audit = judge.invoke([
+            SystemMessage(content=(
+                "Audit claim-to-evidence fidelity. A direct claim must be entailed by its cited excerpt. A bounded "
+                "cross-source inference is acceptable only when explicitly labeled as an inference and all premises "
+                "are cited. Copy problematic answer sentences exactly. Do not criticize style or missing topics."
+            )),
+            HumanMessage(content=f"EVIDENCE\n{context}\n\nANSWER\n{answer}"),
+        ])
+        if not isinstance(audit, _ClaimAudit):
+            raise ValueError("claim judge returned an invalid schema")
+        if audit.unsupported_claims:
+            deterministic.append("afirmaciones no respaldadas: " + " | ".join(audit.unsupported_claims[:3]))
+        if audit.unmarked_inferences:
+            deterministic.append("inferencias no identificadas: " + " | ".join(audit.unmarked_inferences[:3]))
+        if audit.wrong_citations:
+            deterministic.append("citas asociadas incorrectamente: " + " | ".join(audit.wrong_citations[:3]))
+    except Exception as exc:
+        logger.warning("Semantic claim audit unavailable; deterministic checks remain active: %s", exc)
+    return deterministic
+
+
+def _repair_research_answer(
+    question: str,
+    brief: ResearchBrief,
+    evidence: List[Dict[str, Any]],
+    sources: List[Dict[str, Any]],
+    answer: str,
+    issues: List[str],
+    chat_history: Optional[List[Dict[str, str]]],
+) -> str:
+    from langchain_core.messages import HumanMessage
+
+    context = _build_agent_source_context(evidence)
+    prompt = _build_partial_agent_answer_prompt(question, context, chat_history)
+    prompt += (
+        "\n\n## Reparación localizada\n"
+        f"Problemas comprobados: {'; '.join(issues[:8])}.\n"
+        "Corrige únicamente esos problemas, conserva las partes respaldadas y elimina o limita las afirmaciones "
+        "que no puedan justificarse. No menciones esta auditoría.\n\n"
+        f"## Respuesta anterior\n{answer}"
+    )
+    try:
+        response = get_llm_client(max_tokens=settings.AGENT_SYNTHESIS_MAX_TOKENS).invoke([HumanMessage(content=prompt)])
+        repaired = _validate_answer_citations(parse_agent_output(response.content), sources)
+        if repaired != INSUFFICIENT_EVIDENCE_MESSAGE:
+            return repaired
+    except Exception as exc:
+        logger.warning("Research answer repair failed: %s", exc)
+    pruned = _prune_unsupported_claims(answer, sources, evidence, verify_entailment=False)
+    return pruned or answer
+
+
+def _research_dependencies(
+    question: str,
+    hf_token: Optional[str],
+    chat_history: Optional[List[Dict[str, str]]],
+    cancellation_event=None,
+) -> ResearchDependencies:
+    def synthesize(brief, evidence, sources, argument_outline):
+        return _generate_partial_answer_from_agent_sources(
+            question=question,
+            raw_sources=evidence,
+            sources=sources,
+            hf_token=hf_token,
+            chat_history=chat_history,
+            verify_entailment=False,
+            argument_outline=argument_outline,
+        )
+
+    def repair(brief, evidence, sources, answer, issues):
+        return _repair_research_answer(
+            question, brief, evidence, sources, answer, issues, chat_history
+        )
+
+    return ResearchDependencies(
+        plan=build_research_plan,
+        retrieve=retrieve,
+        source_payload=_source_payload,
+        synthesize=synthesize,
+        verify=_semantic_claim_issues,
+        repair=repair,
+        audit=_audit_research_coverage,
+        cancellation_event=cancellation_event,
+    )
+
+
+def _run_research_route(
+    question: str,
+    user_id: str,
+    document_id: Optional[str],
+    hf_token: Optional[str],
+    top_k: Optional[int],
+    chat_history: Optional[List[Dict[str, str]]],
+    cancellation_event=None,
+) -> Dict[str, Any]:
+    result = run_research_agent(
+        question=question,
+        user_id=user_id,
+        document_id=document_id,
+        top_k=top_k,
+        chat_history=chat_history,
+        dependencies=_research_dependencies(question, hf_token, chat_history, cancellation_event),
+    )
+    return {"answer": result["answer"], "sources": result.get("sources", [])}
+
+
 def _execute_document_route(
     decision: RoutingDecision,
     question: str,
@@ -1445,9 +1863,27 @@ def _execute_document_route(
     top_k: Optional[int],
     chat_history: Optional[List[Dict[str, str]]],
 ) -> Dict[str, Any]:
-    """Retrieve once, then execute either scoped/simple or deep research synthesis."""
+    """Execute direct RAG or the stateful evidence research graph."""
     retrieval_top_k = _effective_retrieval_top_k(decision, top_k)
-    evidence = _retrieve_document_evidence(question, user_id, document_id, retrieval_top_k)
+    should_plan = decision.route == "research_rag" or (
+        decision.route == "scoped_rag" and decision.mode == "research"
+    )
+    if should_plan:
+        logger.info(
+            "RAG route: stateful evidence research graph scope=%s timeout=%ss.",
+            document_id or "all-documents",
+            settings.RESEARCH_TIMEOUT_SECONDS,
+        )
+        return _run_research_route(
+            question, user_id, document_id, hf_token, retrieval_top_k, chat_history
+        )
+
+    evidence = _retrieve_document_evidence(
+        question,
+        user_id,
+        document_id,
+        retrieval_top_k,
+    )
     context, sources, raw_sources = evidence
 
     if decision.provisional:
@@ -1459,24 +1895,16 @@ def _execute_document_route(
             retrieved_document_count=_retrieved_document_count(raw_sources),
         )
         _log_routing_decision(decision)
+        if decision.route == "research_rag":
+            return _run_research_route(
+                question, user_id, document_id, hf_token, retrieval_top_k, chat_history
+            )
 
     if not context:
         return {
             "answer": "No encontré información suficiente en los documentos cargados para responder esta pregunta.",
             "sources": [],
         }
-
-    if decision.route == "research_rag":
-        logger.info("RAG route: deep multi-document retrieval and grounded synthesis without ReAct.")
-        answer = _generate_partial_answer_from_agent_sources(
-            question=question,
-            raw_sources=raw_sources,
-            sources=sources,
-            hf_token=hf_token,
-            chat_history=chat_history,
-            notice="",
-        )
-        return {"answer": answer, "sources": sources}
 
     return _generate_direct_document_answer(
         question=question,
@@ -1486,6 +1914,7 @@ def _execute_document_route(
         top_k=retrieval_top_k,
         chat_history=chat_history,
         evidence=evidence,
+        verify_entailment=False,
     )
 
 
@@ -1573,6 +2002,7 @@ def generate_answer_stream(
     top_k: Optional[int] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
     routing_mode: RoutingMode = "auto",
+    cancellation_event=None,
 ) -> Generator[str, None, None]:
     """Stream a response using the same deterministic router as the REST path."""
 
@@ -1594,6 +2024,34 @@ def generate_answer_stream(
         return
 
     use_agentic_first = decision.route == "tool_agent"
+    use_research_graph = decision.route == "research_rag" or (
+        decision.route == "scoped_rag" and decision.mode == "research"
+    )
+
+    if use_research_graph:
+        try:
+            for event in stream_research_agent(
+                question=question,
+                user_id=user_id,
+                document_id=document_id,
+                top_k=_effective_retrieval_top_k(decision, top_k),
+                chat_history=chat_history,
+                dependencies=_research_dependencies(
+                    question, hf_token, chat_history, cancellation_event
+                ),
+            ):
+                if event["type"] == "progress":
+                    yield f"data: {json.dumps(event)}\n\n"
+                    continue
+                result = event["data"]
+                yield f"data: {json.dumps({'type': 'sources', 'data': result.get('sources', [])})}\n\n"
+                yield f"data: {json.dumps({'type': 'token', 'data': result.get('answer', '')})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        except Exception as exc:
+            logger.error("Streaming research graph failed: %s", exc)
+            yield f"data: {json.dumps({'type': 'error', 'data': str(exc)})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        return
 
     if not use_agentic_first:
         try:

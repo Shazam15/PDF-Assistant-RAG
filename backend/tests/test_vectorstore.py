@@ -62,6 +62,9 @@ def test_store_chunks_deletes_old_chunks(monkeypatch):
         mock_collection.delete.assert_called_once_with(ids=["doc_123_0", "doc_123_1"])
         # 3. It should add the new chunks to the collection
         mock_collection.add.assert_called_once()
+        add_kwargs = mock_collection.add.call_args.kwargs
+        assert add_kwargs["documents"] == ["test.pdf\nHello world"]
+        assert add_kwargs["metadatas"][0]["text"] == "Hello world"
 
     finally:
         # Restore the fake module

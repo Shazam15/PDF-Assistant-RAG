@@ -17,11 +17,17 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 os.environ["SECRET_KEY"] = "test-secret-key-that-is-long-enough"
+os.environ["ENVIRONMENT"] = "development"
 os.environ["DATABASE_URL"] = "sqlite:///./test_bootstrap.db"
 os.environ["DEBUG"] = "false"
 os.environ["HF_TOKEN"] = "test-hf-token"
 os.environ["UPLOAD_DIR"] = str(ROOT / "backend" / "test_uploads")
 os.environ["CHROMA_PERSIST_DIR"] = str(ROOT / "backend" / "test_chroma")
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
 
 
 fake_embeddings = types.ModuleType("app.rag.embeddings")
@@ -135,7 +141,7 @@ def client(db_session, monkeypatch):
 def user(db_session):
     instance = User(
         username="tester",
-        email="tester@example.com",
+        email="tester@utp.ac.pa",
         hashed_password=hash_password("password123"),
     )
     db_session.add(instance)
@@ -148,7 +154,7 @@ def user(db_session):
 def other_user(db_session):
     instance = User(
         username="other",
-        email="other@example.com",
+        email="other@utp.ac.pa",
         hashed_password=hash_password("password123"),
     )
     db_session.add(instance)

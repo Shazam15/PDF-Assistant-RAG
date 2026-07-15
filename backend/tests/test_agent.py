@@ -43,7 +43,7 @@ def test_ambiguous_synthesis_promotes_only_with_three_relevant_documents():
     assert broad.route == "research_rag"
 
 
-def test_research_rag_retrieves_once_and_does_not_run_react(
+def test_research_rag_runs_a_corrective_retrieval_round_without_react(
     mock_llm_client, mock_retriever, monkeypatch
 ):
     mock_retriever.return_value = [
@@ -69,7 +69,7 @@ def test_research_rag_retrieves_once_and_does_not_run_react(
     )
 
     assert result["answer"].endswith("[D1], [D2] y [D3].")
-    mock_retriever.assert_called_once()
+    assert mock_retriever.call_count == 2
     agent_executor.assert_not_called()
 
 @pytest.fixture
@@ -81,7 +81,10 @@ def mock_llm_client():
 
 @pytest.fixture
 def mock_retriever():
-    with patch("app.rag.agent.retrieve") as mock_retrieve, patch("app.rag.agent.get_entity_context", return_value=""):
+    plan = agent_module.ResearchPlan(main_question="research question", facets=["research facet"])
+    with patch("app.rag.agent.retrieve") as mock_retrieve, patch(
+        "app.rag.agent.get_entity_context", return_value=""
+    ), patch("app.rag.agent.build_research_plan", return_value=plan):
         yield mock_retrieve
 
 @pytest.fixture
@@ -133,6 +136,309 @@ def test_validate_answer_rejects_invented_citation():
     )
 
     assert answer == agent_module.INSUFFICIENT_EVIDENCE_MESSAGE
+
+
+def test_unscoped_evidence_filter_rejects_tangential_relative_confidence():
+    chunks = [
+        {
+            "text": "A numerical simulation evaluates photovoltaic energy efficiency in an urban microgrid.",
+            "filename": "energy.pdf",
+            "page": 4,
+            "score": 0.82,
+            "confidence": 95,
+        },
+        {
+            "text": "This chapter introduces ordinary differential equations and phase portraits.",
+            "filename": "dynamics.pdf",
+            "page": 2,
+            "score": 0.04,
+            "confidence": 88,
+        },
+    ]
+
+    filtered = agent_module._filter_evidence_chunks(
+        "¿Qué tecnologías mejoran la eficiencia energética urbana?",
+        chunks,
+    )
+
+    assert [chunk["filename"] for chunk in filtered] == ["energy.pdf"]
+    assert filtered[0]["evidence_rank"] == 0.82
+
+
+def test_scoped_evidence_filter_keeps_selected_document_when_instruction_is_generic():
+    chunks = [
+        {
+            "text": "The article defines its research objective and reports the principal findings.",
+            "filename": "selected.pdf",
+            "page": 1,
+            "score": -8.0,
+            "confidence": 0,
+        }
+    ]
+
+    filtered = agent_module._filter_evidence_chunks(
+        "Resume este documento.",
+        chunks,
+        allow_scoped_fallback=True,
+    )
+
+    assert filtered == chunks
+    assert filtered[0]["evidence_rank"] == 0.0
+
+
+def test_evidence_filter_does_not_override_a_negative_semantic_score_with_words():
+    chunks = [
+        {
+            "text": "The study evaluates sustainable energy systems for cities.",
+            "filename": "urban-energy.pdf",
+            "page": 5,
+            "score": -0.8,
+            "confidence": 82,
+        }
+    ]
+
+    filtered = agent_module._filter_evidence_chunks(
+        "Compara estrategias de sostenibilidad energética urbana.",
+        chunks,
+    )
+
+    assert filtered == []
+
+
+@pytest.mark.parametrize("question", [
+    "Compare la evidencia relevante para esta decisión técnica.",
+    "Compare evidence for this biomedical intervention.",
+    "Evalúa la evidencia estratigráfica de esta formación geológica.",
+    "Evalúa las interpretaciones históricas propuestas.",
+    "Compare the economic estimates reported by the studies.",
+    "Contrasta la interpretación jurídica presentada por las fuentes.",
+])
+def test_semantic_filter_works_without_domain_specific_rules(question):
+    chunks = [
+        {
+            "text": "A microturbina hidráulica produces 2.0 kW from a natural water flow.",
+            "filename": "FP370.pdf",
+            "page": 2,
+            "relevance_score": 0.08,
+            "confidence": 100,
+        },
+        {
+            "text": "The wind tunnel contraction produces a uniform air stream with reduced turbulence.",
+            "filename": "wind-tunnel.pdf",
+            "page": 2,
+            "relevance_score": 0.12,
+            "confidence": 95,
+        },
+        {
+            "text": "Electrolysis is used to disinfect drinking water in rural communities.",
+            "filename": "electrolysis.pdf",
+            "page": 2,
+            "relevance_score": 0.18,
+            "confidence": 92,
+        },
+        {
+            "text": "A twin-entry radial turbine model represents turbocharger response under pulsating exhaust flow.",
+            "filename": "turbocharger-turbine.pdf",
+            "page": 7,
+            "relevance_score": 0.84,
+            "confidence": 5,
+        },
+    ]
+
+    filtered = agent_module._filter_evidence_chunks(question, chunks)
+
+    assert [chunk["filename"] for chunk in filtered] == ["turbocharger-turbine.pdf"]
+
+
+def test_coverage_guide_uses_dynamic_facets():
+    question = "Consulta compleja"
+    chunks = [
+        {
+            "text": "Evidence for the first requested facet.",
+            "filename": "first.pdf",
+            "page": 4,
+            "facet_ids": ["F1"],
+            "facet_queries": {"F1": "first requested facet"},
+            "requested_facets": {"F1": "first requested facet", "F2": "second requested facet"},
+        },
+    ]
+
+    guide = agent_module._build_evidence_coverage_guide(question, chunks)
+
+    assert "first requested facet" in guide
+    assert "second requested facet" in guide
+    assert "Sin evidencia recuperada: second requested facet" in guide
+
+
+def test_research_pipeline_has_no_evidence_list_fallback():
+    assert not hasattr(agent_module, "_build_evidence_only_fallback")
+
+
+def test_research_pipeline_keeps_only_audited_evidence_and_never_dumps_facets(
+    mock_llm_client,
+    mock_retriever,
+):
+    question = (
+        "Compara múltiples documentos para diseñar un motor de gasolina con VVT, turboalimentación, tumble, "
+        "admisión y torque plano. Redacta con las secciones: Objetivos de Diseño, Evidencia Encontrada, "
+        "Análisis Técnico, Especificaciones Propuestas y Conclusiones."
+    )
+    mock_retriever.return_value = [
+        {
+            "text": "A microturbina hidráulica produces power from water flow.",
+            "filename": "FP370.pdf",
+            "document_id": "hydro",
+            "page": 2,
+            "relevance_score": 0.08,
+            "confidence": 100,
+        },
+        {
+            "text": "Electrolysis disinfects drinking water in rural communities.",
+            "filename": "electrolysis.pdf",
+            "document_id": "water",
+            "page": 2,
+            "relevance_score": 0.12,
+            "confidence": 96,
+        },
+        {
+            "text": "A low-inertia turbocharger improves boost response in a gasoline engine.",
+            "filename": "turbo.pdf",
+            "document_id": "turbo",
+            "page": 5,
+            "relevance_score": 0.85,
+            "confidence": 3,
+            "facet_ids": ["F1"],
+            "facet_queries": {"F1": "research facet"},
+            "requested_facets": {"F1": "research facet"},
+        },
+    ]
+    mock_llm_client.invoke.return_value = MagicMock(
+        content="Propongo valores de diseño sin identificadores de fuente."
+    )
+
+    result = generate_answer(question, "user123")
+
+    assert [source["filename"] for source in result["sources"]] == ["turbo.pdf"]
+    assert "research facet" not in result["answer"]
+    assert "contiene evidencia recuperada sobre" not in result["answer"]
+    assert "FP370.pdf" not in result["answer"]
+    assert mock_llm_client.invoke.call_count == 3
+
+
+def test_source_payload_preserves_precise_table_location_and_semantic_metadata():
+    source = agent_module._source_payload(
+        {
+            "source_id": "D1",
+            "text": "The simulation results report a 24% reduction in energy demand.",
+            "filename": "model.pdf",
+            "document_id": "doc-1",
+            "page": 9,
+            "section": "Results",
+            "chunk_type": "table",
+            "table_index": 1,
+            "score": 0.9,
+        }
+    )
+
+    assert source["location"] == "Pagina 9, seccion Results, tabla 2"
+    assert "tabla 2" in source["citation"]
+    assert source["relevance_score"] == 0.9
+    assert "evidence_type" not in source
+
+
+def test_evidence_review_flags_uncited_claim_and_failed_entailment(monkeypatch):
+    sources = [
+        {
+            "source_id": "D1",
+            "filename": "water.pdf",
+            "page": 3,
+            "text": "Water treatment reduced freshwater demand in the evaluated community.",
+        }
+    ]
+    answer = (
+        "El tratamiento redujo la demanda de agua en la comunidad [D1]. "
+        "También mejoró la calidad del aire y el desempeño energético urbano [D1]. "
+        "La intervención presenta resultados aplicables a otras ciudades."
+    )
+
+    monkeypatch.setattr(
+        agent_module,
+        "_nli_scores",
+        lambda _premise, hypothesis: (
+            {"entailment": 0.2, "neutral": 0.7, "contradiction": 0.1}
+            if "aire" in hypothesis
+            else {"entailment": 0.9, "neutral": 0.08, "contradiction": 0.02}
+        ),
+    )
+    issues = agent_module._answer_evidence_issues(answer, sources, verify_entailment=True)
+
+    assert any("no tienen una cita inmediata" in issue for issue in issues)
+    assert any("entailment=0.20" in issue for issue in issues)
+
+
+def test_evidence_review_rejects_numeric_values_missing_from_cited_source():
+    issues = agent_module._answer_evidence_issues(
+        "La intervención alcanzó una eficiencia de 92% en la evaluación [D1].",
+        [
+            {
+                "source_id": "D1",
+                "filename": "study.pdf",
+                "page": 4,
+                "text": "The evaluated intervention reached an efficiency of 81%.",
+            }
+        ],
+    )
+
+    assert any("92%" in issue for issue in issues)
+
+
+def test_simple_and_quick_routes_do_not_invoke_research_planner(mock_llm_client, mock_retriever):
+    mock_retriever.return_value = [
+        {
+            "text": "The document reports the requested finding.",
+            "filename": "study.pdf",
+            "page": 1,
+            "score": 0.9,
+        }
+    ]
+    mock_llm_client.invoke.return_value = MagicMock(content="Hallazgo verificado [D1].")
+
+    with patch("app.rag.agent.build_research_plan") as planner, patch(
+        "app.rag.agent._nli_scores"
+    ) as nli_scores:
+        generate_answer("Identifica el hallazgo principal.", "user123", routing_mode="auto")
+        generate_answer("Resume el contenido.", "user123", routing_mode="quick")
+
+    planner.assert_not_called()
+    nli_scores.assert_not_called()
+
+
+def test_research_route_invokes_planner_once(mock_llm_client, mock_retriever):
+    plan = agent_module.ResearchPlan(
+        main_question="Compare the evidence",
+        facets=["method evidence", "result evidence"],
+    )
+    mock_retriever.return_value = [
+        {
+            "text": "The first study reports a result.",
+            "filename": "study.pdf",
+            "document_id": "doc-1",
+            "page": 1,
+            "score": 0.9,
+            "facet_ids": ["F1", "F2"],
+            "facet_queries": {"F1": "method evidence", "F2": "result evidence"},
+            "requested_facets": {"F1": "method evidence", "F2": "result evidence"},
+        }
+    ]
+    mock_llm_client.invoke.return_value = MagicMock(content="Resultado respaldado [D1].")
+
+    with patch("app.rag.agent.build_research_plan", return_value=plan) as planner, patch(
+        "app.rag.agent._nli_scores",
+        return_value={"entailment": 0.9, "neutral": 0.08, "contradiction": 0.02},
+    ):
+        generate_answer("Compara las metodologías de múltiples estudios.", "user123")
+
+    planner.assert_called_once()
 
 
 def test_load_global_style_reference_from_named_file(tmp_path, monkeypatch):
@@ -366,7 +672,7 @@ def test_grounded_react_parser_finishes_substantive_plain_text():
     assert parsed.return_values["output"] == draft
 
 
-def test_final_synthesis_retries_when_comparison_cites_too_few_documents(monkeypatch):
+def test_final_synthesis_does_not_force_irrelevant_document_quota(monkeypatch):
     raw_sources = [
         {
             "source_id": f"D{index}",
@@ -375,6 +681,10 @@ def test_final_synthesis_retries_when_comparison_cites_too_few_documents(monkeyp
             "filename": f"study-{index}.pdf",
             "page": index,
             "text": f"Verified finding from study {index} about urban environmental performance.",
+            "score": 0.9,
+            "facet_ids": [f"F{index}"],
+            "facet_queries": {f"F{index}": f"facet {index}"},
+            "requested_facets": {f"F{facet}": f"facet {facet}" for facet in range(1, 6)},
         }
         for index in range(1, 6)
     ]
@@ -396,12 +706,11 @@ def test_final_synthesis_retries_when_comparison_cites_too_few_documents(monkeyp
         draft_answer="Borrador anclado exclusivamente en [D1] y [D2].",
     )
 
-    assert "[D5]" in answer
-    assert llm.invoke.call_count == 2
+    assert answer == "Primera síntesis limitada [D1] [D2]."
+    assert llm.invoke.call_count == 1
     first_prompt = llm.invoke.call_args_list[0].args[0][0].content
-    second_prompt = llm.invoke.call_args_list[1].args[0][0].content
     assert "Borrador anclado" not in first_prompt
-    assert "mínimo de 5 documentos" in second_prompt
+    assert "mínimo de 5 documentos" not in first_prompt
 
 
 def test_agent_context_places_distinct_documents_before_repeated_chunks():

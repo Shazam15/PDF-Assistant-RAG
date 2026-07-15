@@ -18,7 +18,7 @@ _embedding_model = None
 def get_embedding_model() -> HuggingFaceEmbeddings:
     """
     Get or create the embedding model (singleton).
-    Uses sentence-transformers/all-MiniLM-L6-v2 — lightweight 384-dim model.
+    Uses a multilingual E5 retrieval model with query/passage prefixes.
     """
     global _embedding_model
 
@@ -26,7 +26,7 @@ def get_embedding_model() -> HuggingFaceEmbeddings:
         logger.info(f"Loading embedding model: {settings.EMBEDDING_MODEL}")
         _embedding_model = HuggingFaceEmbeddings(
             model_name=settings.EMBEDDING_MODEL,
-            model_kwargs={"device": "cpu"},
+            model_kwargs={"device": settings.EMBEDDING_DEVICE},
             encode_kwargs={"normalize_embeddings": True, "batch_size": 32},
         )
         logger.info("Embedding model loaded successfully")
@@ -37,9 +37,10 @@ def get_embedding_model() -> HuggingFaceEmbeddings:
 def embed_texts(texts: List[str]) -> List[List[float]]:
     """Embed a batch of texts into vectors."""
     model = get_embedding_model()
+    passages = [_passage_text(text) for text in texts]
     return trace_call(
         "embed_texts",
-        lambda: model.embed_documents(texts),
+        lambda: model.embed_documents(passages),
         run_type="embedding",
         metadata={
             "embedding_model": settings.EMBEDDING_MODEL,
@@ -53,10 +54,34 @@ def embed_query(query: str) -> List[float]:
     model = get_embedding_model()
     return trace_call(
         "embed_query",
-        lambda: model.embed_query(query),
+        lambda: model.embed_query(_query_text(query)),
         run_type="embedding",
         metadata={
             "embedding_model": settings.EMBEDDING_MODEL,
             "query_length": len(query),
         },
     )
+
+
+def _is_e5_model() -> bool:
+    return "e5" in settings.EMBEDDING_MODEL.lower()
+
+
+def _passage_text(text: str) -> str:
+    return f"passage: {text}" if _is_e5_model() else text
+
+
+def _query_text(query: str) -> str:
+    if _is_e5_model():
+        return f"query: {query}"
+    if "qwen3-embedding" in settings.EMBEDDING_MODEL.lower():
+        return (
+            "Instruct: Retrieve passages that provide direct evidence for the research question.\n"
+            f"Query: {query}"
+        )
+    return query
+
+
+def release_embedding_model() -> None:
+    global _embedding_model
+    _embedding_model = None

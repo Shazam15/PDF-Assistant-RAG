@@ -1,8 +1,9 @@
-.PHONY: dev-backend dev-frontend dev test lint format install install-backend install-frontend build clean docker-up docker-down docker-logs help
+.PHONY: dev-backend dev-frontend dev test migrate lint format install install-backend install-frontend build clean docker-up docker-down docker-logs help
 
 BACKEND_DIR = backend
 FRONTEND_DIR = frontend
 BACKEND_PORT ?= 7860
+PYTHON ?= python3.11
 
 help:
 	@echo "Usage:"
@@ -10,6 +11,7 @@ help:
 	@echo "  make dev-frontend    Start Next.js dev server on port 3000"
 	@echo "  make dev             Start both backend and frontend concurrently"
 	@echo "  make test            Run pytest"
+	@echo "  make migrate         Apply database migrations"
 	@echo "  make lint            Run flake8 (backend) + eslint (frontend)"
 	@echo "  make format          Auto-format Python with black (backend)"
 	@echo "  make install         Install all dependencies (backend + frontend)"
@@ -22,7 +24,7 @@ help:
 	@echo "  make docker-logs     Tail Docker logs"
 
 dev-backend:
-	cd $(BACKEND_DIR) && uvicorn app.main:app --host 0.0.0.0 --port $(BACKEND_PORT) --reload
+	cd $(BACKEND_DIR) && $(PYTHON) -m uvicorn app.main:app --host 0.0.0.0 --port $(BACKEND_PORT) --reload
 
 dev-frontend:
 	cd $(FRONTEND_DIR) && npm run dev
@@ -34,19 +36,22 @@ dev:
 		"$(MAKE) dev-frontend"
 
 test:
-	cd $(BACKEND_DIR) && python -m pytest -v
+	cd $(BACKEND_DIR) && $(PYTHON) -m pytest -v
+
+migrate:
+	cd $(BACKEND_DIR) && $(PYTHON) -c "from app.database import init_db; init_db()" && $(PYTHON) -m alembic upgrade head
 
 lint:
-	cd $(BACKEND_DIR) && flake8 .
+	cd $(BACKEND_DIR) && $(PYTHON) -m flake8 .
 	cd $(FRONTEND_DIR) && npm run lint
 
 format:
-	cd $(BACKEND_DIR) && black .
+	cd $(BACKEND_DIR) && $(PYTHON) -m black .
 
 install: install-backend install-frontend
 
 install-backend:
-	pip install -r $(BACKEND_DIR)/requirements.txt
+	$(PYTHON) -m pip install -r $(BACKEND_DIR)/requirements.txt
 
 install-frontend:
 	cd $(FRONTEND_DIR) && npm install

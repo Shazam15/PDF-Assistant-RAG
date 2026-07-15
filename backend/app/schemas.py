@@ -296,6 +296,8 @@ class SourceChunk(BaseModel):
     text: str
     filename: str
     page: int
+    page_start: Optional[int] = None
+    page_end: Optional[int] = None
     score: float
     confidence: float
     source_type: str = "document"
@@ -306,6 +308,8 @@ class SourceChunk(BaseModel):
     bbox: Optional[str] = None
     citation: Optional[str] = None
     highlightRects: Optional[List[dict]] = None
+    section: Optional[str] = None
+    location: Optional[str] = None
 
 
 class ChatResponse(BaseModel):

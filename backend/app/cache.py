@@ -15,6 +15,8 @@ import logging
 import os
 from typing import Any, Optional
 
+from app.config import get_settings
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -24,7 +26,18 @@ logger = logging.getLogger(__name__)
 CACHE_TTL: int = int(os.getenv("CACHE_TTL", "3600"))  # seconds; default 1 hour
 REDIS_URL: Optional[str] = os.getenv("REDIS_URL", None)
 LRU_MAX_SIZE: int = int(os.getenv("CACHE_LRU_MAX_SIZE", "128"))
-ROUTER_CACHE_VERSION = "adaptive-v1"
+ROUTER_CACHE_VERSION = "evidence-agent-v2"
+_settings = get_settings()
+PIPELINE_CACHE_FINGERPRINT = ":".join(
+    (
+        _settings.EMBEDDING_INDEX_VERSION,
+        _settings.RERANKER_MODEL,
+        _settings.RETRIEVAL_PLANNER_VERSION,
+        _settings.NLI_VERIFIER_VERSION,
+        _settings.RESEARCH_PIPELINE_VERSION,
+        _settings.MODEL_PROFILE,
+    )
+)
 
 # ---------------------------------------------------------------------------
 # Redis client (lazy init — only created when REDIS_URL is set)
@@ -141,7 +154,7 @@ def make_cache_key(
     - Safe for Redis keys and dict keys
     """
     raw = (
-        f"{ROUTER_CACHE_VERSION}:{routing_mode}:{user_id}:{document_id}:"
+        f"{ROUTER_CACHE_VERSION}:{PIPELINE_CACHE_FINGERPRINT}:{routing_mode}:{user_id}:{document_id}:"
         f"{top_k or ''}:{question.strip().lower()}"
     )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()

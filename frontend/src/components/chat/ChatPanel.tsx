@@ -79,6 +79,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
   const MAX_CHARACTERS = 2000;
   const [isRecording, setIsRecording] = useState(false);
   const [speechError, setSpeechError] = useState<string | null>(null);
+  const [researchProgress, setResearchProgress] = useState<string | null>(null);
   
   // New State for Keyboard Shortcuts Help Modal
   const [showHelpModal, setShowHelpModal] = useState(false);
@@ -211,6 +212,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
 
     setStreaming(true);
     setIsTyping(true);
+    setResearchProgress(null);
 
     try {
       // Try WebSocket first for real-time source and answer streaming.
@@ -256,7 +258,13 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
           if (activeRequestIdRef.current !== requestId) return;
           try {
             const event = JSON.parse(ev.data);
-            if (event.type === "token") {
+            if (event.type === "progress") {
+              const progress = event.data as { stage?: string; facets_completed?: number; facets_total?: number };
+              const coverage = progress.facets_total
+                ? ` ${progress.facets_completed ?? 0}/${progress.facets_total}`
+                : "";
+              setResearchProgress(`${progress.stage ?? "researching"}${coverage}`);
+            } else if (event.type === "token") {
               if (!assistantCreated) {
                 assistantCreated = true;
                 setIsTyping(false);
@@ -285,6 +293,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
               reject(new Error(String(event.data)));
             } else if (event.type === "done") {
               completed = true;
+              setResearchProgress(null);
               setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, isStreaming: false } : m)));
               ws.close();
               resolve();
@@ -338,7 +347,13 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
 
         for await (const event of stream) {
           if (activeRequestIdRef.current !== requestId) break;
-          if (event.type === "token") {
+          if (event.type === "progress") {
+            const progress = event.data as { stage?: string; facets_completed?: number; facets_total?: number };
+            const coverage = progress.facets_total
+              ? ` ${progress.facets_completed ?? 0}/${progress.facets_total}`
+              : "";
+            setResearchProgress(`${progress.stage ?? "researching"}${coverage}`);
+          } else if (event.type === "token") {
             if (!assistantCreated) {
               assistantCreated = true;
               setIsTyping(false);
@@ -364,12 +379,14 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
             setIsTyping(false);
             setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content: `Error: ${event.data}`, isStreaming: false } : m)));
           } else if (event.type === "done") {
+            setResearchProgress(null);
             setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, isStreaming: false } : m)));
           }
         }
       } catch (err2) {
         if (activeRequestIdRef.current !== requestId) return;
         setIsTyping(false);
+        setResearchProgress(null);
         setMessages((prev) =>
           prev.map((m) =>
             m.id === assistantId
@@ -424,6 +441,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
     activeQuestionRef.current = "";
     setStreaming(false);
     setIsTyping(false);
+    setResearchProgress(null);
     window.setTimeout(() => textareaRef.current?.focus(), 0);
   };
 
@@ -663,10 +681,13 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
               </div>
             ))}
             {isTyping && (
-              <div className="flex items-center gap-1 ml-10 py-2">
+              <div className="flex items-center gap-2 ml-10 py-2 text-xs text-muted-foreground">
+                {researchProgress && <span>{researchProgress}</span>}
+                <div className="flex items-center gap-1">
                 <span className="w-2 h-2 rounded-full bg-muted-foreground animate-bounce [animation-delay:-0.3s]" />
                 <span className="w-2 h-2 rounded-full bg-muted-foreground animate-bounce [animation-delay:-0.15s]" />
                 <span className="w-2 h-2 rounded-full bg-muted-foreground animate-bounce" />
+                </div>
               </div>
             )}
           </div>

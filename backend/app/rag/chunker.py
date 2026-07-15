@@ -20,6 +20,71 @@ CODE_EXTENSIONS = {"py", "js", "ts", "tsx", "java", "cpp", "c", "cs", "go", "rs"
 OCR_MIN_TEXT_CHARS_PER_PAGE = 40
 
 
+def _token_length(text: str) -> int:
+    """Fast model-independent token estimate used to bound retrieval context."""
+    return len(re.findall(r"\w+|[^\w\s]", text or "", flags=re.UNICODE))
+
+
+def _heading_candidate(text: str) -> str | None:
+    """Detect layout-neutral section headings without domain vocabularies."""
+    first_line = next((line.strip() for line in (text or "").splitlines() if line.strip()), "")
+    if not first_line or len(first_line) > 120 or len(first_line.split()) > 14:
+        return None
+    numbered = bool(re.match(r"^(?:\d+(?:\.\d+)*|[IVXLC]+)[.)]?\s+", first_line, re.IGNORECASE))
+    upper = any(char.isalpha() for char in first_line) and first_line.upper() == first_line
+    title = first_line.istitle() and not first_line.endswith(('.', ';', ':'))
+    return first_line if numbered or upper or title else None
+
+
+def _annotate_hierarchy(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Attach section and parent context while keeping child chunks as retrieval units."""
+    if not chunks:
+        return chunks
+
+    section_number = 0
+    parent_number = 0
+    current_section = "Document"
+    current_parent: List[Dict[str, Any]] = []
+    current_parent_tokens = 0
+
+    def flush_parent() -> None:
+        nonlocal parent_number, current_parent, current_parent_tokens
+        if not current_parent:
+            return
+        parent_id = f"P{parent_number}"
+        parent_text = "\n\n".join(str(item.get("text") or "").strip() for item in current_parent).strip()
+        page_start = min(int(item.get("page") or 1) for item in current_parent)
+        page_end = max(int(item.get("page") or 1) for item in current_parent)
+        for item in current_parent:
+            item["parent_id"] = parent_id
+            item["parent_text"] = parent_text
+            item["page_start"] = page_start
+            item["page_end"] = page_end
+        parent_number += 1
+        current_parent = []
+        current_parent_tokens = 0
+
+    for chunk in chunks:
+        heading = _heading_candidate(str(chunk.get("text") or ""))
+        if heading and heading != current_section:
+            flush_parent()
+            current_section = heading
+            section_number += 1
+
+        chunk_tokens = _token_length(str(chunk.get("text") or ""))
+        if current_parent and current_parent_tokens + chunk_tokens > settings.PARENT_CHUNK_SIZE:
+            flush_parent()
+        chunk["section_id"] = f"S{section_number}"
+        chunk["section_title"] = current_section
+        chunk["section"] = current_section
+        chunk["token_count"] = chunk_tokens
+        current_parent.append(chunk)
+        current_parent_tokens += chunk_tokens
+
+    flush_parent()
+    return chunks
+
+
 def _is_word_inside_bbox(word: Dict[str, Any], bbox: tuple) -> bool:
     """Return True when the word center falls inside a pdfplumber bbox."""
     x0, top, x1, bottom = bbox
@@ -164,6 +229,14 @@ def extract_pdf(filepath: str) -> List[Dict[str, Any]]:
     with PDF_USE_UNSTRUCTURED=true for advanced table extraction, but it is not
     the default because its native PDF stack can crash worker processes.
     """
+    if settings.PDF_USE_DOCLING:
+        try:
+            result = extract_pdf_with_docling(filepath)
+            if result:
+                return _merge_ocr_for_sparse_pages(filepath, result)
+        except Exception as exc:
+            logger.warning("Docling extraction failed, falling back: %s", exc)
+
     if settings.PDF_USE_UNSTRUCTURED:
         try:
             result = extract_pdf_with_unstructured(filepath)
@@ -199,6 +272,54 @@ def extract_pdf(filepath: str) -> List[Dict[str, Any]]:
     # If all extraction methods fail, return empty list
     logger.error(f"Could not extract text from {filepath} using any method")
     return []
+
+
+def extract_pdf_with_docling(filepath: str) -> List[Dict[str, Any]]:
+    """Extract layout elements with Docling while retaining page provenance."""
+    try:
+        from docling.document_converter import DocumentConverter
+    except Exception as exc:
+        raise ImportError("docling not available") from exc
+
+    conversion = DocumentConverter().convert(filepath)
+    document = conversion.document
+    pages: List[Dict[str, Any]] = []
+    table_index = 0
+
+    for item, _level in document.iterate_items():
+        provenance = list(getattr(item, "prov", None) or [])
+        page = int(getattr(provenance[0], "page_no", 1) or 1) if provenance else 1
+        label = str(getattr(item, "label", "text")).lower()
+        chunk_type = "table" if "table" in label else "text"
+        text = str(getattr(item, "text", "") or "").strip()
+        if chunk_type == "table" and hasattr(item, "export_to_markdown"):
+            try:
+                text = str(item.export_to_markdown(document)).strip()
+            except Exception:
+                pass
+        if not text:
+            continue
+
+        payload: Dict[str, Any] = {
+            "text": text,
+            "page": page,
+            "chunk_type": chunk_type,
+            "docling_label": label,
+        }
+        if chunk_type == "table":
+            payload["table_index"] = table_index
+            table_index += 1
+        if provenance:
+            bbox = getattr(provenance[0], "bbox", None)
+            if bbox is not None:
+                coords = [
+                    getattr(bbox, key, None)
+                    for key in ("l", "t", "r", "b")
+                ]
+                if all(value is not None for value in coords):
+                    payload["bbox"] = json.dumps(coords)
+        pages.append(payload)
+    return pages
 
 
 def extract_pdf_with_pymupdf(filepath: str) -> List[Dict[str, Any]]:
@@ -578,7 +699,7 @@ def chunk_document(filepath: str, chunk_size: int = None, chunk_overlap: int = N
         chunk_size=chunk_size, # Allow custom chunk size to be passed in for embedding
         chunk_overlap=chunk_overlap, # Allow custom chunk overlap to be passed in for embedding
         separators=["\n\n", "\n", ". ", " ", ""],
-        length_function=len,
+        length_function=_token_length,
     )
 
     all_chunks = []
@@ -715,7 +836,7 @@ def chunk_document(filepath: str, chunk_size: int = None, chunk_overlap: int = N
         if pdf_doc:
             pdf_doc.close()
 
-    return all_chunks
+    return _annotate_hierarchy(all_chunks)
 
 
 def get_page_count(filepath: str) -> int:
