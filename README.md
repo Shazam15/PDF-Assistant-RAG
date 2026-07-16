@@ -20,6 +20,7 @@
 ### AI Text and Language Assistant
 
 <br/>
+</div>
 
 ATLAS es un asistente de investigación académica basado en recuperación aumentada por generación (RAG). Permite cargar documentos, procesarlos, conversar con un documento seleccionado o investigar sobre todo el corpus, y producir respuestas trazables con citas de página, sección, tabla o figura.
 
