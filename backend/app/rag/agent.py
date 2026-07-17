@@ -74,7 +74,7 @@ class GroundedReActOutputParser(ReActSingleInputOutputParser):
 def get_llm_client(hf_token: Optional[str] = None, max_tokens: Optional[int] = None):
     """Create an Ollama client (hf_token ignored, kept for compatibility)."""
     return ChatOllama(
-        model=settings.LLM_MODEL, 
+        model=settings.LLM_MODEL,
         temperature=0,
         num_ctx=settings.LLM_CONTEXT_WINDOW,
         num_predict=max_tokens or settings.LLM_MAX_NEW_TOKENS,

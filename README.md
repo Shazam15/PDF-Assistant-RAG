@@ -434,6 +434,7 @@ cd backend
 
 El worker debe recibir la misma configuración de base de datos, modelos, almacenamiento y perfil que el backend.
 
+
 ## Variables principales
 
 | Variable | Valor local | Valor de investigación | Propósito |
