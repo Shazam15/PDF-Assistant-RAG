@@ -155,6 +155,7 @@ class Settings(BaseSettings):
     LLM_MAX_NEW_TOKENS: int = 4096
     LLM_TEMPERATURE: float = 0.3
     LLM_REQUEST_TIMEOUT_SECONDS: int = 90
+    LLM_DISABLE_THINKING: bool = False
     AGENT_PLANNER_MAX_TOKENS: int = 768
     AGENT_SYNTHESIS_MAX_TOKENS: int = 2048
     AGENT_MAX_ITERATIONS: int = 4  # Three research steps plus one mandatory final synthesis
@@ -218,12 +219,18 @@ class Settings(BaseSettings):
                 self.RERANKER_DEVICE = "cuda"
             if "EMBEDDING_BATCH_SIZE" not in self.model_fields_set:
                 self.EMBEDDING_BATCH_SIZE = 64
-            self.EMBEDDING_MODEL = "Qwen/Qwen3-Embedding-0.6B"
-            self.EMBEDDING_DIMENSION = 1024
-            self.EMBEDDING_INDEX_VERSION = "hierarchical-qwen3-1024-v1"
-            self.RERANKER_MODEL = "Qwen/Qwen3-Reranker-0.6B"
-            self.LLM_MODEL = "qwen3:30b-a3b"
-            self.LLM_CONTEXT_WINDOW = max(self.LLM_CONTEXT_WINDOW, 32768)
+            if "EMBEDDING_MODEL" not in self.model_fields_set:
+                self.EMBEDDING_MODEL = "Qwen/Qwen3-Embedding-0.6B"
+            if "EMBEDDING_DIMENSION" not in self.model_fields_set:
+                self.EMBEDDING_DIMENSION = 1024
+            if "EMBEDDING_INDEX_VERSION" not in self.model_fields_set:
+                self.EMBEDDING_INDEX_VERSION = "hierarchical-qwen3-1024-v1"
+            if "RERANKER_MODEL" not in self.model_fields_set:
+                self.RERANKER_MODEL = "Qwen/Qwen3-Reranker-0.6B"
+            if "LLM_MODEL" not in self.model_fields_set:
+                self.LLM_MODEL = "qwen3:30b-a3b"
+            if "LLM_CONTEXT_WINDOW" not in self.model_fields_set:
+                self.LLM_CONTEXT_WINDOW = 32768
             self.RETRIEVAL_PLANNER_VERSION = "research-brief-qwen3-v1"
         elif profile not in {"local", "custom"}:
             raise ValueError("MODEL_PROFILE must be local, custom, or research_gpu")

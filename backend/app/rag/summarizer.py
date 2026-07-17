@@ -136,8 +136,11 @@ def build_document_memory(chunks: List[Dict[str, Any]], use_llm: bool = True) ->
                 num_predict=min(1200, settings.LLM_MAX_NEW_TOKENS),
             )
             structured = llm.with_structured_output(DocumentMemoryDraft, method="json_mode")
+            no_think = "/no_think\n" if settings.LLM_DISABLE_THINKING else ""
             draft = structured.invoke([
                 SystemMessage(content=(
+                    no_think
+                    +
                     "Build a neutral document memory from the supplied chunks. Summarize scope, methodology, "
                     "findings, and limitations only when visible. Evidence kinds may be method, result, limitation, "
                     "definition, or context. Every exact_quote must be copied verbatim from its referenced chunk. "

@@ -82,6 +82,12 @@ def get_llm_client(hf_token: Optional[str] = None, max_tokens: Optional[int] = N
     )
 
 
+def _structured_system_prompt(instruction: str) -> str:
+    """Disable free-form thinking only for schema-constrained model calls."""
+    prefix = "/no_think\n" if settings.LLM_DISABLE_THINKING else ""
+    return prefix + instruction
+
+
 def _format_chat_history(messages: List[Dict[str, str]]) -> str:
     if not messages:
         return ""
@@ -1694,7 +1700,7 @@ def _audit_research_coverage(brief: ResearchBrief, evidence: List[Dict[str, Any]
 
         judge = get_llm_client(max_tokens=768).with_structured_output(_CoverageAudit, method="json_mode")
         audit = judge.invoke([
-            SystemMessage(content=(
+            SystemMessage(content=_structured_system_prompt(
                 "Audit whether the retrieved excerpts contain direct, usable evidence for each numbered facet. "
                 "Do not answer the research question and do not infer missing facts. Mark a facet supported only "
                 "when at least one excerpt addresses it substantively. Also return the numbers of every excerpt "
@@ -1749,7 +1755,7 @@ def _semantic_claim_issues(
 
         judge = get_llm_client(max_tokens=900).with_structured_output(_ClaimAudit, method="json_mode")
         audit = judge.invoke([
-            SystemMessage(content=(
+            SystemMessage(content=_structured_system_prompt(
                 "Audit claim-to-evidence fidelity. A direct claim must be entailed by its cited excerpt. A bounded "
                 "cross-source inference is acceptable only when explicitly labeled as an inference and all premises "
                 "are cited. Copy problematic answer sentences exactly. Do not criticize style or missing topics."

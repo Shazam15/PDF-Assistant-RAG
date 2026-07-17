@@ -151,9 +151,12 @@ def build_research_plan(query: str) -> ResearchBrief:
         # grammars. JSON mode still constrains generation to JSON, while the
         # Pydantic parser validates and normalizes the resulting object.
         planner = llm.with_structured_output(ResearchBrief, method="json_mode")
+        no_think = "/no_think\n" if settings.LLM_DISABLE_THINKING else ""
         plan = planner.invoke([
             SystemMessage(
                 content=(
+                    no_think
+                    +
                     "Convert the request into a research brief. Separate the substantive question, evidence facets, "
                     "requested deliverables, and evidence constraints. Preserve the user's language. Create no more "
                     "than six atomic facets. A facet must be a question answerable from document content; formatting, "

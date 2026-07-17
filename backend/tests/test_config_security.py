@@ -15,6 +15,8 @@ def test_research_gpu_uses_cpu_for_embeddings_and_respects_device_overrides():
         MODEL_PROFILE="research_gpu",
         RERANKER_DEVICE="cpu",
         EMBEDDING_BATCH_SIZE=16,
+        LLM_MODEL="qwen3:14b-q4_K_M",
+        LLM_CONTEXT_WINDOW=8192,
     )
 
     assert defaults.EMBEDDING_DEVICE == "cpu"
@@ -22,3 +24,5 @@ def test_research_gpu_uses_cpu_for_embeddings_and_respects_device_overrides():
     assert defaults.EMBEDDING_BATCH_SIZE == 64
     assert overridden.RERANKER_DEVICE == "cpu"
     assert overridden.EMBEDDING_BATCH_SIZE == 16
+    assert overridden.LLM_MODEL == "qwen3:14b-q4_K_M"
+    assert overridden.LLM_CONTEXT_WINDOW == 8192

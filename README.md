@@ -342,6 +342,42 @@ nvidia-smi
 ollama list
 ```
 
+### Tesla T4 y Qwen3-14B
+
+Una Tesla T4 de 16 GB debe reservar CUDA para Ollama. El reranker y los embeddings se ejecutan en CPU, el contexto se limita inicialmente a 8K y se usa la cuantización Q4:
+
+```bash
+ollama pull qwen3:14b-q4_K_M
+```
+
+```dotenv
+MODEL_PROFILE=custom
+DEVICE=cuda
+LLM_MODEL=qwen3:14b-q4_K_M
+LLM_CONTEXT_WINDOW=8192
+LLM_MAX_NEW_TOKENS=3072
+LLM_DISABLE_THINKING=True
+
+EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B
+EMBEDDING_DIMENSION=1024
+EMBEDDING_DEVICE=cpu
+EMBEDDING_BATCH_SIZE=32
+
+RERANKER_MODEL=Qwen/Qwen3-Reranker-0.6B
+RERANKER_DEVICE=cpu
+RERANK_MAX_LENGTH=1024
+
+AGENT_PLANNER_MAX_TOKENS=384
+AGENT_SYNTHESIS_MAX_TOKENS=2048
+RESEARCH_MAX_ROUNDS=1
+RESEARCH_SYNTHESIS_RESERVE_SECONDS=60
+RESEARCH_MAX_FACETS=5
+TOP_K_RETRIEVAL=30
+TOP_K_RERANK=12
+```
+
+`LLM_DISABLE_THINKING` afecta únicamente llamadas estructuradas de planificación, memoria y auditoría. La síntesis final y el ciclo de evidencia permanecen activos.
+
 ## Modelos grandes y configuración personalizada
 
 Para cambiar libremente todos los modelos utilice `MODEL_PROFILE=custom`. Esto evita que un perfil predeterminado sustituya la selección explícita.
