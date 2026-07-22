@@ -29,7 +29,7 @@ El sistema está diseñado para dos entornos:
 - Desarrollo local ligero con SQLite, Chroma y modelos multilingües pequeños.
 - Investigación en servidor con PostgreSQL 16, pgvector, CPU Intel y GPU NVIDIA.
 
-La arquitectura detallada está documentada en [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+La arquitectura detallada está documentada en [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) y el historial de versiones en [CHANGELOG.md](CHANGELOG.md).
 
 ## Capacidades
 
@@ -122,6 +122,7 @@ PDF-Assistant-RAG/
 ├── scripts/
 │   └── init_postgres.sql        # Extensiones de PostgreSQL
 ├── docs/ARCHITECTURE.md
+├── CHANGELOG.md
 ├── docker-compose.yml
 ├── Dockerfile
 ├── Makefile

@@ -4,6 +4,8 @@ Este documento describe la arquitectura vigente de ATLAS, un sistema RAG orienta
 
 La fuente de verdad para valores configurables es `backend/app/config.py`. Las versiones de modelos e índices forman parte de las claves de caché y de los metadatos del corpus.
 
+La versión pública actual de la API es `2.0.0`. Los cambios por versión y los hitos anteriores se registran en [`CHANGELOG.md`](../CHANGELOG.md).
+
 ## Objetivos arquitectónicos
 
 - Responder exclusivamente desde evidencia recuperada de los documentos seleccionados o cargados.
@@ -12,7 +14,7 @@ La fuente de verdad para valores configurables es `backend/app/config.py`. Las v
 - Recuperar información en español, inglés y otros idiomas sin vocabularios de dominio codificados.
 - Permitir investigación iterativa sin exponer cadena de pensamiento.
 - Conservar una ruta rápida para consultas directas y una ruta profunda para síntesis multifuente.
-- Operar en una Mac local mediante componentes ligeros y escalar a PostgreSQL, pgvector y modelos Qwen3 en una máquina NVIDIA.
+- Operar con perfiles reproducibles para desarrollo ligero, Mac con MPS, servidores NVIDIA y Windows/WSL2 con Ollama separado del backend.
 
 ## Vista general
 
@@ -63,9 +65,9 @@ flowchart LR
 | Persistencia | Usuarios, documentos, memoria, ejecuciones y conversaciones | SQLite local o PostgreSQL 16 en producción |
 | Procesamiento asíncrono | Ingesta fuera del ciclo HTTP | FastAPI BackgroundTasks o Celery + Redis |
 
-## Modos de ejecución
+## Perfiles de ejecución
 
-### Desarrollo local
+### Desarrollo local ligero
 
 El perfil `local` mantiene un consumo moderado de memoria:
 
@@ -77,6 +79,20 @@ El perfil `local` mantiene un consumo moderado de memoria:
 | Embeddings | `intfloat/multilingual-e5-small`, 384 dimensiones, CPU |
 | Reranker | `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`, CPU |
 | LLM | Modelo configurado en Ollama |
+
+### Mac con MPS
+
+El perfil `local_balanced` conserva el índice Qwen usado por los despliegues de investigación, pero limita lotes y memoria para una Mac M1 de 8 GB:
+
+| Función | Tecnología |
+| --- | --- |
+| Metadatos y conversaciones | SQLite |
+| Recuperación léxica | SQLite FTS5 |
+| Recuperación vectorial | ChromaDB |
+| Embeddings | `Qwen/Qwen3-Embedding-0.6B`, 1024 dimensiones, MPS, lote 4 |
+| Reranker | `Qwen/Qwen3-Reranker-0.6B`, CPU |
+| LLM | `qwen3:4b-instruct-2507-q4_K_M` mediante Ollama |
+| Extracción PDF recomendada | `fast`, con PyMuPDF y OCR selectivo |
 
 ### Producción NVIDIA
 
@@ -92,6 +108,22 @@ El perfil `research_gpu` selecciona automáticamente:
 | Planificador y redactor | `qwen3:30b-a3b` mediante Ollama |
 
 El embedding se mantiene en CPU y el reranker en CUDA. Antes de invocar el redactor se liberan los modelos de recuperación para reducir la presión sobre la VRAM.
+
+### Windows, WSL2 y Tesla T4
+
+El perfil `wsl_t4` separa la inferencia generativa del resto del pipeline:
+
+| Componente | Ubicación y configuración |
+| --- | --- |
+| Frontend y backend | Ubuntu en WSL2, ejecución nativa |
+| PostgreSQL 16 + pgvector | Único servicio obligatorio en Docker |
+| Ollama | Windows, accesible desde WSL mediante el gateway NAT |
+| LLM | `qwen3:14b-q4_K_M`, contexto 8192, Tesla T4 dedicada |
+| Embeddings | Qwen3-Embedding-0.6B, CPU, lote 64 |
+| Reranker y NLI | CPU Intel |
+| Paralelismo PyTorch | 28 hilos por defecto, configurable |
+
+`backend/app/rag/llm_client.py` centraliza `base_url`, timeout y `keep_alive` para todas las etapas que usan Ollama. `make doctor-wsl` valida el perfil, el modelo remoto, PostgreSQL y sus extensiones; `make dev-wsl` resuelve la dirección de Windows y ejecuta el diagnóstico antes de iniciar ATLAS.
 
 ## Modelo de datos
 
@@ -172,21 +204,25 @@ sequenceDiagram
     API->>DB: Create Document(status=pending)
     API->>Queue: Schedule ingestion
     Queue->>Extractor: Read original file
-    Extractor->>Extractor: Docling -> PyMuPDF/pdfplumber -> OCR fallback
+    Extractor->>Extractor: PyMuPDF inspection -> Docling when needed -> OCR fallback
     Extractor->>Extractor: Create child and parent chunks
     Queue->>Store: Persist embeddings and lexical index
+    Queue->>DB: Mark status=enriching, searchable_at set, progress=85%
+    API-->>UI: Document becomes selectable and queryable
     Queue->>Memory: Build profile, section summaries and evidence records
     Memory->>Memory: Reject quotes absent from literal chunk text
     Memory->>DB: Persist profile, sections and verified evidence
+    Queue->>Queue: Build graph and extract URLs
     Queue->>DB: Mark document ready
 ```
 
 ### Extracción
 
-1. Docling es el extractor principal de PDF y conserva elementos de layout, páginas y coordenadas.
-2. `pdfplumber` y PyMuPDF actúan como fallbacks para texto y tablas.
-3. OCR se ejecuta en páginas sin suficiente texto utilizable.
-4. DOCX, texto, Markdown y archivos de código usan extractores específicos.
+1. `PDF_EXTRACTION_MODE=fast` usa PyMuPDF y aplica OCR únicamente a páginas con texto insuficiente.
+2. `PDF_EXTRACTION_MODE=quality` usa Docling para preservar layout, tablas, páginas y coordenadas.
+3. En modo `auto`, PyMuPDF inspecciona primero el documento; Docling solo se activa ante páginas vacías o tablas detectadas.
+4. Si Docling falla, el pipeline intenta `unstructured` cuando está habilitado, `pdfplumber`, PyMuPDF y finalmente OCR completo.
+5. DOCX, texto, Markdown y archivos de código usan extractores específicos.
 
 ### Fragmentación jerárquica
 
@@ -208,6 +244,25 @@ Por cada documento se generan:
 - evidencias tipadas como método, resultado, limitación, definición o contexto.
 
 Una evidencia generada solo se guarda si `exact_quote` existe literalmente en el chunk indicado. La memoria mejora la selección del documento, pero nunca sustituye al fragmento como fuente verificable.
+
+### Disponibilidad y progreso
+
+La ingesta tiene una fase bloqueante y una fase de enriquecimiento. Tras persistir los índices vectorial y léxico, el documento pasa a `status=enriching`, recibe `searchable_at` y puede consultarse desde el 85%, aunque el resumen, la memoria y el grafo sigan procesándose. Un fallo posterior conserva el documento como `ready` con `processing_warning`.
+
+| Etapa | Progreso |
+| --- | --- |
+| `queued` | 0% |
+| `extracting` / layout / OCR | 5–25% |
+| `chunking` | 25–40% |
+| `embedding` | 40–80% |
+| `persisting` | 80–85% |
+| `searchable` | 85% |
+| `summarizing` | 85–92% |
+| `building_memory` | 92–96% |
+| `building_graph` | 96–99% |
+| `completed` o `completed_with_warnings` | 100% |
+
+El backend mantiene progreso monotónico, unidades procesadas y un heartbeat. El frontend consulta estos campos periódicamente y diferencia el progreso de subida del progreso de procesamiento.
 
 ## Enrutamiento adaptativo
 
@@ -292,7 +347,7 @@ El sistema no compara directamente distancia vectorial, puntuación FTS o logit 
 
 ## Agente de investigación
 
-`research_rag` ejecuta un `StateGraph` persistente y cancelable.
+`research_rag` ejecuta un `StateGraph` con estado explícito y cancelable. Al finalizar o detenerse, el estado resumido de la ejecución se conserva en `ResearchRun`; el grafo no expone cadena de pensamiento.
 
 ```mermaid
 stateDiagram-v2
@@ -337,11 +392,11 @@ El estado contiene, entre otros campos:
 9. Verificar citas, números e inferencias.
 10. Reparar una vez las afirmaciones problemáticas.
 
-El grafo tiene un presupuesto de 180 segundos. Las llamadas HTTP al LLM tienen un timeout de 90 segundos y la segunda mitad del presupuesto se reserva para síntesis. Si el límite vence después de recuperar evidencia, el sistema redacta la mejor respuesta verificable a partir del estado acumulado; no reemplaza el informe por una lista de chunks o facetas.
+Por defecto, el grafo tiene un presupuesto de 1800 segundos, cada llamada al LLM puede usar hasta 900 segundos y se reservan 600 segundos para síntesis y verificación. Estos valores son configurables hasta los máximos validados en `Settings`. Si el límite vence después de recuperar evidencia, el sistema redacta la mejor respuesta verificable a partir del estado acumulado; no reemplaza el informe por una lista de chunks o facetas.
 
 ## Fidelidad y citas
 
-Una respuesta de investigación debe contener argumento, comparación, conclusión y citas inmediatas. La validación aplica las siguientes reglas:
+Una respuesta de investigación debe contener argumento, comparación, conclusión y citas inmediatas. La ruta vigente combina comprobaciones deterministas con auditorías estructuradas mediante el LLM. El módulo NLI multilingüe permanece disponible para validaciones que lo activen, pero no es un requisito para `simple_rag`. La validación aplica las siguientes reglas:
 
 1. Cada identificador `[D#]` debe corresponder a una fuente recuperada.
 2. Las afirmaciones sustantivas deben tener una cita cercana.
@@ -453,6 +508,30 @@ flowchart TB
 
 El `Dockerfile` ejecuta `init_db`, aplica `alembic upgrade head` y luego inicia Uvicorn. `docker-compose.yml` ofrece perfiles `cpu` y `gpu`; ambos usan PostgreSQL en producción, mientras que `gpu` activa `MODEL_PROFILE=research_gpu`. Este perfil reserva la GPU NVIDIA para Ollama y el reranker, y ejecuta los embeddings en el CPU Intel con lotes de 64 para aprovechar la RAM del servidor. `CPU_THREADS=0` deja que PyTorch determine el paralelismo; puede fijarse explícitamente después de medir el servidor. Si CUDA no está disponible, el reranker cae a CPU sin impedir el arranque.
 
+Para el despliegue Windows/T4 recomendado, no se usan los contenedores de aplicación ni GPU: `docker compose up -d postgres` inicia únicamente PostgreSQL, mientras frontend y backend corren en WSL y Ollama corre en Windows. La T4 queda reservada para un solo modelo generativo; embeddings, reranking y NLI se ejecutan en CPU. La guía operativa completa está en la sección “Tesla T4 y Qwen3-14B” del `README.md`.
+
+### Topología Windows/WSL2/T4
+
+```mermaid
+flowchart LR
+    Browser["Navegador en Windows"]
+    Frontend["Next.js en WSL2"]
+    Backend["FastAPI en WSL2"]
+    Retrieval["Embeddings, reranker y NLI<br/>CPU Xeon"]
+    Ollama["Ollama en Windows<br/>Qwen3-14B en Tesla T4"]
+    Postgres["PostgreSQL + pgvector<br/>Docker"]
+    Files["Archivos e índices<br/>filesystem de WSL"]
+
+    Browser -->|localhost:3000| Frontend
+    Frontend -->|localhost:7860| Backend
+    Backend --> Retrieval
+    Backend -->|gateway NAT:11434| Ollama
+    Backend -->|localhost:5432| Postgres
+    Backend --> Files
+```
+
+Ollama escucha en Windows mediante `OLLAMA_HOST=0.0.0.0:11434`; `make dev-wsl` descubre el gateway NAT en cada arranque y lo entrega al cliente compartido como `OLLAMA_BASE_URL`. No se requiere modo de red mirrored ni un driver NVIDIA Linux en WSL para esta topología.
+
 ## Pruebas y benchmark
 
 La verificación automatizada cubre:
@@ -485,9 +564,12 @@ La verificación automatizada cubre:
 | Reranker | `backend/app/rag/reranker.py` |
 | Router y síntesis | `backend/app/rag/agent.py` |
 | Grafo de investigación | `backend/app/rag/research_agent.py` |
+| Cliente Ollama compartido | `backend/app/rag/llm_client.py` |
+| Diagnóstico WSL/T4 | `backend/app/runtime_doctor.py` |
 | API de chat | `backend/app/routes/chat.py` |
 | UI de chat | `frontend/src/components/chat/ChatPanel.tsx` |
 | Benchmark | `backend/app/rag/benchmark.py` |
+| Historial de versiones | `CHANGELOG.md` |
 
 ## Invariantes de mantenimiento
 
@@ -499,3 +581,5 @@ La verificación automatizada cubre:
 6. El texto citado debe ser literal; el contexto añadido para búsqueda permanece separado.
 7. Ningún dominio nuevo debe requerir cambios en Python para ser recuperado.
 8. Una respuesta parcial respaldada es preferible a una respuesta completa con supuestos externos.
+9. Un documento con índices persistidos sigue siendo consultable aunque falle su enriquecimiento posterior.
+10. Todas las fases del LLM deben construir el cliente mediante `create_chat_ollama` para compartir host, timeout y permanencia del modelo.
