@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.config import get_settings
 from app.rag.embeddings import embed_query
+from app.rag.llm_client import create_chat_ollama
 from app.rag.tracing import trace_function
 from app.rag.vectorstore import query_chunks
 try:
@@ -138,15 +139,13 @@ class CustomBM25Retriever(BaseRetriever):
 def build_research_plan(query: str) -> ResearchBrief:
     """Create a constrained, domain-independent retrieval plan for research routes."""
     try:
-        from langchain_ollama import ChatOllama
         from langchain_core.messages import SystemMessage, HumanMessage
 
-        llm = ChatOllama(
-            model=settings.LLM_MODEL,
+        llm = create_chat_ollama(
             temperature=0,
             reasoning=False if settings.LLM_DISABLE_THINKING else None,
             num_predict=settings.RETRIEVAL_PLANNER_MAX_TOKENS,
-            client_kwargs={"timeout": settings.RETRIEVAL_PLANNER_TIMEOUT_SECONDS},
+            timeout_seconds=settings.RETRIEVAL_PLANNER_TIMEOUT_SECONDS,
         )
         # Some Ollama/llama.cpp combinations reject generated JSON-schema
         # grammars. JSON mode still constrains generation to JSON, while the

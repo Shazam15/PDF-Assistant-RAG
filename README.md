@@ -145,6 +145,10 @@ Para `research_gpu` también se requiere:
 - Se recomiendan al menos 24 GB de VRAM para el modelo predeterminado.
 - PostgreSQL 16 con pgvector para el despliegue de producción.
 
+Para `wsl_t4`, Ollama usa la GPU desde Windows y el backend ejecuta embeddings,
+reranking y NLI en CPU dentro de WSL2. No se requiere instalar CUDA ni un driver
+NVIDIA Linux dentro de WSL.
+
 ## Instalación local
 
 ### 1. Dependencias del sistema
@@ -347,43 +351,119 @@ ollama list
 
 ### Tesla T4 y Qwen3-14B
 
-Una Tesla T4 de 16 GB debe reservar CUDA para Ollama. El reranker y los embeddings se ejecutan en CPU, el contexto se limita inicialmente a 8K y se usa la cuantización Q4:
+El perfil `wsl_t4` está diseñado para Windows con WSL2 en modo NAT, un Xeon Gold con
+RAM abundante y una Tesla T4 de 16 GB dedicada exclusivamente a Ollama. El backend y
+frontend se ejecutan nativamente en WSL; Docker aloja solamente PostgreSQL/pgvector.
 
-```bash
-ollama pull qwen3:14b-q4_K_M
+#### 1. PowerShell de Windows
+
+Instale el driver NVIDIA de Windows y Ollama. No instale un driver NVIDIA Linux en WSL.
+Después, en PowerShell, configure Ollama para aceptar conexiones desde WSL y mantener
+un único modelo cargado:
+
+```powershell
+setx OLLAMA_HOST "0.0.0.0:11434"
+setx OLLAMA_KEEP_ALIVE "30m"
+setx OLLAMA_CONTEXT_LENGTH "8192"
+setx OLLAMA_MAX_LOADED_MODELS "1"
+setx OLLAMA_NUM_PARALLEL "1"
+setx OLLAMA_FLASH_ATTENTION "1"
+setx OLLAMA_NO_CLOUD "1"
 ```
 
-```dotenv
-MODEL_PROFILE=custom
-DEVICE=cuda
-LLM_MODEL=qwen3:14b-q4_K_M
-LLM_CONTEXT_WINDOW=8192
-LLM_MAX_NEW_TOKENS=3072
-LLM_DISABLE_THINKING=True
+Cierre Ollama completamente desde la bandeja y vuelva a abrirlo para aplicar las
+variables. Limite el acceso al adaptador virtual de WSL desde PowerShell como
+administrador:
 
-EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B
-EMBEDDING_DIMENSION=1024
-EMBEDDING_DEVICE=cpu
-EMBEDDING_BATCH_SIZE=32
+```powershell
+$wslInterface = Get-NetAdapter | Where-Object Name -Like "*WSL*" | Select-Object -First 1 -ExpandProperty Name
+New-NetFirewallRule -DisplayName "Ollama from WSL2" -Direction Inbound -Action Allow `
+  -Protocol TCP -LocalPort 11434 -InterfaceAlias $wslInterface
+```
 
-RERANKER_MODEL=Qwen/Qwen3-Reranker-0.6B
-RERANKER_DEVICE=cpu
-RERANK_MAX_LENGTH=1024
+Descargue y compruebe el modelo:
 
-AGENT_PLANNER_MAX_TOKENS=384
-AGENT_SYNTHESIS_MAX_TOKENS=2048
-RESEARCH_MAX_ROUNDS=1
-LLM_REQUEST_TIMEOUT_SECONDS=900
-RESEARCH_TIMEOUT_SECONDS=1800
-RESEARCH_SYNTHESIS_RESERVE_SECONDS=600
-RESEARCH_MAX_FACETS=5
-TOP_K_RETRIEVAL=30
-TOP_K_RERANK=12
+```powershell
+ollama pull qwen3:14b-q4_K_M
+ollama list
+nvidia-smi
+```
+
+La lista debe incluir una línea similar a:
+
+```text
+qwen3:14b-q4_K_M    ...    9.3 GB
+```
+
+#### 2. Terminal de Ubuntu/WSL2
+
+Mantenga el repositorio bajo `~/`, no bajo `/mnt/c`, y use Python 3.11:
+
+```bash
+git switch codex/experimental-wsl-t4
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip setuptools wheel
+make install-backend-wsl PYTHON="$PWD/.venv/bin/python"
+
+cd frontend
+npm install
+cd ..
+```
+
+El target WSL instala primero PyTorch CPU para que los modelos de recuperación no
+reserven VRAM ni descarguen el runtime CUDA.
+
+#### 3. PostgreSQL en Docker
+
+Prepare los archivos de entorno. La contraseña debe ser idéntica en `.env`,
+`backend/.env` y `DATABASE_URL`:
+
+```bash
+cp .env.example .env
+cp .env.example backend/.env
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+Edite ambos archivos para establecer `SECRET_KEY` y `POSTGRES_PASSWORD`. Después inicie
+únicamente PostgreSQL y aplique las migraciones:
+
+```bash
+docker compose up -d postgres
+docker compose ps postgres
+make migrate PYTHON="$PWD/.venv/bin/python"
+```
+
+La salida de Docker debe mostrar el contenedor `pdf_rag_postgres` como `healthy`.
+
+#### 4. Diagnóstico y arranque
+
+`doctor-wsl` obtiene la IP del gateway de Windows desde la ruta NAT; no es necesario
+editar `.bashrc` ni configurar el modo mirrored:
+
+```bash
+make doctor-wsl PYTHON="$PWD/.venv/bin/python"
+make dev-wsl PYTHON="$PWD/.venv/bin/python"
+```
+
+Salida esperada del diagnóstico:
+
+```text
+ATLAS WSL/T4 runtime check
+[OK] profile=wsl_t4, llm=qwen3:14b-q4_K_M, CPU threads=28
+[OK] Ollama at http://<gateway-windows>:11434 provides qwen3:14b-q4_K_M
+[OK] PostgreSQL and pgvector extensions are available
+ATLAS is ready to start in WSL/T4 mode.
 ```
 
 `LLM_DISABLE_THINKING=True` desactiva el modo interno `thinking` de Ollama en planificación,
 auditoría y redacción para que no consuma el límite de salida antes de producir la respuesta.
 El ciclo verificable del agente (recuperación, ledger, auditoría, reparación y citas) permanece activo.
+
+Después de la primera consulta, `ollama ps` en PowerShell debe mostrar el modelo con
+`PROCESSOR` igual a `100% GPU`. Si `doctor-wsl` no puede alcanzar Ollama, compruebe que
+la aplicación fue reiniciada después de definir `OLLAMA_HOST` y que la regla de firewall
+está asociada al adaptador WSL correcto.
 
 ## Modelos grandes y configuración personalizada
 
@@ -445,20 +525,22 @@ El worker debe recibir la misma configuración de base de datos, modelos, almace
 
 | Variable | Valor local | Valor de investigación | Propósito |
 |---|---|---|---|
-| `MODEL_PROFILE` | `local_balanced` | `research_gpu` | Selecciona el conjunto de modelos; `local_balanced` usa Qwen con lotes pequeños. |
-| `LLM_MODEL` | `qwen3:4b-instruct-2507-q4_K_M` | `qwen3:30b-a3b` | Modelo servido por Ollama. |
+| `MODEL_PROFILE` | `local_balanced` | `wsl_t4` | Selecciona el conjunto de modelos y dispositivos. |
+| `LLM_MODEL` | `qwen3:4b-instruct-2507-q4_K_M` | `qwen3:14b-q4_K_M` | Modelo servido por Ollama. |
 | `DATABASE_URL` | `sqlite:///./data/app.db` | `postgresql+psycopg://...` | Base de datos SQLAlchemy. |
 | `CORPUS_STORE_BACKEND` | `local` | `postgres` | Índices locales o pgvector/tsvector. |
 | `EMBEDDING_DEVICE` | `mps` | `cpu` | Dispositivo para embeddings. MPS cae a CPU si no está disponible. |
-| `RERANKER_DEVICE` | `cpu` | `cuda` | Dispositivo para reranking. |
+| `RERANKER_DEVICE` | `cpu` | `cpu` | Mantiene libre la T4 para Ollama. |
 | `EMBEDDING_BATCH_SIZE` | `4` | `64` | Tamaño de lote de embeddings. |
-| `CPU_THREADS` | `4` | `0` | Cero permite selección automática. |
+| `CPU_THREADS` | `4` | `28` | Paralelismo de PyTorch; puede sobrescribirse según la CPU. |
 | `PDF_EXTRACTION_MODE` | `fast` | `auto` | Usa PyMuPDF, selección adaptativa o Docling con `quality`. |
 | `LLM_REQUEST_TIMEOUT_SECONDS` | `900` | `900` | Límite de una llamada individual al LLM. |
 | `RESEARCH_TIMEOUT_SECONDS` | `1800` | `1800` | Presupuesto total de investigación. |
 | `RESEARCH_SYNTHESIS_RESERVE_SECONDS` | `600` | `600` | Tiempo reservado para redactar y verificar la respuesta final. |
 | `RESEARCH_MAX_ROUNDS` | `2` | `2` | Rondas correctivas máximas. |
-| `CELERY_ENABLED` | `False` | `True` | Ingesta síncrona o en worker. |
+| `CELERY_ENABLED` | `False` | `False` | La primera configuración WSL procesa dentro del backend y no inicia Redis. |
+| `OLLAMA_BASE_URL` | vacío | dinámico | `make dev-wsl` lo resuelve desde el gateway NAT de Windows. |
+| `OLLAMA_KEEP_ALIVE` | `5m` | `30m` | Evita recargar el modelo entre fases de investigación. |
 
 Consulte [.env.example](.env.example) y [backend/app/config.py](backend/app/config.py) para ver todas las opciones.
 

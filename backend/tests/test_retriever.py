@@ -22,7 +22,7 @@ def test_structured_research_plan_uses_dynamic_facets(monkeypatch):
     )
     llm = MagicMock()
     llm.with_structured_output.return_value = structured
-    monkeypatch.setattr("langchain_ollama.ChatOllama", MagicMock(return_value=llm))
+    monkeypatch.setattr(retriever, "create_chat_ollama", MagicMock(return_value=llm))
 
     plan = retriever.build_research_plan("Solicitud extensa sin vocabulario predefinido")
 
@@ -35,7 +35,7 @@ def test_structured_research_plan_uses_dynamic_facets(monkeypatch):
 
 
 def test_structured_research_plan_falls_back_without_domain_expansion(monkeypatch):
-    monkeypatch.setattr("langchain_ollama.ChatOllama", MagicMock(side_effect=TimeoutError("slow")))
+    monkeypatch.setattr(retriever, "create_chat_ollama", MagicMock(side_effect=TimeoutError("slow")))
 
     plan = retriever.build_research_plan("Primera dimensión. Segunda dimensión.")
 
@@ -47,7 +47,7 @@ def test_structured_research_plan_falls_back_on_invalid_structured_result(monkey
     structured.invoke.return_value = None
     llm = MagicMock()
     llm.with_structured_output.return_value = structured
-    monkeypatch.setattr("langchain_ollama.ChatOllama", MagicMock(return_value=llm))
+    monkeypatch.setattr(retriever, "create_chat_ollama", MagicMock(return_value=llm))
 
     plan = retriever.build_research_plan("Compare two independently reported outcomes.")
 
@@ -62,7 +62,7 @@ def test_research_plan_caps_model_and_fallback_facets_at_six(monkeypatch):
     )
     assert len(plan.facets) == 6
 
-    monkeypatch.setattr("langchain_ollama.ChatOllama", MagicMock(side_effect=RuntimeError("invalid JSON")))
+    monkeypatch.setattr(retriever, "create_chat_ollama", MagicMock(side_effect=RuntimeError("invalid JSON")))
     query = " ".join(f"Dimension {index}." for index in range(8))
 
     fallback = retriever.build_research_plan(query)
@@ -203,7 +203,7 @@ def test_research_brief_keeps_output_contract_out_of_facets(monkeypatch):
     )
     llm = MagicMock()
     llm.with_structured_output.return_value = structured
-    monkeypatch.setattr("langchain_ollama.ChatOllama", MagicMock(return_value=llm))
+    monkeypatch.setattr(retriever, "create_chat_ollama", MagicMock(return_value=llm))
 
     brief = retriever.build_research_plan("Write a report and abstract comparing technologies")
 

@@ -11,10 +11,10 @@ from typing import Any, Dict, List, Optional, Type
 from ddgs import DDGS
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool
-from langchain_ollama import ChatOllama
 from pydantic import BaseModel, Field
 
 from app.config import get_settings
+from app.rag.llm_client import create_chat_ollama
 from app.rag.graph_retriever import get_entity_context
 from app.rag.retriever import retrieve
 
@@ -376,7 +376,7 @@ class CodeReviewTool(BaseTool):
             f"Enfoque: {focus or 'general'}\n\nCódigo:\n{code}"
         )
         try:
-            response = ChatOllama(model=settings.LLM_MODEL, temperature=0).invoke([
+            response = create_chat_ollama(temperature=0).invoke([
                 SystemMessage(content=system),
                 HumanMessage(content=request),
             ])

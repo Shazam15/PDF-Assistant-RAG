@@ -1,5 +1,6 @@
 import logging
 from app.config import get_settings
+from app.rag.llm_client import create_chat_ollama
 from typing import Any, Callable, Dict, List, Optional
 from pydantic import BaseModel, Field, field_validator
 
@@ -63,16 +64,13 @@ def generate_document_summary_from_chunks(
     prompt = f"Resume el siguiente texto en {max_sentences} oraciones:\n\n{text_to_summarise}"
 
     try:
-        from langchain_ollama import ChatOllama
         from langchain_core.messages import SystemMessage, HumanMessage
 
-        chat_llm = ChatOllama(
-            model=settings.LLM_MODEL,
+        chat_llm = create_chat_ollama(
             temperature=0.3,
             reasoning=False if settings.LLM_DISABLE_THINKING else None,
             num_predict=settings.SUMMARY_MAX_TOKENS,
-            keep_alive=0,
-            )
+        )
         response = chat_llm.invoke([
             SystemMessage(content="Eres un asistente útil y conciso que resume documentos de manera clara y precisa."),
             HumanMessage(content=prompt),
@@ -129,15 +127,12 @@ def build_document_memory(
 
     if corpus_text and use_llm:
         try:
-            from langchain_ollama import ChatOllama
             from langchain_core.messages import SystemMessage, HumanMessage
 
-            llm = ChatOllama(
-                model=settings.LLM_MODEL,
+            llm = create_chat_ollama(
                 temperature=0,
                 reasoning=False if settings.LLM_DISABLE_THINKING else None,
                 num_predict=min(1200, settings.LLM_MAX_NEW_TOKENS),
-                keep_alive=0,
             )
             structured = llm.with_structured_output(DocumentMemoryDraft, method="json_mode")
             no_think = "/no_think\n" if settings.LLM_DISABLE_THINKING else ""

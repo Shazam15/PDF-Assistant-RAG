@@ -122,6 +122,13 @@ async def lifespan(app: FastAPI):
         settings.LLM_MODEL,
         settings.RESEARCH_PIPELINE_VERSION,
     )
+    logger.info(
+        "RAG devices embedding=%s reranker=%s ollama=%s keep_alive=%s",
+        settings.EMBEDDING_DEVICE,
+        settings.RERANKER_DEVICE,
+        settings.OLLAMA_BASE_URL or os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434"),
+        settings.OLLAMA_KEEP_ALIVE,
+    )
 
     # Create tables
     init_db()

@@ -30,7 +30,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./scripts/init_postgres.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pdf_rag_user} -d ${POSTGRES_DB:-pdf_rag}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-atlas_user} -d ${POSTGRES_DB:-atlas}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -48,7 +48,7 @@ services:
     environment:
       - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-me}
       - HF_TOKEN=${HF_TOKEN}
-      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-pdf_rag_user}:${POSTGRES_PASSWORD:-pdf_rag_pass}@postgres:5432/${POSTGRES_DB:-pdf_rag}
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-atlas_user}:${POSTGRES_PASSWORD:-replace-with-a-strong-password}@postgres:5432/${POSTGRES_DB:-atlas}
       - UPLOAD_DIR=/app/data/uploads
       - CHROMA_PERSIST_DIR=/app/data/chroma_db
       - GRAPH_PERSIST_DIR=/app/data/graphs
@@ -82,7 +82,7 @@ services:
     environment:
       - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-me}
       - HF_TOKEN=${HF_TOKEN}
-      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-pdf_rag_user}:${POSTGRES_PASSWORD:-pdf_rag_pass}@postgres:5432/${POSTGRES_DB:-pdf_rag}
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-atlas_user}:${POSTGRES_PASSWORD:-replace-with-a-strong-password}@postgres:5432/${POSTGRES_DB:-atlas}
       - UPLOAD_DIR=/app/data/uploads
       - CHROMA_PERSIST_DIR=/app/data/chroma_db
       - GRAPH_PERSIST_DIR=/app/data/graphs
@@ -92,13 +92,13 @@ services:
       - LLM_MODEL=${LLM_MODEL:-qwen3:30b-a3b}
       - LLM_CONTEXT_WINDOW=${LLM_CONTEXT_WINDOW:-32768}
       - LLM_MAX_NEW_TOKENS=${LLM_MAX_NEW_TOKENS:-4096}
-      - LLM_REQUEST_TIMEOUT_SECONDS=${LLM_REQUEST_TIMEOUT_SECONDS:-90}
+      - LLM_REQUEST_TIMEOUT_SECONDS=${LLM_REQUEST_TIMEOUT_SECONDS:-900}
       - LLM_DISABLE_THINKING=${LLM_DISABLE_THINKING:-False}
       - AGENT_PLANNER_MAX_TOKENS=${AGENT_PLANNER_MAX_TOKENS:-768}
       - AGENT_SYNTHESIS_MAX_TOKENS=${AGENT_SYNTHESIS_MAX_TOKENS:-2048}
       - RESEARCH_MAX_ROUNDS=${RESEARCH_MAX_ROUNDS:-2}
-      - RESEARCH_TIMEOUT_SECONDS=${RESEARCH_TIMEOUT_SECONDS:-180}
-      - RESEARCH_SYNTHESIS_RESERVE_SECONDS=${RESEARCH_SYNTHESIS_RESERVE_SECONDS:-90}
+      - RESEARCH_TIMEOUT_SECONDS=${RESEARCH_TIMEOUT_SECONDS:-1800}
+      - RESEARCH_SYNTHESIS_RESERVE_SECONDS=${RESEARCH_SYNTHESIS_RESERVE_SECONDS:-600}
       - RESEARCH_MAX_FACETS=${RESEARCH_MAX_FACETS:-6}
       - TOP_K_RETRIEVAL=${TOP_K_RETRIEVAL:-36}
       - TOP_K_RERANK=${TOP_K_RERANK:-16}
@@ -147,7 +147,7 @@ services:
     environment:
       - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-me}
       - HF_TOKEN=${HF_TOKEN}
-      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-pdf_rag_user}:${POSTGRES_PASSWORD:-pdf_rag_pass}@postgres:5432/${POSTGRES_DB:-pdf_rag}
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-atlas_user}:${POSTGRES_PASSWORD:-replace-with-a-strong-password}@postgres:5432/${POSTGRES_DB:-atlas}
       - UPLOAD_DIR=/app/data/uploads
       - CHROMA_PERSIST_DIR=/app/data/chroma_db
       - GRAPH_PERSIST_DIR=/app/data/graphs
@@ -176,7 +176,7 @@ services:
     environment:
       - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-me}
       - HF_TOKEN=${HF_TOKEN}
-      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-pdf_rag_user}:${POSTGRES_PASSWORD:-pdf_rag_pass}@postgres:5432/${POSTGRES_DB:-pdf_rag}
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-atlas_user}:${POSTGRES_PASSWORD:-replace-with-a-strong-password}@postgres:5432/${POSTGRES_DB:-atlas}
       - UPLOAD_DIR=/app/data/uploads
       - CHROMA_PERSIST_DIR=/app/data/chroma_db
       - GRAPH_PERSIST_DIR=/app/data/graphs
@@ -186,13 +186,13 @@ services:
       - LLM_MODEL=${LLM_MODEL:-qwen3:30b-a3b}
       - LLM_CONTEXT_WINDOW=${LLM_CONTEXT_WINDOW:-32768}
       - LLM_MAX_NEW_TOKENS=${LLM_MAX_NEW_TOKENS:-4096}
-      - LLM_REQUEST_TIMEOUT_SECONDS=${LLM_REQUEST_TIMEOUT_SECONDS:-90}
+      - LLM_REQUEST_TIMEOUT_SECONDS=${LLM_REQUEST_TIMEOUT_SECONDS:-900}
       - LLM_DISABLE_THINKING=${LLM_DISABLE_THINKING:-False}
       - AGENT_PLANNER_MAX_TOKENS=${AGENT_PLANNER_MAX_TOKENS:-768}
       - AGENT_SYNTHESIS_MAX_TOKENS=${AGENT_SYNTHESIS_MAX_TOKENS:-2048}
       - RESEARCH_MAX_ROUNDS=${RESEARCH_MAX_ROUNDS:-2}
-      - RESEARCH_TIMEOUT_SECONDS=${RESEARCH_TIMEOUT_SECONDS:-180}
-      - RESEARCH_SYNTHESIS_RESERVE_SECONDS=${RESEARCH_SYNTHESIS_RESERVE_SECONDS:-90}
+      - RESEARCH_TIMEOUT_SECONDS=${RESEARCH_TIMEOUT_SECONDS:-1800}
+      - RESEARCH_SYNTHESIS_RESERVE_SECONDS=${RESEARCH_SYNTHESIS_RESERVE_SECONDS:-600}
       - RESEARCH_MAX_FACETS=${RESEARCH_MAX_FACETS:-6}
       - TOP_K_RETRIEVAL=${TOP_K_RETRIEVAL:-36}
       - TOP_K_RERANK=${TOP_K_RERANK:-16}

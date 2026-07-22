@@ -38,6 +38,37 @@ def test_local_balanced_profile_keeps_qwen_and_uses_small_mps_batches():
     assert settings.CPU_THREADS == 4
 
 
+def test_wsl_t4_profile_reserves_gpu_for_windows_ollama_and_respects_overrides():
+    defaults = Settings(_env_file=None, MODEL_PROFILE="wsl_t4")
+    overridden = Settings(
+        _env_file=None,
+        MODEL_PROFILE="wsl_t4",
+        CPU_THREADS=20,
+        EMBEDDING_BATCH_SIZE=32,
+        OLLAMA_BASE_URL="http://172.20.0.1:11434/",
+    )
+
+    assert defaults.DEVICE == "cpu"
+    assert defaults.EMBEDDING_DEVICE == "cpu"
+    assert defaults.RERANKER_DEVICE == "cpu"
+    assert defaults.EMBEDDING_BATCH_SIZE == 64
+    assert defaults.CPU_THREADS == 28
+    assert defaults.LLM_MODEL == "qwen3:14b-q4_K_M"
+    assert defaults.LLM_CONTEXT_WINDOW == 8192
+    assert defaults.LLM_MAX_NEW_TOKENS == 3072
+    assert defaults.LLM_DISABLE_THINKING is True
+    assert defaults.OLLAMA_KEEP_ALIVE == "30m"
+    assert defaults.RESEARCH_TIMEOUT_SECONDS == 1800
+    assert overridden.CPU_THREADS == 20
+    assert overridden.EMBEDDING_BATCH_SIZE == 32
+    assert overridden.OLLAMA_BASE_URL == "http://172.20.0.1:11434"
+
+
+def test_ollama_base_url_requires_http_transport():
+    with pytest.raises(ValueError, match="OLLAMA_BASE_URL"):
+        Settings(_env_file=None, OLLAMA_BASE_URL="172.20.0.1:11434")
+
+
 def test_legacy_docling_switch_maps_to_extraction_mode():
     fast = Settings(_env_file=None, PDF_USE_DOCLING=False)
     quality = Settings(_env_file=None, PDF_USE_DOCLING=True)

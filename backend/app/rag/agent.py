@@ -15,14 +15,13 @@ from langchain_classic.agents.output_parsers import ReActSingleInputOutputParser
 from langchain_core.agents import AgentAction, AgentFinish
 from langchain_core.exceptions import OutputParserException
 from langchain_core.prompts import PromptTemplate
-from langchain_ollama import ChatOllama
-
 from app.config import get_settings
 from pydantic import BaseModel, Field
 
 from app.rag.retriever import ResearchBrief, ResearchPlan, build_research_plan, retrieve
 from app.rag.research_agent import ResearchDependencies, run_research_agent, stream_research_agent
 from app.rag.graph_retriever import get_entity_context
+from app.rag.llm_client import create_chat_ollama
 from app.rag.prompts import AGENT_SYSTEM_PROMPT, RAG_PROMPT_TEMPLATE
 from app.exceptions import ExternalServiceException
 from app.rag.security import MALFORMED_OUTPUT_MESSAGE, OutputParserError, parse_agent_output
@@ -74,13 +73,11 @@ class GroundedReActOutputParser(ReActSingleInputOutputParser):
 
 def get_llm_client(hf_token: Optional[str] = None, max_tokens: Optional[int] = None):
     """Create an Ollama client (hf_token ignored, kept for compatibility)."""
-    return ChatOllama(
-        model=settings.LLM_MODEL,
+    return create_chat_ollama(
         temperature=0,
         reasoning=False if settings.LLM_DISABLE_THINKING else None,
         num_ctx=settings.LLM_CONTEXT_WINDOW,
         num_predict=max_tokens or settings.LLM_MAX_NEW_TOKENS,
-        client_kwargs={"timeout": settings.LLM_REQUEST_TIMEOUT_SECONDS},
     )
 
 
@@ -161,13 +158,11 @@ def get_agent_executor(
     web_tool = WebSearchTool()
     tools = [pdf_tool, code_review_tool, MathTool(), web_tool]
 
-    chat_llm = ChatOllama(
-        model=settings.LLM_MODEL,
+    chat_llm = create_chat_ollama(
         temperature=settings.LLM_TEMPERATURE,
         reasoning=False if settings.LLM_DISABLE_THINKING else None,
         num_ctx=settings.LLM_CONTEXT_WINDOW,
         num_predict=min(settings.LLM_MAX_NEW_TOKENS, settings.AGENT_PLANNER_MAX_TOKENS),
-        client_kwargs={"timeout": settings.LLM_REQUEST_TIMEOUT_SECONDS},
     )
 
     global_style_reference = _load_global_style_reference()

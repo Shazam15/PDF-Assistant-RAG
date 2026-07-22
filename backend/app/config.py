@@ -157,6 +157,8 @@ class Settings(BaseSettings):
     LLM_TEMPERATURE: float = 0.3
     LLM_REQUEST_TIMEOUT_SECONDS: int = 900
     LLM_DISABLE_THINKING: bool = False
+    OLLAMA_BASE_URL: str = ""
+    OLLAMA_KEEP_ALIVE: str = "5m"
     AGENT_PLANNER_MAX_TOKENS: int = 768
     AGENT_SYNTHESIS_MAX_TOKENS: int = 2048
     AGENT_MAX_ITERATIONS: int = 4  # Three research steps plus one mandatory final synthesis
@@ -258,8 +260,45 @@ class Settings(BaseSettings):
                 self.EMBEDDING_DIMENSION = 1024
             if "EMBEDDING_INDEX_VERSION" not in self.model_fields_set:
                 self.EMBEDDING_INDEX_VERSION = "hierarchical-qwen3-1024-v1"
+        elif profile == "wsl_t4":
+            # Windows hosts Ollama on the T4; WSL keeps retrieval models on the
+            # high-core-count Xeon so the 16 GB GPU remains dedicated to the LLM.
+            profile_defaults = {
+                "DEVICE": "cpu",
+                "EMBEDDING_DEVICE": "cpu",
+                "RERANKER_DEVICE": "cpu",
+                "EMBEDDING_BATCH_SIZE": 64,
+                "CPU_THREADS": 28,
+                "EMBEDDING_MODEL": "Qwen/Qwen3-Embedding-0.6B",
+                "EMBEDDING_DIMENSION": 1024,
+                "EMBEDDING_INDEX_VERSION": "hierarchical-qwen3-1024-v1",
+                "RERANKER_MODEL": "Qwen/Qwen3-Reranker-0.6B",
+                "RERANK_MAX_LENGTH": 1024,
+                "LLM_MODEL": "qwen3:14b-q4_K_M",
+                "LLM_CONTEXT_WINDOW": 8192,
+                "LLM_MAX_NEW_TOKENS": 3072,
+                "LLM_REQUEST_TIMEOUT_SECONDS": 900,
+                "LLM_DISABLE_THINKING": True,
+                "OLLAMA_KEEP_ALIVE": "30m",
+                "AGENT_PLANNER_MAX_TOKENS": 384,
+                "AGENT_SYNTHESIS_MAX_TOKENS": 2048,
+                "RESEARCH_MAX_ROUNDS": 2,
+                "RESEARCH_TIMEOUT_SECONDS": 1800,
+                "RESEARCH_SYNTHESIS_RESERVE_SECONDS": 600,
+                "RESEARCH_MAX_FACETS": 5,
+                "TOP_K_RETRIEVAL": 30,
+                "TOP_K_RERANK": 12,
+                "PDF_EXTRACTION_MODE": "auto",
+            }
+            for field_name, value in profile_defaults.items():
+                if field_name not in self.model_fields_set:
+                    setattr(self, field_name, value)
+            extraction_mode = str(self.PDF_EXTRACTION_MODE).lower()
+            self.RETRIEVAL_PLANNER_VERSION = "research-brief-qwen3-v1"
         elif profile not in {"local", "custom"}:
-            raise ValueError("MODEL_PROFILE must be local, local_balanced, custom, or research_gpu")
+            raise ValueError(
+                "MODEL_PROFILE must be local, local_balanced, custom, research_gpu, or wsl_t4"
+            )
 
         if extraction_mode not in {"auto", "fast", "quality"}:
             raise ValueError("PDF_EXTRACTION_MODE must be auto, fast, or quality")
@@ -278,6 +317,13 @@ class Settings(BaseSettings):
             raise ValueError("EMBEDDING_BATCH_SIZE must be positive")
         if self.CPU_THREADS < 0:
             raise ValueError("CPU_THREADS cannot be negative")
+        self.OLLAMA_BASE_URL = self.OLLAMA_BASE_URL.strip().rstrip("/")
+        if self.OLLAMA_BASE_URL and not self.OLLAMA_BASE_URL.startswith(
+            ("http://", "https://")
+        ):
+            raise ValueError("OLLAMA_BASE_URL must use http:// or https://")
+        if not self.OLLAMA_KEEP_ALIVE.strip():
+            raise ValueError("OLLAMA_KEEP_ALIVE cannot be empty")
         if self.RESEARCH_TIMEOUT_SECONDS < 30 or self.RESEARCH_TIMEOUT_SECONDS > 7200:
             raise ValueError("RESEARCH_TIMEOUT_SECONDS must be between 30 and 7200")
         if self.LLM_REQUEST_TIMEOUT_SECONDS < 10 or self.LLM_REQUEST_TIMEOUT_SECONDS > 3600:
