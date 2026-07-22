@@ -213,11 +213,13 @@ SECRET_KEY=reemplazar-por-una-clave-segura
 ENVIRONMENT=development
 ALLOWED_ORIGINS=http://localhost:3000,http://localhost:7860
 
-MODEL_PROFILE=local
-DEVICE=cpu
-EMBEDDING_DEVICE=cpu
+MODEL_PROFILE=local_balanced
+DEVICE=mps
+EMBEDDING_DEVICE=mps
+EMBEDDING_BATCH_SIZE=4
 RERANKER_DEVICE=cpu
-LLM_MODEL=mistral
+LLM_MODEL=qwen3:4b-instruct-2507-q4_K_M
+PDF_EXTRACTION_MODE=fast
 
 DATABASE_URL=sqlite:///./data/app.db
 CORPUS_STORE_BACKEND=local
@@ -371,13 +373,17 @@ RERANK_MAX_LENGTH=1024
 AGENT_PLANNER_MAX_TOKENS=384
 AGENT_SYNTHESIS_MAX_TOKENS=2048
 RESEARCH_MAX_ROUNDS=1
-RESEARCH_SYNTHESIS_RESERVE_SECONDS=60
+LLM_REQUEST_TIMEOUT_SECONDS=900
+RESEARCH_TIMEOUT_SECONDS=1800
+RESEARCH_SYNTHESIS_RESERVE_SECONDS=600
 RESEARCH_MAX_FACETS=5
 TOP_K_RETRIEVAL=30
 TOP_K_RERANK=12
 ```
 
-`LLM_DISABLE_THINKING` afecta únicamente llamadas estructuradas de planificación, memoria y auditoría. La síntesis final y el ciclo de evidencia permanecen activos.
+`LLM_DISABLE_THINKING=True` desactiva el modo interno `thinking` de Ollama en planificación,
+auditoría y redacción para que no consuma el límite de salida antes de producir la respuesta.
+El ciclo verificable del agente (recuperación, ledger, auditoría, reparación y citas) permanece activo.
 
 ## Modelos grandes y configuración personalizada
 
@@ -439,15 +445,18 @@ El worker debe recibir la misma configuración de base de datos, modelos, almace
 
 | Variable | Valor local | Valor de investigación | Propósito |
 |---|---|---|---|
-| `MODEL_PROFILE` | `local` | `research_gpu` | Selecciona el conjunto de modelos. |
-| `LLM_MODEL` | `mistral` | `qwen3:30b-a3b` | Modelo servido por Ollama. |
+| `MODEL_PROFILE` | `local_balanced` | `research_gpu` | Selecciona el conjunto de modelos; `local_balanced` usa Qwen con lotes pequeños. |
+| `LLM_MODEL` | `qwen3:4b-instruct-2507-q4_K_M` | `qwen3:30b-a3b` | Modelo servido por Ollama. |
 | `DATABASE_URL` | `sqlite:///./data/app.db` | `postgresql+psycopg://...` | Base de datos SQLAlchemy. |
 | `CORPUS_STORE_BACKEND` | `local` | `postgres` | Índices locales o pgvector/tsvector. |
-| `EMBEDDING_DEVICE` | `cpu` | `cpu` | Dispositivo para embeddings. |
+| `EMBEDDING_DEVICE` | `mps` | `cpu` | Dispositivo para embeddings. MPS cae a CPU si no está disponible. |
 | `RERANKER_DEVICE` | `cpu` | `cuda` | Dispositivo para reranking. |
-| `EMBEDDING_BATCH_SIZE` | `32` | `64` | Tamaño de lote de embeddings. |
-| `CPU_THREADS` | `0` | `0` | Cero permite selección automática. |
-| `RESEARCH_TIMEOUT_SECONDS` | `180` | `180` | Presupuesto total de investigación. |
+| `EMBEDDING_BATCH_SIZE` | `4` | `64` | Tamaño de lote de embeddings. |
+| `CPU_THREADS` | `4` | `0` | Cero permite selección automática. |
+| `PDF_EXTRACTION_MODE` | `fast` | `auto` | Usa PyMuPDF, selección adaptativa o Docling con `quality`. |
+| `LLM_REQUEST_TIMEOUT_SECONDS` | `900` | `900` | Límite de una llamada individual al LLM. |
+| `RESEARCH_TIMEOUT_SECONDS` | `1800` | `1800` | Presupuesto total de investigación. |
+| `RESEARCH_SYNTHESIS_RESERVE_SECONDS` | `600` | `600` | Tiempo reservado para redactar y verificar la respuesta final. |
 | `RESEARCH_MAX_ROUNDS` | `2` | `2` | Rondas correctivas máximas. |
 | `CELERY_ENABLED` | `False` | `True` | Ingesta síncrona o en worker. |
 

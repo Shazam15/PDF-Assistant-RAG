@@ -58,6 +58,9 @@ interface Props {
   onCitationClick: (target: CitationTarget) => void;
 }
 
+const isRecoverableWebSocketAuthError = (message: string) =>
+  /invalid or expired token|missing token/i.test(message);
+
 export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
   const { t, i18n } = useTranslation();
   const messages = useChatStore((state) => state.messages);
@@ -210,13 +213,38 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
     let assistantCreated = false;
     let pendingSources: SourceChunk[] = [];
 
+    const showAssistantError = (message: string) => {
+      assistantCreated = true;
+      setIsTyping(false);
+      setResearchProgress(null);
+      setMessages((prev) => {
+        const content = `Error: ${message}`;
+        if (prev.some((item) => item.id === assistantId)) {
+          return prev.map((item) =>
+            item.id === assistantId ? { ...item, content, isStreaming: false } : item
+          );
+        }
+        return [
+          ...prev,
+          {
+            id: assistantId,
+            role: "assistant",
+            content,
+            sources: pendingSources,
+            isStreaming: false,
+          },
+        ];
+      });
+    };
+
     setStreaming(true);
     setIsTyping(true);
     setResearchProgress(null);
 
     try {
       // Try WebSocket first for real-time source and answer streaming.
-      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+      const token = await api.getValidAccessToken();
+      if (activeRequestIdRef.current !== requestId) return;
       const base = API_BASE || window.location.origin;
       const wsScheme = base.startsWith("https") ? "wss" : base.startsWith("http") ? "ws" : "wss";
       const host = base.replace(/^https?:/, "");
@@ -287,10 +315,16 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
               pendingSources = event.data as SourceChunk[];
               setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, sources: pendingSources } : m)));
             } else if (event.type === "error") {
-              setIsTyping(false);
-              setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content: `Error: ${event.data}`, isStreaming: false } : m)));
+              const message = String(event.data);
+              if (!isRecoverableWebSocketAuthError(message)) {
+                showAssistantError(message);
+                completed = true;
+                ws.close();
+                resolve();
+                return;
+              }
               ws.close();
-              reject(new Error(String(event.data)));
+              reject(new Error(message));
             } else if (event.type === "done") {
               completed = true;
               setResearchProgress(null);
@@ -376,8 +410,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
             pendingSources = event.data as SourceChunk[];
             setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, sources: pendingSources } : m)));
           } else if (event.type === "error") {
-            setIsTyping(false);
-            setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content: `Error: ${event.data}`, isStreaming: false } : m)));
+            showAssistantError(String(event.data));
           } else if (event.type === "done") {
             setResearchProgress(null);
             setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, isStreaming: false } : m)));
@@ -385,20 +418,10 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
         }
       } catch (err2) {
         if (activeRequestIdRef.current !== requestId) return;
-        setIsTyping(false);
-        setResearchProgress(null);
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantId
-              ? {
-                  ...m,
-                  content: t("chat.fallbackError", {
-                    message: err2 instanceof Error ? err2.message : "Unknown error",
-                  }),
-                  isStreaming: false,
-                }
-              : m
-          )
+        showAssistantError(
+          t("chat.fallbackError", {
+            message: err2 instanceof Error ? err2.message : "Unknown error",
+          })
         );
       }
     } finally {

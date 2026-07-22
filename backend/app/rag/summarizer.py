@@ -1,6 +1,6 @@
 import logging
 from app.config import get_settings
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List, Optional
 from pydantic import BaseModel, Field, field_validator
 
 #from app.rag.agent import get_llm_client
@@ -69,7 +69,9 @@ def generate_document_summary_from_chunks(
         chat_llm = ChatOllama(
             model=settings.LLM_MODEL,
             temperature=0.3,
-            num_predict=settings.SUMMARY_MAX_TOKENS
+            reasoning=False if settings.LLM_DISABLE_THINKING else None,
+            num_predict=settings.SUMMARY_MAX_TOKENS,
+            keep_alive=0,
             )
         response = chat_llm.invoke([
             SystemMessage(content="Eres un asistente útil y conciso que resume documentos de manera clara y precisa."),
@@ -82,7 +84,11 @@ def generate_document_summary_from_chunks(
         return _extractive_summary(text_to_summarise, max_sentences)
 
 
-def build_document_memory(chunks: List[Dict[str, Any]], use_llm: bool = True) -> Dict[str, Any]:
+def build_document_memory(
+    chunks: List[Dict[str, Any]],
+    use_llm: bool = True,
+    progress_callback: Optional[Callable[[str, int, int], None]] = None,
+) -> Dict[str, Any]:
     """Create a hierarchical profile and only retain evidence with literal provenance."""
     sections: Dict[str, Dict[str, Any]] = {}
     for chunk in chunks:
@@ -118,11 +124,7 @@ def build_document_memory(chunks: List[Dict[str, Any]], use_llm: bool = True) ->
         total_chars += len(excerpt)
     corpus_text = "\n\n".join(representative_chunks)
     fallback_text = " ".join(str(chunk.get("text") or "") for chunk in chunks[:20])
-    fallback_summary = (
-        generate_document_summary_from_chunks(chunks, max_sentences=5)
-        if use_llm
-        else _extractive_summary(fallback_text, 5)
-    ) or ""
+    fallback_summary = _extractive_summary(fallback_text, 5) or ""
     draft = DocumentMemoryDraft(summary=fallback_summary)
 
     if corpus_text and use_llm:
@@ -133,10 +135,14 @@ def build_document_memory(chunks: List[Dict[str, Any]], use_llm: bool = True) ->
             llm = ChatOllama(
                 model=settings.LLM_MODEL,
                 temperature=0,
+                reasoning=False if settings.LLM_DISABLE_THINKING else None,
                 num_predict=min(1200, settings.LLM_MAX_NEW_TOKENS),
+                keep_alive=0,
             )
             structured = llm.with_structured_output(DocumentMemoryDraft, method="json_mode")
             no_think = "/no_think\n" if settings.LLM_DISABLE_THINKING else ""
+            if progress_callback:
+                progress_callback("summarizing", 0, 1)
             draft = structured.invoke([
                 SystemMessage(content=(
                     no_think
@@ -148,6 +154,8 @@ def build_document_memory(chunks: List[Dict[str, Any]], use_llm: bool = True) ->
                 )),
                 HumanMessage(content=corpus_text),
             ])
+            if progress_callback:
+                progress_callback("summarizing", 1, 1)
         except Exception as exc:
             logger.warning("Structured document memory generation failed: %s", exc)
 
@@ -158,6 +166,9 @@ def build_document_memory(chunks: List[Dict[str, Any]], use_llm: bool = True) ->
         if not chunk or evidence.exact_quote not in str(chunk.get("text") or ""):
             continue
         verified_evidence.append(evidence.model_dump())
+
+    if progress_callback:
+        progress_callback("building_memory", 1, 1)
 
     return {
         "summary": draft.summary or fallback_summary,

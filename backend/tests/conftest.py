@@ -47,6 +47,10 @@ fake_vectorstore.get_chroma_client = lambda: _FakeChromaClient()
 fake_vectorstore.store_chunks = lambda chunks, document_id, filename, user_id: len(chunks)
 fake_vectorstore.delete_document_chunks = lambda document_id, user_id: None
 fake_vectorstore.query_chunks = lambda query_embedding, user_id, document_id=None, top_k=10: []
+fake_vectorstore.user_index_needs_migration = lambda user_id: False
+fake_vectorstore.start_user_index_migration = lambda user_id: None
+fake_vectorstore.document_index_is_current = lambda user_id, document_id, expected_count: False
+fake_vectorstore.finish_user_index_migration = lambda user_id: None
 sys.modules.setdefault("app.rag.vectorstore", fake_vectorstore)
 
 slowapi_module = types.ModuleType("slowapi")

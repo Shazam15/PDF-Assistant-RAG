@@ -114,6 +114,7 @@ class Settings(BaseSettings):
     PARENT_CHUNK_SIZE: int = 1600
     PARENT_CHUNK_OVERLAP: int = 160
     PDF_USE_DOCLING: bool = True
+    PDF_EXTRACTION_MODE: str = "auto"
     PDF_USE_UNSTRUCTURED: bool = False
     TOP_K_RETRIEVAL: int = 36 # Fetch a broad candidate pool across documents
     TOP_K_RERANK: int = 16 # Final number of chunks to return after reranking
@@ -150,18 +151,18 @@ class Settings(BaseSettings):
 
     # ── LLM (HuggingFace Inference API) ──────────────────
     HF_TOKEN: str = os.getenv("HF_TOKEN", "")  # HuggingFace API token (set in .env)
-    LLM_MODEL: str = "mistral"
+    LLM_MODEL: str = "qwen3:4b-instruct-2507-q4_K_M"
     LLM_CONTEXT_WINDOW: int = 8192
     LLM_MAX_NEW_TOKENS: int = 4096
     LLM_TEMPERATURE: float = 0.3
-    LLM_REQUEST_TIMEOUT_SECONDS: int = 90
+    LLM_REQUEST_TIMEOUT_SECONDS: int = 900
     LLM_DISABLE_THINKING: bool = False
     AGENT_PLANNER_MAX_TOKENS: int = 768
     AGENT_SYNTHESIS_MAX_TOKENS: int = 2048
     AGENT_MAX_ITERATIONS: int = 4  # Three research steps plus one mandatory final synthesis
     RESEARCH_MAX_ROUNDS: int = 2
-    RESEARCH_TIMEOUT_SECONDS: int = 180
-    RESEARCH_SYNTHESIS_RESERVE_SECONDS: int = 90
+    RESEARCH_TIMEOUT_SECONDS: int = 1800
+    RESEARCH_SYNTHESIS_RESERVE_SECONDS: int = 600
     RESEARCH_MAX_FACETS: int = 6
     RESEARCH_MIN_EVIDENCE_PER_FACET: int = 1
     RESEARCH_PIPELINE_VERSION: str = "evidence-agent-v2"
@@ -207,6 +208,14 @@ class Settings(BaseSettings):
     def validate_runtime(self):
         environment = str(self.ENVIRONMENT).lower()
         profile = str(self.MODEL_PROFILE).lower()
+        extraction_mode = str(self.PDF_EXTRACTION_MODE).lower()
+
+        # PDF_USE_DOCLING remains a compatibility switch for existing installs.
+        # New configurations should use PDF_EXTRACTION_MODE directly.
+        if "PDF_EXTRACTION_MODE" not in self.model_fields_set and "PDF_USE_DOCLING" in self.model_fields_set:
+            extraction_mode = "quality" if self.PDF_USE_DOCLING else "fast"
+            self.PDF_EXTRACTION_MODE = extraction_mode
+
         if profile == "research_gpu":
             # Keep large, parallel embedding batches on the host CPU/RAM and
             # reserve NVIDIA memory for reranking and Ollama. Explicit env
@@ -232,8 +241,28 @@ class Settings(BaseSettings):
             if "LLM_CONTEXT_WINDOW" not in self.model_fields_set:
                 self.LLM_CONTEXT_WINDOW = 32768
             self.RETRIEVAL_PLANNER_VERSION = "research-brief-qwen3-v1"
+        elif profile == "local_balanced":
+            if "DEVICE" not in self.model_fields_set:
+                self.DEVICE = "mps"
+            if "EMBEDDING_DEVICE" not in self.model_fields_set:
+                self.EMBEDDING_DEVICE = "mps"
+            if "RERANKER_DEVICE" not in self.model_fields_set:
+                self.RERANKER_DEVICE = "cpu"
+            if "EMBEDDING_BATCH_SIZE" not in self.model_fields_set:
+                self.EMBEDDING_BATCH_SIZE = 4
+            if "CPU_THREADS" not in self.model_fields_set:
+                self.CPU_THREADS = 4
+            if "EMBEDDING_MODEL" not in self.model_fields_set:
+                self.EMBEDDING_MODEL = "Qwen/Qwen3-Embedding-0.6B"
+            if "EMBEDDING_DIMENSION" not in self.model_fields_set:
+                self.EMBEDDING_DIMENSION = 1024
+            if "EMBEDDING_INDEX_VERSION" not in self.model_fields_set:
+                self.EMBEDDING_INDEX_VERSION = "hierarchical-qwen3-1024-v1"
         elif profile not in {"local", "custom"}:
-            raise ValueError("MODEL_PROFILE must be local, custom, or research_gpu")
+            raise ValueError("MODEL_PROFILE must be local, local_balanced, custom, or research_gpu")
+
+        if extraction_mode not in {"auto", "fast", "quality"}:
+            raise ValueError("PDF_EXTRACTION_MODE must be auto, fast, or quality")
 
         if self.CORPUS_STORE_BACKEND == "auto":
             self.CORPUS_STORE_BACKEND = (
@@ -249,10 +278,10 @@ class Settings(BaseSettings):
             raise ValueError("EMBEDDING_BATCH_SIZE must be positive")
         if self.CPU_THREADS < 0:
             raise ValueError("CPU_THREADS cannot be negative")
-        if self.RESEARCH_TIMEOUT_SECONDS < 30 or self.RESEARCH_TIMEOUT_SECONDS > 600:
-            raise ValueError("RESEARCH_TIMEOUT_SECONDS must be between 30 and 600")
-        if self.LLM_REQUEST_TIMEOUT_SECONDS < 10 or self.LLM_REQUEST_TIMEOUT_SECONDS > 300:
-            raise ValueError("LLM_REQUEST_TIMEOUT_SECONDS must be between 10 and 300")
+        if self.RESEARCH_TIMEOUT_SECONDS < 30 or self.RESEARCH_TIMEOUT_SECONDS > 7200:
+            raise ValueError("RESEARCH_TIMEOUT_SECONDS must be between 30 and 7200")
+        if self.LLM_REQUEST_TIMEOUT_SECONDS < 10 or self.LLM_REQUEST_TIMEOUT_SECONDS > 3600:
+            raise ValueError("LLM_REQUEST_TIMEOUT_SECONDS must be between 10 and 3600")
         if not 10 <= self.RESEARCH_SYNTHESIS_RESERVE_SECONDS < self.RESEARCH_TIMEOUT_SECONDS:
             raise ValueError(
                 "RESEARCH_SYNTHESIS_RESERVE_SECONDS must be at least 10 and below RESEARCH_TIMEOUT_SECONDS"

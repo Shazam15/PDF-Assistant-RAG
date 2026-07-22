@@ -219,6 +219,13 @@ class DocumentResponse(BaseModel):
     summary: Optional[str] = None  # New field for document summary
     task_id: Optional[str] = None
     extracted_urls: Optional[List[str]] = None
+    processing_progress: Optional[int] = None
+    processing_stage: Optional[str] = None
+    processing_current: Optional[int] = None
+    processing_total: Optional[int] = None
+    processing_updated_at: Optional[datetime] = None
+    searchable_at: Optional[datetime] = None
+    processing_warning: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -244,6 +251,11 @@ class DocumentStatusResponse(BaseModel):
     error_message: Optional[str] = None
     processing_progress: Optional[int] = None
     processing_stage: Optional[str] = None
+    processing_current: Optional[int] = None
+    processing_total: Optional[int] = None
+    processing_updated_at: Optional[datetime] = None
+    searchable_at: Optional[datetime] = None
+    processing_warning: Optional[str] = None
     retry_count: Optional[int] = None
     last_error_traceback: Optional[str] = None
     processing_started_at: Optional[datetime] = None

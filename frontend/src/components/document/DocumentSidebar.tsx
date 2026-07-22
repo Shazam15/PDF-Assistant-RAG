@@ -192,7 +192,7 @@ export default function DocumentSidebar({
   };
 
   const handleDocumentKeyDown = (doc: DocInfo, e: React.KeyboardEvent) => {
-    if (editingDocId === doc.id || doc.status !== "ready") return;
+    if (editingDocId === doc.id || !isSearchable(doc)) return;
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       onSelectDoc(doc);
@@ -232,6 +232,7 @@ export default function DocumentSidebar({
       case "ready":
         return <FileCheck className="w-3.5 h-3.5 text-emerald-400" />;
       case "processing":
+      case "enriching":
         return <Loader2 className="w-3.5 h-3.5 text-primary animate-spin" />;
       case "pending":
         return <Clock className="w-3.5 h-3.5 text-yellow-400" />;
@@ -246,6 +247,14 @@ export default function DocumentSidebar({
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / 1048576).toFixed(1)} MB`;
+  };
+
+  const isSearchable = (doc: DocInfo) =>
+    doc.status === "ready" || (doc.status === "enriching" && Boolean(doc.searchable_at));
+
+  const stageLabel = (stage?: string | null) => {
+    if (!stage) return t("documents.processing");
+    return t(`documents.stages.${stage}`, { defaultValue: stage.replaceAll("_", " ") });
   };
 
   return (
@@ -309,22 +318,31 @@ export default function DocumentSidebar({
             {documents.map((doc) => {
               const isEditing = editingDocId === doc.id;
               const isRenaming = renamingDocId === doc.id;
+              const searchable = isSearchable(doc);
+              const showProcessing =
+                doc.status === "pending" ||
+                doc.status === "processing" ||
+                doc.status === "enriching" ||
+                (doc.processing_progress ?? 100) < 100;
+              const indeterminate =
+                showProcessing &&
+                (!doc.processing_total || doc.processing_current == null);
 
               return (
                 <div
                   key={doc.id}
                   role="button"
-                  tabIndex={doc.status === "ready" ? 0 : -1}
-                  aria-disabled={doc.status !== "ready"}
+                  tabIndex={searchable ? 0 : -1}
+                  aria-disabled={!searchable}
                   aria-current={activeDoc?.id === doc.id ? "true" : undefined}
                   aria-label={`Select document ${doc.original_name}. Status: ${doc.status}`}
-                  onClick={() => doc.status === "ready" && !isEditing && onSelectDoc(doc)}
+                  onClick={() => searchable && !isEditing && onSelectDoc(doc)}
                   onKeyDown={(e) => handleDocumentKeyDown(doc, e)}
                   className={`w-full text-left p-2.5 rounded-lg transition-all duration-200 group
                     ${activeDoc?.id === doc.id
                       ? "bg-primary/15 border border-primary/30"
                       : "hover:bg-sidebar-accent border border-transparent"}
-                    ${doc.status !== "ready" ? "opacity-60 cursor-default" : "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"}`}
+                    ${!searchable ? "opacity-60 cursor-default" : "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"}`}
                 >
                   <div className="flex items-start gap-2.5">
                     {statusIcon(doc.status)}
@@ -349,8 +367,8 @@ export default function DocumentSidebar({
                         </p>
                       )}
 
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {doc.summary || "📄 No summary available"}
+                    <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                      {doc.summary || (showProcessing ? stageLabel(doc.processing_stage) : t("documents.noSummary"))}
                     </p>
                     <div className="flex items-center gap-2 mt-1">
                       <span className="text-[10px] text-muted-foreground">
@@ -368,9 +386,14 @@ export default function DocumentSidebar({
                           </span>
                         </>
                       )}
-                      {doc.status === "processing" && (
+                      {(doc.status === "processing" || doc.status === "pending") && (
                         <Badge variant="secondary" className="text-[9px] h-4 px-1.5">
                           {t("documents.processing")}
+                        </Badge>
+                      )}
+                      {doc.status === "enriching" && (
+                        <Badge variant="secondary" className="text-[9px] h-4 px-1.5 text-emerald-600 dark:text-emerald-400">
+                          {t("documents.available")}
                         </Badge>
                       )}
                       {doc.status === "failed" && (
@@ -379,6 +402,39 @@ export default function DocumentSidebar({
                         </Badge>
                       )}
                     </div>
+                    {showProcessing && (
+                      <div className="mt-2 space-y-1" role="status" aria-live="polite">
+                        <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
+                          <span className="truncate">{stageLabel(doc.processing_stage)}</span>
+                          <span className="shrink-0 tabular-nums">
+                            {doc.processing_current != null && doc.processing_total
+                              ? `${doc.processing_current}/${doc.processing_total}`
+                              : `${doc.processing_progress ?? 0}%`}
+                          </span>
+                        </div>
+                        {indeterminate ? (
+                          <div className="h-1 w-full overflow-hidden rounded-full bg-muted" aria-label={stageLabel(doc.processing_stage)}>
+                            <div className="h-full w-1/3 animate-pulse rounded-full bg-primary" />
+                          </div>
+                        ) : (
+                          <Progress
+                            value={doc.processing_progress ?? 0}
+                            className="h-1 gap-0"
+                            aria-label={`${stageLabel(doc.processing_stage)} ${doc.processing_progress ?? 0}%`}
+                          />
+                        )}
+                        {doc.status === "enriching" && (
+                          <p className="text-[10px] text-emerald-600 dark:text-emerald-400">
+                            {t("documents.searchableWhileEnriching")}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                    {doc.processing_warning && (
+                      <p className="mt-1.5 text-[10px] leading-snug text-amber-600 dark:text-amber-400">
+                        {doc.processing_warning}
+                      </p>
+                    )}
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                     {/* Action buttons (Settings and Delete) are only visible on hover and when the document is ready. The settings button is disabled if the document is not ready, and the delete button shows a loader when the document is being deleted. */} 

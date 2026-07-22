@@ -231,6 +231,10 @@ def _build_graph(dependencies: ResearchDependencies):
             "stage": "building_ledger",
         }
 
+    def audit_start_node(state: ResearchState) -> Dict[str, Any]:
+        _check_budget(state, dependencies)
+        return {"stage": "auditing"}
+
     def audit_node(state: ResearchState) -> Dict[str, Any]:
         _check_budget(state, dependencies)
         audit = (
@@ -281,10 +285,18 @@ def _build_graph(dependencies: ResearchDependencies):
             "stage": "outlining",
         }
 
+    def draft_start_node(state: ResearchState) -> Dict[str, Any]:
+        _check_budget(state, dependencies)
+        return {"stage": "drafting"}
+
     def verify_node(state: ResearchState) -> Dict[str, Any]:
         _check_budget(state, dependencies)
         issues = dependencies.verify(state.get("answer", ""), state.get("sources", []), state.get("evidence", []))
         return {"issues": issues, "stage": "verifying"}
+
+    def verify_start_node(state: ResearchState) -> Dict[str, Any]:
+        _check_budget(state, dependencies)
+        return {"stage": "verifying"}
 
     def after_verify(state: ResearchState) -> str:
         if state.get("issues") and state.get("repairs", 0) < 1 and time.monotonic() < state["deadline"]:
@@ -302,6 +314,10 @@ def _build_graph(dependencies: ResearchDependencies):
         )
         return {"answer": answer, "repairs": state.get("repairs", 0) + 1, "stage": "repairing"}
 
+    def repair_start_node(state: ResearchState) -> Dict[str, Any]:
+        _check_budget(state, dependencies)
+        return {"stage": "repairing"}
+
     def finalize_node(state: ResearchState) -> Dict[str, Any]:
         answer = str(state.get("answer") or "").strip()
         if not answer:
@@ -315,21 +331,29 @@ def _build_graph(dependencies: ResearchDependencies):
     graph.add_node("understand", understand)
     graph.add_node("retrieve", retrieve_node)
     graph.add_node("ledger", ledger_node)
+    graph.add_node("audit_start", audit_start_node)
     graph.add_node("audit", audit_node)
     graph.add_node("outline", outline_node)
+    graph.add_node("draft_start", draft_start_node)
     graph.add_node("draft", draft_node)
+    graph.add_node("verify_start", verify_start_node)
     graph.add_node("verify", verify_node)
+    graph.add_node("repair_start", repair_start_node)
     graph.add_node("repair", repair_node)
     graph.add_node("finalize", finalize_node)
     graph.add_edge(START, "understand")
     graph.add_edge("understand", "retrieve")
     graph.add_edge("retrieve", "ledger")
-    graph.add_edge("ledger", "audit")
+    graph.add_edge("ledger", "audit_start")
+    graph.add_edge("audit_start", "audit")
     graph.add_conditional_edges("audit", after_audit, {"retrieve": "retrieve", "draft": "outline"})
-    graph.add_edge("outline", "draft")
-    graph.add_edge("draft", "verify")
-    graph.add_conditional_edges("verify", after_verify, {"repair": "repair", "finalize": "finalize"})
-    graph.add_edge("repair", "verify")
+    graph.add_edge("outline", "draft_start")
+    graph.add_edge("draft_start", "draft")
+    graph.add_edge("draft", "verify_start")
+    graph.add_edge("verify_start", "verify")
+    graph.add_conditional_edges("verify", after_verify, {"repair": "repair_start", "finalize": "finalize"})
+    graph.add_edge("repair_start", "repair")
+    graph.add_edge("repair", "verify_start")
     graph.add_edge("finalize", END)
     return graph.compile()
 
@@ -379,6 +403,8 @@ def _fallback_state_stream(
         state["claim_ledger"] = _build_claim_ledger(state["brief"], evidence)
         state["stage"] = "building_ledger"
         yield dict(state)
+        state["stage"] = "auditing"
+        yield dict(state)
         audit = (
             dependencies.audit(state["brief"], evidence)
             if dependencies.audit
@@ -415,15 +441,21 @@ def _fallback_state_stream(
     )
     state["stage"] = "outlining"
     yield dict(state)
+    state["stage"] = "drafting"
+    yield dict(state)
     state["answer"] = dependencies.synthesize(
         state["brief"], state["evidence"], state["sources"], state["argument_outline"]
     )
     state["stage"] = "drafting"
     yield dict(state)
+    state["stage"] = "verifying"
+    yield dict(state)
     state["issues"] = dependencies.verify(state["answer"], state["sources"], state["evidence"])
     state["stage"] = "verifying"
     yield dict(state)
     if state["issues"]:
+        state["stage"] = "repairing"
+        yield dict(state)
         state["answer"] = dependencies.repair(
             state["brief"], state["evidence"], state["sources"], state["answer"], state["issues"]
         )

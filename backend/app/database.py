@@ -166,6 +166,11 @@ def _migrate_schema():
         ("documents", "drive_file_id", "ALTER TABLE documents ADD COLUMN drive_file_id VARCHAR(255)"),
         ("documents", "drive_folder_id", "ALTER TABLE documents ADD COLUMN drive_folder_id VARCHAR(255)"),
         ("documents", "drive_synced_at", "ALTER TABLE documents ADD COLUMN drive_synced_at TIMESTAMP"),
+        ("documents", "processing_current", "ALTER TABLE documents ADD COLUMN processing_current INTEGER"),
+        ("documents", "processing_total", "ALTER TABLE documents ADD COLUMN processing_total INTEGER"),
+        ("documents", "processing_updated_at", "ALTER TABLE documents ADD COLUMN processing_updated_at TIMESTAMP"),
+        ("documents", "searchable_at", "ALTER TABLE documents ADD COLUMN searchable_at TIMESTAMP"),
+        ("documents", "processing_warning", "ALTER TABLE documents ADD COLUMN processing_warning TEXT"),
     ]
     for table, column, ddl in docs_migrations:
         if column not in existing_docs_columns:

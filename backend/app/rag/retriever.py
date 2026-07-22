@@ -144,6 +144,7 @@ def build_research_plan(query: str) -> ResearchBrief:
         llm = ChatOllama(
             model=settings.LLM_MODEL,
             temperature=0,
+            reasoning=False if settings.LLM_DISABLE_THINKING else None,
             num_predict=settings.RETRIEVAL_PLANNER_MAX_TOKENS,
             client_kwargs={"timeout": settings.RETRIEVAL_PLANNER_TIMEOUT_SECONDS},
         )

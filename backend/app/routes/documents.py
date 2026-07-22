@@ -732,6 +732,13 @@ def update_chunk_settings(
     doc.chunk_count = 0
     doc.page_count = 0
     doc.summary = None
+    doc.processing_progress = 0
+    doc.processing_stage = "queued"
+    doc.processing_current = None
+    doc.processing_total = None
+    doc.processing_updated_at = None
+    doc.searchable_at = None
+    doc.processing_warning = None
     db.commit()
 
     # Queue ingestion with updated chunk settings. The worker reads the new
@@ -775,6 +782,11 @@ def retry_document_processing(
     doc.status = "pending"
     doc.processing_progress = 0
     doc.processing_stage = "queued"
+    doc.processing_current = None
+    doc.processing_total = None
+    doc.processing_updated_at = None
+    doc.searchable_at = None
+    doc.processing_warning = None
     doc.error_message = None
     doc.last_error_traceback = None
     doc.completed_at = None

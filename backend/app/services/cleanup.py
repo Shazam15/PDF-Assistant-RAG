@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from app.database import get_db_session
 from app.config import get_settings
 from app.models import Document
+from sqlalchemy import and_, or_
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -19,9 +20,15 @@ def cleanup_stale_documents():
         stale = (
             db.query(Document)
             .filter(
-                Document.status == "processing",
+                Document.status.in_(("processing", "enriching")),
                 Document.processing_started_at.isnot(None),
-                Document.processing_started_at < cutoff,
+                or_(
+                    Document.processing_updated_at < cutoff,
+                    and_(
+                        Document.processing_updated_at.is_(None),
+                        Document.processing_started_at < cutoff,
+                    ),
+                ),
                 Document.is_deleted.is_(False),
             )
             .all()
@@ -34,10 +41,17 @@ def cleanup_stale_documents():
                 doc.processing_stage,
                 doc.processing_started_at,
             )
-            doc.status = "failed"
-            doc.processing_progress = 0
-            doc.error_message = f"Processing timed out after {timeout_minutes} minutes"
-            doc.last_error_traceback = "Timed out: no progress update received within the configured timeout window."
+            if doc.status == "enriching" and doc.searchable_at is not None:
+                doc.status = "ready"
+                doc.processing_progress = 100
+                doc.processing_stage = "completed_with_warnings"
+                doc.processing_warning = f"Enrichment timed out after {timeout_minutes} minutes"
+                doc.completed_at = datetime.now(timezone.utc)
+            else:
+                doc.status = "failed"
+                doc.processing_progress = 0
+                doc.error_message = f"Processing timed out after {timeout_minutes} minutes"
+                doc.last_error_traceback = "Timed out: no progress update received within the configured timeout window."
 
         if stale:
             logger.info("Marked %d stale document(s) as failed", len(stale))

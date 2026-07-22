@@ -63,7 +63,10 @@ def test_research_graph_fills_a_missing_facet_then_synthesizes():
     assert calls == [["methods", "results"], ["results"]]
     assert len(result["sources"]) == 2
     assert result["answer"] == "Integrated answer [D1] [D2]."
-    assert any(event.get("data", {}).get("stage") == "auditing" for event in events)
+    stages = [event.get("data", {}).get("stage") for event in events if event["type"] == "progress"]
+    assert "auditing" in stages
+    assert stages.index("building_ledger") < stages.index("auditing")
+    assert stages.index("outlining") < stages.index("drafting") < stages.index("verifying")
 
 
 def test_research_graph_filters_tangential_evidence_from_final_sources():

@@ -576,6 +576,19 @@ def test_generate_answer_greeting(mock_llm_client, mock_retriever):
     mock_retriever.assert_not_called()
 
 
+def test_streaming_greeting_uses_local_fallback_when_ollama_fails(
+    mock_llm_client, mock_retriever
+):
+    mock_llm_client.stream.side_effect = RuntimeError("model not found")
+
+    events = list(generate_answer_stream("hola", "user123"))
+    payloads = [json.loads(event.removeprefix("data: ").strip()) for event in events]
+
+    assert [payload["type"] for payload in payloads] == ["sources", "token", "done"]
+    assert payloads[1]["data"] == "¡Hola! Soy ATLAS. ¿En qué puedo ayudarte hoy?"
+    mock_retriever.assert_not_called()
+
+
 def test_complex_question_uses_agentic_path_first(monkeypatch, mock_retriever):
     executor = MagicMock()
     executor.invoke.return_value = {"output": "Respuesta comparativa [D1]"}
@@ -724,6 +737,75 @@ def test_agent_context_places_distinct_documents_before_repeated_chunks():
     context = agent_module._build_agent_source_context(raw_sources)
 
     assert context.index("[D1]") < context.index("[D3]") < context.index("[D4]") < context.index("[D2]")
+
+
+def test_research_synthesis_fits_context_without_losing_source_breadth(monkeypatch):
+    monkeypatch.setattr(agent_module.settings, "LLM_CONTEXT_WINDOW", 8192)
+    monkeypatch.setattr(agent_module.settings, "AGENT_SYNTHESIS_MAX_TOKENS", 2048)
+    raw_sources = [
+        {
+            "source_id": f"D{index}",
+            "filename": f"study-{index}.pdf",
+            "document_id": f"doc-{index}",
+            "page": index,
+            "text": (f"Verified evidence from study {index}. " * 300),
+        }
+        for index in range(1, 13)
+    ]
+    llm = MagicMock()
+    llm.invoke.return_value = MagicMock(
+        content="Los estudios recuperados aportan evidencia directamente comparable para el análisis solicitado [D1].",
+        response_metadata={"done_reason": "stop", "prompt_eval_count": 5000, "eval_count": 80},
+    )
+    monkeypatch.setattr(agent_module, "get_llm_client", MagicMock(return_value=llm))
+
+    answer = agent_module._generate_partial_answer_from_agent_sources(
+        question="Compara la evidencia recuperada.",
+        raw_sources=raw_sources,
+        sources=[dict(source) for source in raw_sources],
+        hf_token=None,
+        chat_history=None,
+    )
+
+    prompt = llm.invoke.call_args.args[0][0].content
+    assert answer.endswith("[D1].")
+    assert len(prompt) <= agent_module._llm_prompt_char_budget(2048)
+    assert "[D1]" in prompt
+    assert "[D12]" in prompt
+
+
+def test_audit_evidence_is_evenly_bounded():
+    evidence = [
+        {"filename": f"study-{index}.pdf", "page": index, "text": "evidence " * 1000}
+        for index in range(1, 13)
+    ]
+
+    context = agent_module._bounded_audit_evidence(evidence, max_chars=6000)
+
+    assert len(context) <= 6000
+    assert "[E1]" in context
+    assert "[E12]" in context
+
+
+def test_chat_history_keeps_recent_messages_within_budget():
+    history = [
+        {"role": "user", "content": f"old-{index}-" + ("x" * 600)}
+        for index in range(5)
+    ]
+
+    formatted = agent_module._format_chat_history(history, max_chars=1000)
+
+    assert len(formatted) <= 1000
+    assert "old-4" in formatted
+    assert "old-0" not in formatted
+
+
+def test_llm_disable_thinking_is_forwarded_to_ollama(monkeypatch):
+    monkeypatch.setattr(agent_module.settings, "LLM_DISABLE_THINKING", True)
+
+    llm = agent_module.get_llm_client(max_tokens=128)
+
+    assert llm.reasoning is False
 
 
 def test_complex_question_does_not_fallback_to_direct_rag_on_agent_stop(monkeypatch, mock_retriever):

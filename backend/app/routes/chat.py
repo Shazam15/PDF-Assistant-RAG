@@ -47,6 +47,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
 
+def _document_is_searchable(document: Document) -> bool:
+    return document.status == "ready" or (
+        document.status == "enriching" and document.searchable_at is not None
+    )
+
+
 def _next_stream_chunk(generator):
     try:
         return True, next(generator)
@@ -179,7 +185,7 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
                 await websocket.send_json({"type": "error", "data": "Document not found"})
                 await websocket.close()
                 return
-            if doc.status != "ready":
+            if not _document_is_searchable(doc):
                 progress = getattr(doc, "processing_progress", None)
                 stage = getattr(doc, "processing_stage", None)
                 detail = f"Document is still {doc.status}."
@@ -543,6 +549,7 @@ def generate_answer_stream(
     top_k: Optional[int] = None,
     chat_history: Optional[list] = None,
     routing_mode: str = "auto",
+    cancellation_event: Optional[Event] = None,
 ):
     from app.rag.agent import generate_answer_stream as _generate_answer_stream
 
@@ -554,6 +561,7 @@ def generate_answer_stream(
         top_k=top_k,
         chat_history=chat_history,
         routing_mode=routing_mode,
+        cancellation_event=cancellation_event,
     )
 
 
@@ -596,7 +604,7 @@ def ask_question(
             if not doc:
                 raise NotFoundException("Document")
 
-            if doc.status != "ready":
+            if not _document_is_searchable(doc):
                 progress = getattr(doc, "processing_progress", None)
                 stage = getattr(doc, "processing_stage", None)
                 detail = f"Document is still {doc.status}. Please wait for processing to complete."
@@ -740,7 +748,7 @@ def ask_question_stream(
         if not doc:
             raise NotFoundException("Document")
 
-        if doc.status != "ready":
+        if not _document_is_searchable(doc):
             progress = getattr(doc, "processing_progress", None)
             stage = getattr(doc, "processing_stage", None)
             detail = f"Document is still {doc.status}. Please wait for processing to complete."

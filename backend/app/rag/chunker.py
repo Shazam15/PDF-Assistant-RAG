@@ -9,7 +9,7 @@ import docx
 import logging
 import os
 import shutil
-from typing import List, Dict, Any
+from typing import Any, Callable, Dict, List, Optional
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from app.config import get_settings
 
@@ -18,6 +18,17 @@ logger = logging.getLogger(__name__)
 
 CODE_EXTENSIONS = {"py", "js", "ts", "tsx", "java", "cpp", "c", "cs", "go", "rs", "sql", "ipynb"}
 OCR_MIN_TEXT_CHARS_PER_PAGE = 40
+ProgressCallback = Callable[[str, Optional[int], Optional[int]], None]
+
+
+def _notify_progress(
+    callback: Optional[ProgressCallback],
+    stage: str,
+    current: Optional[int] = None,
+    total: Optional[int] = None,
+) -> None:
+    if callback:
+        callback(stage, current, total)
 
 
 def _token_length(text: str) -> int:
@@ -158,9 +169,15 @@ def _page_has_enough_text(page_items: List[Dict[str, Any]]) -> bool:
     return len(re.sub(r"\s+", "", text)) >= OCR_MIN_TEXT_CHARS_PER_PAGE
 
 
-def _merge_ocr_for_sparse_pages(filepath: str, pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _merge_ocr_for_sparse_pages(
+    filepath: str,
+    pages: List[Dict[str, Any]],
+    progress_callback: Optional[ProgressCallback] = None,
+) -> List[Dict[str, Any]]:
     """OCR only pages where normal extraction produced no meaningful text."""
     if not pages:
+        if progress_callback:
+            return extract_pdf_with_ocr(filepath, progress_callback=progress_callback)
         return extract_pdf_with_ocr(filepath)
 
     doc = None
@@ -187,7 +204,14 @@ def _merge_ocr_for_sparse_pages(filepath: str, pages: List[Dict[str, Any]]) -> L
         return pages
 
     try:
-        ocr_pages = extract_pdf_with_ocr(filepath, page_numbers=sparse_page_numbers)
+        if progress_callback:
+            ocr_pages = extract_pdf_with_ocr(
+                filepath,
+                page_numbers=sparse_page_numbers,
+                progress_callback=progress_callback,
+            )
+        else:
+            ocr_pages = extract_pdf_with_ocr(filepath, page_numbers=sparse_page_numbers)
     except Exception as exc:
         logger.warning(f"OCR merge failed for sparse PDF pages: {exc}")
         return pages
@@ -222,18 +246,62 @@ def _resolve_tesseract_languages(pytesseract_module: Any, requested_languages: s
     return installed.pop() if installed else "eng"
 
 
-def extract_pdf(filepath: str) -> List[Dict[str, Any]]:
+def _pdf_requires_quality_extraction(filepath: str, pages: List[Dict[str, Any]]) -> bool:
+    """Detect sparse text or real tables before paying the Docling cost."""
+    try:
+        doc = fitz.open(filepath)
+    except Exception:
+        return True
+
+    try:
+        populated_pages = {
+            int(item.get("page") or 1)
+            for item in pages
+            if str(item.get("text") or "").strip()
+        }
+        if len(populated_pages) < len(doc):
+            return True
+        for page_index in range(min(len(doc), 20)):
+            page = doc[page_index]
+            finder = getattr(page, "find_tables", None)
+            if finder is None:
+                continue
+            try:
+                if getattr(finder(), "tables", None):
+                    return True
+            except Exception:
+                continue
+        return False
+    finally:
+        doc.close()
+
+
+def extract_pdf(
+    filepath: str,
+    progress_callback: Optional[ProgressCallback] = None,
+) -> List[Dict[str, Any]]:
     """Extract PDF text while preserving tables as separate chunks.
 
     Prefer stable Python PDF extractors by default. Unstructured can be enabled
     with PDF_USE_UNSTRUCTURED=true for advanced table extraction, but it is not
     the default because its native PDF stack can crash worker processes.
     """
-    if settings.PDF_USE_DOCLING:
+    mode = settings.PDF_EXTRACTION_MODE
+    fast_result: List[Dict[str, Any]] = []
+
+    if mode in {"auto", "fast"}:
         try:
-            result = extract_pdf_with_docling(filepath)
+            fast_result = extract_pdf_with_pymupdf(filepath, progress_callback=progress_callback)
+            if fast_result and (mode == "fast" or not _pdf_requires_quality_extraction(filepath, fast_result)):
+                return _merge_ocr_for_sparse_pages(filepath, fast_result, progress_callback)
+        except Exception as exc:
+            logger.warning("Fast PyMuPDF extraction failed, falling back: %s", exc)
+
+    if mode in {"auto", "quality"}:
+        try:
+            result = extract_pdf_with_docling(filepath, progress_callback=progress_callback)
             if result:
-                return _merge_ocr_for_sparse_pages(filepath, result)
+                return _merge_ocr_for_sparse_pages(filepath, result, progress_callback)
         except Exception as exc:
             logger.warning("Docling extraction failed, falling back: %s", exc)
 
@@ -241,7 +309,7 @@ def extract_pdf(filepath: str) -> List[Dict[str, Any]]:
         try:
             result = extract_pdf_with_unstructured(filepath)
             if result:
-                return _merge_ocr_for_sparse_pages(filepath, result)
+                return _merge_ocr_for_sparse_pages(filepath, result, progress_callback)
         except Exception as e:
             # Unstructured may be installed but require native deps (poppler/pdfinfo).
             logger.warning(f"Unstructured extraction failed, falling back: {e}")
@@ -249,20 +317,20 @@ def extract_pdf(filepath: str) -> List[Dict[str, Any]]:
     try:
         result = extract_pdf_with_tables(filepath)
         if result:
-            return _merge_ocr_for_sparse_pages(filepath, result)
+            return _merge_ocr_for_sparse_pages(filepath, result, progress_callback)
     except Exception as e2:
         logger.warning(f"pdfplumber extraction failed, falling back: {e2}")
     
     try:
-        result = extract_pdf_with_pymupdf(filepath)
+        result = fast_result or extract_pdf_with_pymupdf(filepath, progress_callback=progress_callback)
         if result:
-            return _merge_ocr_for_sparse_pages(filepath, result)
+            return _merge_ocr_for_sparse_pages(filepath, result, progress_callback)
     except Exception as e3:
         logger.warning(f"PyMuPDF extraction failed, falling back to OCR: {e3}")
     
     # Last resort: try OCR for image-based PDFs
     try:
-        result = extract_pdf_with_ocr(filepath)
+        result = extract_pdf_with_ocr(filepath, progress_callback=progress_callback)
         if result:
             logger.info(f"Successfully extracted text from {filepath} using OCR")
             return result
@@ -274,13 +342,17 @@ def extract_pdf(filepath: str) -> List[Dict[str, Any]]:
     return []
 
 
-def extract_pdf_with_docling(filepath: str) -> List[Dict[str, Any]]:
+def extract_pdf_with_docling(
+    filepath: str,
+    progress_callback: Optional[ProgressCallback] = None,
+) -> List[Dict[str, Any]]:
     """Extract layout elements with Docling while retaining page provenance."""
     try:
         from docling.document_converter import DocumentConverter
     except Exception as exc:
         raise ImportError("docling not available") from exc
 
+    _notify_progress(progress_callback, "extracting_layout")
     conversion = DocumentConverter().convert(filepath)
     document = conversion.document
     pages: List[Dict[str, Any]] = []
@@ -319,14 +391,20 @@ def extract_pdf_with_docling(filepath: str) -> List[Dict[str, Any]]:
                 if all(value is not None for value in coords):
                     payload["bbox"] = json.dumps(coords)
         pages.append(payload)
+    page_total = max((int(item.get("page") or 1) for item in pages), default=1)
+    _notify_progress(progress_callback, "extracting", page_total, page_total)
     return pages
 
 
-def extract_pdf_with_pymupdf(filepath: str) -> List[Dict[str, Any]]:
+def extract_pdf_with_pymupdf(
+    filepath: str,
+    progress_callback: Optional[ProgressCallback] = None,
+) -> List[Dict[str, Any]]:
     """Fallback PDF extraction with page numbers using PyMuPDF."""
     doc = fitz.open(filepath)
     pages = []
 
+    total_pages = len(doc)
     for page_num, page in enumerate(doc):
         text = page.get_text()
         if text.strip():
@@ -335,6 +413,7 @@ def extract_pdf_with_pymupdf(filepath: str) -> List[Dict[str, Any]]:
                 "page": page_num + 1,
                 "chunk_type": "text",
             })
+        _notify_progress(progress_callback, "extracting", page_num + 1, total_pages)
 
     doc.close()
     return pages
@@ -447,7 +526,11 @@ def extract_pdf_with_tables(filepath: str) -> List[Dict[str, Any]]:
     return pages
 
 
-def extract_pdf_with_ocr(filepath: str, page_numbers: List[int] = None) -> List[Dict[str, Any]]:
+def extract_pdf_with_ocr(
+    filepath: str,
+    page_numbers: List[int] = None,
+    progress_callback: Optional[ProgressCallback] = None,
+) -> List[Dict[str, Any]]:
     """Extract text from image-based PDFs using OCR (Tesseract via pdf2image).
     
     This function converts PDF pages to images and applies optical character recognition
@@ -500,7 +583,9 @@ def extract_pdf_with_ocr(filepath: str, page_numbers: List[int] = None) -> List[
                 if doc:
                     doc.close()
 
-        for requested_page in page_iterable:
+        page_iterable = list(page_iterable)
+        total_requested = len(page_iterable)
+        for request_index, requested_page in enumerate(page_iterable, start=1):
             try:
                 page_convert_kwargs = dict(convert_kwargs)
                 if requested_page is not None:
@@ -529,7 +614,8 @@ def extract_pdf_with_ocr(filepath: str, page_numbers: List[int] = None) -> List[
                         logger.debug(f"OCR returned empty text for page {page_num}")
             except Exception as e:
                 logger.warning(f"OCR failed for page {requested_page or 'unknown'}: {e}")
-                continue
+            finally:
+                _notify_progress(progress_callback, "extracting_ocr", request_index, total_requested)
     except Exception as e:
         logger.warning(f"PDF to image conversion failed: {e}")
         return []
@@ -655,7 +741,12 @@ def extract_txt(filepath: str) -> List[Dict[str, Any]]:
     return chunks
 
 # Change the chunk_document function input to take a file path and optional chunk size and overlap parameters. 
-def chunk_document(filepath: str, chunk_size: int = None, chunk_overlap: int = None) -> List[Dict[str, Any]]:
+def chunk_document(
+    filepath: str,
+    chunk_size: int = None,
+    chunk_overlap: int = None,
+    progress_callback: Optional[ProgressCallback] = None,
+) -> List[Dict[str, Any]]:
     """
     Load a document, extract text per page, and split into semantic chunks.
     Accepts a file path and optional chunk size and overlap parameters. 
@@ -667,7 +758,11 @@ def chunk_document(filepath: str, chunk_size: int = None, chunk_overlap: int = N
 
     # ── Extract text by file type ────────────────────
     if ext == "pdf":
-        pages = extract_pdf(filepath)
+        pages = (
+            extract_pdf(filepath, progress_callback=progress_callback)
+            if progress_callback
+            else extract_pdf(filepath)
+        )
     elif ext == "docx":
         pages = extract_docx(filepath)
     elif ext in ("txt", "md") or ext in CODE_EXTENSIONS:
@@ -831,6 +926,7 @@ def chunk_document(filepath: str, chunk_size: int = None, chunk_overlap: int = N
             # Collect garbage at the end of each page to prevent memory buildup
             import gc
             gc.collect()
+            _notify_progress(progress_callback, "chunking", page_num, total_pages)
 
     finally:
         if pdf_doc:

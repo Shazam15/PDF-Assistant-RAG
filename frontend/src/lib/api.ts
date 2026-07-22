@@ -14,7 +14,7 @@ interface FetchOptions extends RequestInit {
   _skipRefresh?: boolean;
 }
 
-class ApiClient {
+export class ApiClient {
   private baseUrl: string;
   /** Guards against multiple concurrent refresh attempts */
   private refreshPromise: Promise<string | null> | null = null;
@@ -31,6 +31,34 @@ class ApiClient {
   private getRefreshToken(): string | null {
     if (typeof window === "undefined") return null;
     return localStorage.getItem("refresh_token");
+  }
+
+  private getJwtExpiration(token: string): number | null {
+    if (!token || token === "cookie" || token.startsWith("pdf_rag_")) return null;
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    try {
+      const encoded = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+      const padded = encoded.padEnd(Math.ceil(encoded.length / 4) * 4, "=");
+      const payload = JSON.parse(window.atob(padded)) as { exp?: unknown };
+      return typeof payload.exp === "number" ? payload.exp : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Return a token that will remain valid long enough to establish a WebSocket. */
+  async getValidAccessToken(minValiditySeconds = 60): Promise<string | null> {
+    const token = this.getToken();
+    if (!token || token === "cookie") {
+      return this.tryRefreshToken();
+    }
+
+    const expiration = this.getJwtExpiration(token);
+    if (expiration === null || expiration > Date.now() / 1000 + minValiditySeconds) {
+      return token;
+    }
+    return this.tryRefreshToken();
   }
 
   private getHeaders(token?: string): HeadersInit {

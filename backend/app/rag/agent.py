@@ -34,6 +34,7 @@ settings = get_settings()
 ROUTER_VERSION = "semantic-facets-v1"
 RoutingMode = Literal["auto", "quick", "research"]
 RoutingRoute = Literal["greeting", "scoped_rag", "simple_rag", "research_rag", "tool_agent"]
+GREETING_FALLBACK = "¡Hola! Soy ATLAS. ¿En qué puedo ayudarte hoy?"
 _AGENT_TOOL_NAMES = {"pdf_search", "code_review", "calculator", "web_search"}
 MIN_SOURCE_SCORE = settings.RERANK_RELEVANCE_THRESHOLD
 INSUFFICIENT_EVIDENCE_MESSAGE = (
@@ -76,6 +77,7 @@ def get_llm_client(hf_token: Optional[str] = None, max_tokens: Optional[int] = N
     return ChatOllama(
         model=settings.LLM_MODEL,
         temperature=0,
+        reasoning=False if settings.LLM_DISABLE_THINKING else None,
         num_ctx=settings.LLM_CONTEXT_WINDOW,
         num_predict=max_tokens or settings.LLM_MAX_NEW_TOKENS,
         client_kwargs={"timeout": settings.LLM_REQUEST_TIMEOUT_SECONDS},
@@ -88,14 +90,33 @@ def _structured_system_prompt(instruction: str) -> str:
     return prefix + instruction
 
 
-def _format_chat_history(messages: List[Dict[str, str]]) -> str:
+def _format_chat_history(messages: List[Dict[str, str]], max_chars: int = 6000) -> str:
     if not messages:
         return ""
-    lines = ["Previous conversation:"]
-    for msg in messages:
+    selected: List[str] = []
+    remaining = max(0, max_chars - len("Previous conversation:\n"))
+    for msg in reversed(messages):
         role = "User" if msg["role"] == "user" else "Assistant"
-        lines.append(f"{role}: {msg['content']}")
-    return "\n".join(lines)
+        line = f"{role}: {msg['content']}"
+        if len(line) > remaining:
+            if remaining >= 200:
+                selected.append(line[: max(0, remaining - 3)] + "...")
+            break
+        selected.append(line)
+        remaining -= len(line) + 1
+        if remaining <= 0:
+            break
+    if not selected:
+        return ""
+    return "\n".join(["Previous conversation:", *reversed(selected)])
+
+
+def _llm_prompt_char_budget(max_output_tokens: int) -> int:
+    """Conservative input budget for multilingual prompts within Ollama's total context."""
+    context_tokens = max(2048, int(settings.LLM_CONTEXT_WINDOW))
+    output_tokens = min(max(256, int(max_output_tokens)), context_tokens // 2)
+    input_tokens = max(1024, context_tokens - output_tokens - 512)
+    return input_tokens * 3
 
 
 def _load_global_style_reference() -> str:
@@ -143,6 +164,7 @@ def get_agent_executor(
     chat_llm = ChatOllama(
         model=settings.LLM_MODEL,
         temperature=settings.LLM_TEMPERATURE,
+        reasoning=False if settings.LLM_DISABLE_THINKING else None,
         num_ctx=settings.LLM_CONTEXT_WINDOW,
         num_predict=min(settings.LLM_MAX_NEW_TOKENS, settings.AGENT_PLANNER_MAX_TOKENS),
         client_kwargs={"timeout": settings.LLM_REQUEST_TIMEOUT_SECONDS},
@@ -1295,12 +1317,17 @@ def _generate_grounded_selected_document_answer(
     return "No fue posible generar una respuesta con citas verificables a partir del documento seleccionado."
 
 
-def _build_agent_source_context(raw_sources: List[Dict[str, Any]]) -> str:
+def _build_agent_source_context(
+    raw_sources: List[Dict[str, Any]],
+    max_context_chars: Optional[int] = None,
+) -> str:
     """Format sources already recovered by the agent without performing a new retrieval."""
     context_parts = []
     seen_ids = set()
     total_chars = 0
-    max_context_chars = min(100000, max(28000, settings.LLM_CONTEXT_WINDOW * 3))
+    if max_context_chars is None:
+        max_context_chars = min(100000, max(28000, settings.LLM_CONTEXT_WINDOW * 3))
+    max_context_chars = max(1200, int(max_context_chars))
 
     # Put one excerpt from every document first so repeated chunks from the
     # highest-ranked papers cannot consume the context window by themselves.
@@ -1315,6 +1342,11 @@ def _build_agent_source_context(raw_sources: List[Dict[str, Any]]) -> str:
         else:
             deferred_sources.append(source)
     ordered_sources.extend(deferred_sources)
+    target_count = min(len(ordered_sources), max(1, max_context_chars // 500))
+    per_source_text_limit = max(
+        320,
+        min(2400, (max_context_chars // max(1, target_count)) - 180),
+    )
 
     for index, source in enumerate(ordered_sources, 1):
         if total_chars >= max_context_chars:
@@ -1327,28 +1359,25 @@ def _build_agent_source_context(raw_sources: List[Dict[str, Any]]) -> str:
         text = str(source.get("context_text") or source.get("text") or source.get("snippet") or "").strip()
         if not text:
             continue
-        remaining_chars = max_context_chars - total_chars
-        source_limit = min(2400, remaining_chars)
-        if len(text) > source_limit:
-            text = text[: max(0, source_limit - 3)] + "..."
 
         if source.get("source_type") == "web":
             title = source.get("title") or source.get("filename") or "Fuente web"
             url = source.get("url", "")
-            context_part = (
+            prefix = (
                 f"Fuente [{source_id}] ({title})\n"
                 f"URL: {url}\n"
-                f"{text}"
             )
-            context_parts.append(context_part)
-            total_chars += len(context_part)
-            continue
+        else:
+            filename = source.get("filename", "documento")
+            prefix = f"Fuente [{source_id}] ({filename}, {_location_label(source)}):\nExtracto: "
 
-        filename = source.get("filename", "documento")
-        context_part = (
-            f"Fuente [{source_id}] ({filename}, {_location_label(source)}):\n"
-            f"Extracto: {text}"
-        )
+        available_text = max_context_chars - total_chars - len(prefix)
+        if available_text <= 80:
+            break
+        source_limit = min(per_source_text_limit, available_text)
+        if len(text) > source_limit:
+            text = text[: max(0, source_limit - 3)] + "..."
+        context_part = prefix + text
         context_parts.append(context_part)
         total_chars += len(context_part)
 
@@ -1361,7 +1390,7 @@ def _build_partial_agent_answer_prompt(
     chat_history: Optional[List[Dict[str, str]]] = None,
     draft_answer: Optional[str] = None,
 ) -> str:
-    history = _format_chat_history(chat_history) if chat_history else ""
+    history = _format_chat_history(chat_history, max_chars=2500) if chat_history else ""
     response_kind = "final"
     task_description = (
         "La fase de investigación recuperó evidencia documental. Realiza una síntesis nueva e independiente; "
@@ -1421,10 +1450,6 @@ def _generate_partial_answer_from_agent_sources(
             "No se completaron los vacíos con conocimiento externo."
         )
 
-    context = _build_agent_source_context(raw_sources)
-    if not context:
-        return "Los documentos recuperados no contienen texto utilizable para elaborar una respuesta verificable."
-
     from langchain_core.messages import HumanMessage
 
     if settings.MODEL_PROFILE == "research_gpu":
@@ -1437,7 +1462,7 @@ def _generate_partial_answer_from_agent_sources(
     chat_llm = get_llm_client(hf_token, max_tokens=settings.AGENT_SYNTHESIS_MAX_TOKENS)
     # Do not pass the planner draft to the writer. Early planner answers tend to
     # anchor the synthesis on the first one or two documents it noticed.
-    prompt = _build_partial_agent_answer_prompt(question, context, chat_history)
+    outline_suffix = ""
     if argument_outline:
         outline_text = "\n".join(
             f"- {item.get('question')}: {', '.join(item.get('source_ids') or [])}"
@@ -1445,16 +1470,24 @@ def _generate_partial_answer_from_agent_sources(
             if item.get("source_ids")
         )
         if outline_text:
-            prompt += (
+            outline_suffix = (
                 "\n\n## Esquema interno afirmación-evidencia\n"
                 "Usa este mapa solo para organizar la cobertura; verifica cada afirmación contra los extractos y no "
                 "reproduzcas el mapa literalmente en la respuesta.\n"
                 f"{outline_text}"
             )
+    prompt_budget = _llm_prompt_char_budget(settings.AGENT_SYNTHESIS_MAX_TOKENS)
+    prompt_without_evidence = _build_partial_agent_answer_prompt(
+        question, "", chat_history
+    ) + outline_suffix
+    evidence_budget = max(1200, prompt_budget - len(prompt_without_evidence) - 1200)
+    context = _build_agent_source_context(raw_sources, max_context_chars=evidence_budget)
+    if not context:
+        return "Los documentos recuperados no contienen texto utilizable para elaborar una respuesta verificable."
+    prompt = _build_partial_agent_answer_prompt(question, context, chat_history) + outline_suffix
     required_documents = 1 if sources else 0
 
     revision_issues: List[str] = []
-    previous_answer = ""
     best_answer = ""
     best_penalty = float("inf")
     for attempt in range(2):
@@ -1467,11 +1500,21 @@ def _generate_partial_answer_from_agent_sources(
                 f"{'; '.join(revision_issues) or 'cobertura o citas insuficientes'}. "
                 "Integra todos los documentos que aporten evidencia directa, sin imponer una cuota ni incluir fuentes tangenciales. "
                 "No añadas afirmaciones para forzar más fuentes y no comentes esta revisión en la respuesta.\n\n"
-                "## Versión que debes corregir\n"
-                f"{previous_answer[:6000]}"
+                "Vuelve a redactar desde los extractos; no copies la versión anterior."
             )
         try:
             response = chat_llm.invoke([HumanMessage(content=attempt_prompt)])
+            metadata = getattr(response, "response_metadata", {}) or {}
+            logger.info(
+                "Grounded synthesis attempt=%d prompt_chars=%d budget_chars=%d "
+                "prompt_eval_count=%s eval_count=%s done_reason=%s",
+                attempt + 1,
+                len(attempt_prompt),
+                prompt_budget,
+                metadata.get("prompt_eval_count"),
+                metadata.get("eval_count"),
+                metadata.get("done_reason"),
+            )
             answer = parse_agent_output(response.content)
         except Exception as exc:
             logger.warning("Grounded synthesis attempt %d failed: %s", attempt + 1, exc)
@@ -1498,7 +1541,6 @@ def _generate_partial_answer_from_agent_sources(
             if penalty < best_penalty:
                 best_answer = answer
                 best_penalty = penalty
-        previous_answer = answer
         if answer != INSUFFICIENT_EVIDENCE_MESSAGE and not revision_issues:
             logger.info(
                 "Grounded synthesis accepted with %d cited documents (required=%d).",
@@ -1679,6 +1721,29 @@ class _ClaimAudit(BaseModel):
     wrong_citations: List[str] = Field(default_factory=list)
 
 
+def _bounded_audit_evidence(evidence: List[Dict[str, Any]], max_chars: int) -> str:
+    """Format indexed excerpts evenly so audit prompts stay inside the model context."""
+    candidates = evidence[:24]
+    if not candidates:
+        return ""
+    per_excerpt = max(240, min(1200, (max_chars // len(candidates)) - 100))
+    parts = []
+    used = 0
+    for index, item in enumerate(candidates, 1):
+        header = f"[E{index}] {item.get('filename', 'document')}, {_location_label(item)}\n"
+        remaining = max_chars - used - len(header)
+        if remaining <= 80:
+            break
+        text = str(item.get("text") or "")
+        limit = min(per_excerpt, remaining)
+        if len(text) > limit:
+            text = text[: max(0, limit - 3)] + "..."
+        part = header + text
+        parts.append(part)
+        used += len(part) + 2
+    return "\n\n".join(parts)
+
+
 def _audit_research_coverage(brief: ResearchBrief, evidence: List[Dict[str, Any]]) -> Dict[str, List[str]]:
     """Let the model judge evidence sufficiency; facet text is never treated as evidence."""
     if not evidence:
@@ -1689,12 +1754,12 @@ def _audit_research_coverage(brief: ResearchBrief, evidence: List[Dict[str, Any]
 
         release_reranker()
         release_embedding_model()
-    evidence_text = "\n\n".join(
-        f"[E{index}] {item.get('filename', 'document')}, {_location_label(item)}\n"
-        f"{str(item.get('text') or '')[:1200]}"
-        for index, item in enumerate(evidence[:24], 1)
-    )
     facets_text = "\n".join(f"{index}. {facet}" for index, facet in enumerate(brief.facets, 1))
+    audit_prompt_budget = _llm_prompt_char_budget(768)
+    evidence_text = _bounded_audit_evidence(
+        evidence,
+        max_chars=max(2400, audit_prompt_budget - len(facets_text) - 1800),
+    )
     try:
         from langchain_core.messages import SystemMessage, HumanMessage
 
@@ -1753,6 +1818,11 @@ def _semantic_claim_issues(
     try:
         from langchain_core.messages import SystemMessage, HumanMessage
 
+        audit_prompt_budget = _llm_prompt_char_budget(900)
+        context = _build_agent_source_context(
+            evidence,
+            max_context_chars=max(2400, audit_prompt_budget - len(answer) - 1600),
+        )
         judge = get_llm_client(max_tokens=900).with_structured_output(_ClaimAudit, method="json_mode")
         audit = judge.invoke([
             SystemMessage(content=_structured_system_prompt(
@@ -1786,15 +1856,21 @@ def _repair_research_answer(
 ) -> str:
     from langchain_core.messages import HumanMessage
 
-    context = _build_agent_source_context(evidence)
-    prompt = _build_partial_agent_answer_prompt(question, context, chat_history)
-    prompt += (
+    previous_answer = answer[:3500]
+    prompt_budget = _llm_prompt_char_budget(settings.AGENT_SYNTHESIS_MAX_TOKENS)
+    fixed_prompt = _build_partial_agent_answer_prompt(question, "", chat_history)
+    repair_suffix = (
         "\n\n## Reparación localizada\n"
         f"Problemas comprobados: {'; '.join(issues[:8])}.\n"
         "Corrige únicamente esos problemas, conserva las partes respaldadas y elimina o limita las afirmaciones "
         "que no puedan justificarse. No menciones esta auditoría.\n\n"
-        f"## Respuesta anterior\n{answer}"
+        f"## Respuesta anterior\n{previous_answer}"
     )
+    context = _build_agent_source_context(
+        evidence,
+        max_context_chars=max(1200, prompt_budget - len(fixed_prompt) - len(repair_suffix) - 600),
+    )
+    prompt = _build_partial_agent_answer_prompt(question, context, chat_history) + repair_suffix
     try:
         response = get_llm_client(max_tokens=settings.AGENT_SYNTHESIS_MAX_TOKENS).invoke([HumanMessage(content=prompt)])
         repaired = _validate_answer_citations(parse_agent_output(response.content), sources)
@@ -1958,7 +2034,7 @@ def generate_answer(
             response = chat_llm.invoke(messages)
             answer = response.content.strip()
         except Exception:
-            answer = "¡Hola! Soy ATLAS. ¿En qué puedo ayudarte hoy?"
+            answer = GREETING_FALLBACK
         return {"answer": answer, "sources": []}
 
     if decision.route == "tool_agent":
@@ -2022,10 +2098,13 @@ def generate_answer_stream(
         try:
             from langchain_core.messages import HumanMessage
             for chunk in chat_llm.stream([HumanMessage(content=question)]):
+                if cancellation_event is not None and cancellation_event.is_set():
+                    return
                 if chunk.content:
                     yield f"data: {json.dumps({'type': 'token', 'data': chunk.content})}\n\n"
         except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'data': str(e)})}\n\n"
+            logger.warning("Greeting generation failed; using local fallback: %s", e)
+            yield f"data: {json.dumps({'type': 'token', 'data': GREETING_FALLBACK})}\n\n"
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
         return
 

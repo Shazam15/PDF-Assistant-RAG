@@ -4,11 +4,28 @@ Per-user collections for data isolation.
 """
 import logging
 import json
-from typing import List, Dict, Any, Optional
+import re
+from typing import Any, Callable, Dict, List, Optional
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+
+def _sqlite_fts_query(query: str, max_terms: int = 64) -> str:
+    """Build a punctuation-safe FTS5 query from arbitrary natural language."""
+    terms: List[str] = []
+    seen = set()
+    for token in re.findall(r"\w+", query, flags=re.UNICODE):
+        token = token.strip("_")
+        normalized = token.casefold()
+        if not token or normalized in seen:
+            continue
+        seen.add(normalized)
+        terms.append(f'"{token}"')
+        if len(terms) >= max_terms:
+            break
+    return " OR ".join(terms)
 
 
 def _chunk_payload(chunk: Dict[str, Any], document_id: str, filename: str, user_id: str) -> Dict[str, Any]:
@@ -181,10 +198,61 @@ def start_user_index_migration(user_id: str) -> None:
     client = get_chroma_client()
     collection_name = get_collection_name(user_id)
     try:
+        collection = client.get_collection(name=collection_name)
+        metadata = collection.metadata or {}
+        if (
+            metadata.get("embedding_model") == settings.EMBEDDING_MODEL
+            and metadata.get("embedding_index_version") == settings.EMBEDDING_INDEX_VERSION
+            and metadata.get("embedding_index_state") == "migrating"
+        ):
+            logger.info("Resuming incomplete vector migration for user %s", user_id)
+            return
         client.delete_collection(name=collection_name)
     except Exception:
         pass
     client.get_or_create_collection(name=collection_name, metadata=_index_metadata("migrating"))
+
+
+def document_index_is_current(user_id: str, document_id: str, expected_count: int) -> bool:
+    """Return whether one document is already present in the current vector index."""
+    if expected_count <= 0:
+        return False
+    if settings.CORPUS_STORE_BACKEND == "postgres":
+        from app.database import SessionLocal
+        from app.models import DocumentChunk, DocumentProfile
+
+        db = SessionLocal()
+        try:
+            profile = db.query(DocumentProfile).filter(
+                DocumentProfile.user_id == user_id,
+                DocumentProfile.document_id == document_id,
+                DocumentProfile.index_version == settings.EMBEDDING_INDEX_VERSION,
+            ).first()
+            chunk_count = db.query(DocumentChunk).filter(
+                DocumentChunk.user_id == user_id,
+                DocumentChunk.document_id == document_id,
+                DocumentChunk.embedding.isnot(None),
+            ).count()
+            return profile is not None and chunk_count >= expected_count
+        finally:
+            db.close()
+
+    try:
+        collection = get_chroma_client().get_collection(name=get_collection_name(user_id))
+        metadata = collection.metadata or {}
+        if (
+            metadata.get("embedding_model") != settings.EMBEDDING_MODEL
+            or metadata.get("embedding_index_version") != settings.EMBEDDING_INDEX_VERSION
+        ):
+            return False
+        result = collection.get(
+            where={"document_id": {"$eq": str(document_id)}},
+            limit=expected_count,
+            include=["metadatas"],
+        )
+        return len(result.get("ids") or []) >= expected_count
+    except Exception:
+        return False
 
 
 def finish_user_index_migration(user_id: str) -> None:
@@ -199,6 +267,7 @@ def store_chunks(
     document_id: str,
     filename: str,
     user_id: str,
+    progress_callback: Optional[Callable[[str, int, int], None]] = None,
 ) -> int:
     """
     Embed and store document chunks in ChromaDB, and build a local BM25 index.
@@ -229,11 +298,19 @@ def store_chunks(
                  for payload in payloads]
 
     embeddings: List[List[float]] = []
-    for i in range(0, len(texts), 50):
-        embeddings.extend(embed_texts(texts[i:i + 50]))
+    embedding_batch_size = max(1, settings.EMBEDDING_BATCH_SIZE)
+    for i in range(0, len(texts), embedding_batch_size):
+        embeddings.extend(embed_texts(texts[i:i + embedding_batch_size]))
+        if progress_callback:
+            progress_callback("embedding", min(i + embedding_batch_size, len(texts)), len(texts))
+
+    if progress_callback:
+        progress_callback("persisting", 0, len(payloads))
     _persist_relational_chunks(payloads, embeddings)
 
     if settings.CORPUS_STORE_BACKEND == "postgres":
+        if progress_callback:
+            progress_callback("persisting", len(payloads), len(payloads))
         logger.info("Stored %d hierarchical chunks in PostgreSQL for document %s", len(payloads), document_id)
         return len(payloads)
 
@@ -257,6 +334,8 @@ def store_chunks(
             documents=batch_texts,
         )
         total_stored += len(batch_texts)
+        if progress_callback:
+            progress_callback("persisting", total_stored, len(texts))
 
     logger.info(f"Stored {total_stored} chunks for document {document_id}")
     return total_stored
@@ -414,6 +493,10 @@ def query_lexical_chunks(
         )
         with engine.connect() as connection:
             return [_row_to_chunk(row) for row in connection.execute(statement, params)]
+
+    params["query"] = _sqlite_fts_query(query)
+    if not params["query"]:
+        return []
 
     if document_id:
         scope = "AND f.document_id=:document_id"
