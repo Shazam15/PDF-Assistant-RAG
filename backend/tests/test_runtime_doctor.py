@@ -13,6 +13,9 @@ def _settings(**overrides):
         "EMBEDDING_DIMENSION": 1024,
         "EMBEDDING_INDEX_VERSION": "hierarchical-qwen3-1024-v1",
         "LLM_MODEL": "qwen3:14b-q4_K_M",
+        "LLM_CONTEXT_WINDOW": 8192,
+        "LLM_MAX_NEW_TOKENS": 3072,
+        "LLM_DISABLE_THINKING": True,
         "CPU_THREADS": 28,
         "OLLAMA_BASE_URL": "http://172.20.0.1:11434",
         "DATABASE_URL": "postgresql+psycopg://atlas@localhost/atlas",
@@ -24,6 +27,16 @@ def _settings(**overrides):
 def test_doctor_accepts_expected_profile(monkeypatch):
     monkeypatch.setattr(runtime_doctor, "get_settings", _settings)
     assert runtime_doctor._check_profile() is True
+
+
+def test_doctor_rejects_accidental_llm_override(monkeypatch):
+    monkeypatch.setattr(
+        runtime_doctor,
+        "get_settings",
+        lambda: _settings(LLM_MODEL="qwen3:4b-instruct-2507-q4_K_M"),
+    )
+
+    assert runtime_doctor._check_profile() is False
 
 
 def test_doctor_requires_configured_ollama_model(monkeypatch):

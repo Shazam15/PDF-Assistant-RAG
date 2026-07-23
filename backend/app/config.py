@@ -136,7 +136,9 @@ class Settings(BaseSettings):
     GRAPH_MAX_RELATIONSHIPS: int = 12
 
     # ── Embeddings (local HuggingFace model) ─────────────
-    MODEL_PROFILE: str = "local"
+    # This experimental branch targets native WSL2 with Ollama on a Windows T4.
+    # Other machines can still opt into local, local_balanced, or custom.
+    MODEL_PROFILE: str = "wsl_t4"
     DEVICE: str = "cpu"
     EMBEDDING_DEVICE: str = "cpu"
     RERANKER_DEVICE: str = "cpu"
