@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
+import KnowledgeGraphPanel from "@/components/admin/KnowledgeGraphPanel";
 
 interface AdminStats {
   total_users: number;
@@ -110,12 +111,13 @@ export default function AdminPage() {
   const [statsLoading, setStatsLoading] = useState(true);
   const [error, setError] = useState("");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const isAdmin = Boolean(user?.is_admin || user?.role === "admin");
 
   useEffect(() => {
     if (loading) return;
     if (!user) router.replace("/login");
-    else if (!user.is_admin) router.replace("/dashboard");
-  }, [loading, router, user]);
+    else if (!isAdmin) router.replace("/dashboard");
+  }, [isAdmin, loading, router, user]);
 
   const loadStats = useCallback(async () => {
     try {
@@ -134,7 +136,7 @@ export default function AdminPage() {
   }, []);
 
   useEffect(() => {
-    if (!user?.is_admin) return;
+    if (!isAdmin) return;
 
     const initialLoad = window.setTimeout(() => void loadStats(), 0);
     const interval = window.setInterval(() => void loadStats(), 10000);
@@ -143,7 +145,7 @@ export default function AdminPage() {
       window.clearTimeout(initialLoad);
       window.clearInterval(interval);
     };
-  }, [loadStats, user?.is_admin]);
+  }, [isAdmin, loadStats]);
 
   const diskDetail = useMemo(() => {
     if (!stats) return "";
@@ -151,7 +153,7 @@ export default function AdminPage() {
     return `${formatBytes(disk.used_bytes)} used of ${formatBytes(disk.total_bytes)}`;
   }, [stats]);
 
-  if (loading || !user || !user.is_admin) {
+  if (loading || !user || !isAdmin) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="animate-pulse-glow w-12 h-12 rounded-full bg-primary/20" />
@@ -175,7 +177,7 @@ export default function AdminPage() {
             <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/15">
               <Database className="h-4 w-4 text-primary" />
             </div>
-            <span className="text-sm font-semibold">Admin Metrics</span>
+            <span className="text-sm font-semibold">Admin console</span>
           </div>
         </div>
 
@@ -269,6 +271,7 @@ export default function AdminPage() {
                 </div>
               </CardContent>
             </Card>
+            <KnowledgeGraphPanel />
           </>
         ) : null}
       </main>

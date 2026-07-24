@@ -8,6 +8,7 @@ export interface AuthUser {
   username: string;
   email: string;
   is_admin: boolean;
+  role?: "user" | "admin";
   hf_token?: string;
   created_at: string;
 }

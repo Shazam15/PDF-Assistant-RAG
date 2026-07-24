@@ -464,6 +464,9 @@ La migración es idempotente y puede continuar después de una interrupción.
 - Un `document_id` seleccionado nunca se ignora ni amplía silenciosamente al resto del corpus.
 - Los extractos recuperados se tratan como datos no confiables, no como instrucciones para el LLM.
 - Las rutas administrativas requieren una dependencia de administrador.
+- Los grafos de conocimiento persistidos se visualizan únicamente desde la consola
+  administrativa. La API entrega una proyección acotada de entidades, relaciones,
+  páginas y conteos; no expone rutas de almacenamiento ni el texto de los chunks.
 - Los archivos originales permanecen fuera de las respuestas y se sirven únicamente tras validar propiedad.
 - La cancelación o un error de generación no crea mensajes de asistente vacíos.
 
