@@ -4,9 +4,12 @@ import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
+import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
 import { Brain } from "lucide-react";
 import { api } from "@/lib/api";
+import { normalizeMarkdownMath } from "@/lib/markdown-math";
 
 interface SharedSource {
   text: string;
@@ -141,11 +144,11 @@ function ShareAnswerContent() {
 
           <div className="prose-chat text-sm">
             <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              rehypePlugins={[rehypeHighlight]}
+              remarkPlugins={[remarkGfm, remarkMath]}
+              rehypePlugins={[rehypeHighlight, rehypeKatex]}
               components={markdownComponents}
             >
-              {answer.content}
+              {normalizeMarkdownMath(answer.content)}
             </ReactMarkdown>
           </div>
 
