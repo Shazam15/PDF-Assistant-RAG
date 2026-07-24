@@ -64,6 +64,10 @@ def _check_profile() -> bool:
         "RERANKER_DEVICE": "cpu",
         "EMBEDDING_DIMENSION": 1024,
         "EMBEDDING_INDEX_VERSION": "hierarchical-qwen3-1024-v1",
+        "LLM_MODEL": "qwen3:14b-q4_K_M",
+        "LLM_CONTEXT_WINDOW": 8192,
+        "LLM_MAX_NEW_TOKENS": 3072,
+        "LLM_DISABLE_THINKING": True,
     }
     mismatches = [
         f"{field}={getattr(settings, field)!r} (expected {value!r})"

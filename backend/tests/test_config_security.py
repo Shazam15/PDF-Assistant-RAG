@@ -3,6 +3,15 @@ import pytest
 from app.config import Settings
 
 
+def test_experimental_branch_defaults_to_wsl_t4_and_14b_llm():
+    settings = Settings(_env_file=None)
+
+    assert settings.MODEL_PROFILE == "wsl_t4"
+    assert settings.LLM_MODEL == "qwen3:14b-q4_K_M"
+    assert settings.LLM_CONTEXT_WINDOW == 8192
+    assert settings.LLM_DISABLE_THINKING is True
+
+
 def test_production_settings_require_secret_key():
     with pytest.raises(ValueError):
         Settings(ENVIRONMENT="production", SECRET_KEY="")
