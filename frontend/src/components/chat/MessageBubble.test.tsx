@@ -75,6 +75,19 @@ describe("MessageBubble", () => {
     expect(screen.getByLabelText("Compartir respuesta")).toBeInTheDocument();
     expect(screen.getAllByLabelText("Leer respuesta")).toHaveLength(2);
   });
+
+  it("renders standard and accented LaTeX as math", () => {
+    const { container } = render(
+      <MessageBubble
+        message={makeMessage({
+          content: String.raw`$\sqrt{3x-1}+(1+x)^2$ y $´\sqrt{3x-1}+(1+x)^2´$`,
+        })}
+      />,
+    );
+
+    expect(container.querySelectorAll(".katex")).toHaveLength(2);
+    expect(container.querySelectorAll(".katex-error")).toHaveLength(0);
+  });
 });
 
 describe("chat routing preference", () => {

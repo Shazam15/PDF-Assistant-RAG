@@ -4,13 +4,16 @@ import { useState, useRef, useEffect, useSyncExternalStore } from "react";
 import { formatDistanceToNow } from "date-fns";
 import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
+import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
 import type { ChatMsg } from "@/store/chat-store";
 import { api } from "@/lib/api";
 import { Brain, User, Copy, Check, Share2, Link2, X, Play, Pause, ThumbsUp, ThumbsDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useChatStore } from "@/store/chat-store";
 import { useSettingsStore } from "@/store/settings-store";
+import { normalizeMarkdownMath } from "@/lib/markdown-math";
 
 const subscribe = () => () => {};
 const getSnapshot = () => true;
@@ -290,11 +293,11 @@ export default function MessageBubble({ message }: Props) {
             <div className={`prose-chat ${fontSizeClass} ${message.content ? "pr-20" : ""}`}>
               {message.content ? (
                 <ReactMarkdown
-                  remarkPlugins={[remarkGfm]}
-                  rehypePlugins={[rehypeHighlight]}
+                  remarkPlugins={[remarkGfm, remarkMath]}
+                  rehypePlugins={[rehypeHighlight, rehypeKatex]}
                   components={markdownComponents}
                 >
-                  {message.content}
+                  {normalizeMarkdownMath(message.content)}
                 </ReactMarkdown>
               ) : message.isStreaming ? (
                 <div className="flex items-center gap-1.5">
