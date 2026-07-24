@@ -22,15 +22,15 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-atlas}
-      POSTGRES_USER: ${POSTGRES_USER:-atlas_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-admin6767}
+      POSTGRES_USER: ${POSTGRES_USER:-atlaUser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-K4ny3W3st}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./scripts/init_postgres.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-atlas_user} -d ${POSTGRES_DB:-atlas}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-atlasUser} -d ${POSTGRES_DB:-atlas}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -48,7 +48,7 @@ services:
     environment:
       - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-me}
       - HF_TOKEN=${HF_TOKEN}
-      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-atlas_user}:${POSTGRES_PASSWORD:-replace-with-a-strong-password}@postgres:5432/${POSTGRES_DB:-atlas}
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-atlasUser}:${POSTGRES_PASSWORD:-K4ny3W3st}@postgres:5432/${POSTGRES_DB:-atlas}
       - UPLOAD_DIR=/app/data/uploads
       - CHROMA_PERSIST_DIR=/app/data/chroma_db
       - GRAPH_PERSIST_DIR=/app/data/graphs
@@ -82,7 +82,7 @@ services:
     environment:
       - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-me}
       - HF_TOKEN=${HF_TOKEN}
-      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-atlas_user}:${POSTGRES_PASSWORD:-replace-with-a-strong-password}@postgres:5432/${POSTGRES_DB:-atlas}
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-atlasUser}:${POSTGRES_PASSWORD:-K4ny3W3st}@postgres:5432/${POSTGRES_DB:-atlas}
       - UPLOAD_DIR=/app/data/uploads
       - CHROMA_PERSIST_DIR=/app/data/chroma_db
       - GRAPH_PERSIST_DIR=/app/data/graphs
@@ -147,7 +147,7 @@ services:
     environment:
       - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-me}
       - HF_TOKEN=${HF_TOKEN}
-      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-atlas_user}:${POSTGRES_PASSWORD:-replace-with-a-strong-password}@postgres:5432/${POSTGRES_DB:-atlas}
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-atlasUser}:${POSTGRES_PASSWORD:-K4ny3W3st}@postgres:5432/${POSTGRES_DB:-atlas}
       - UPLOAD_DIR=/app/data/uploads
       - CHROMA_PERSIST_DIR=/app/data/chroma_db
       - GRAPH_PERSIST_DIR=/app/data/graphs
@@ -176,7 +176,7 @@ services:
     environment:
       - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-me}
       - HF_TOKEN=${HF_TOKEN}
-      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-atlas_user}:${POSTGRES_PASSWORD:-replace-with-a-strong-password}@postgres:5432/${POSTGRES_DB:-atlas}
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-atlasUser}:${POSTGRES_PASSWORD:-K4ny3W3st}@postgres:5432/${POSTGRES_DB:-atlas}
       - UPLOAD_DIR=/app/data/uploads
       - CHROMA_PERSIST_DIR=/app/data/chroma_db
       - GRAPH_PERSIST_DIR=/app/data/graphs
