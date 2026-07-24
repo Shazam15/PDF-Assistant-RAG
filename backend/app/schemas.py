@@ -293,6 +293,45 @@ class AdminStatsResponse(BaseModel):
     users: List[UserResponse]
 
 
+class AdminGraphSummaryResponse(BaseModel):
+    document_id: str
+    document_name: str
+    owner_id: str
+    owner_username: str
+    node_count: int
+    edge_count: int
+
+
+class AdminGraphListResponse(BaseModel):
+    items: List[AdminGraphSummaryResponse]
+    total: int
+
+
+class AdminGraphNodeResponse(BaseModel):
+    id: str
+    name: str
+    label: str
+    mentions: int
+    degree: int
+    pages: List[int]
+
+
+class AdminGraphEdgeResponse(BaseModel):
+    id: str
+    source: str
+    target: str
+    weight: int
+    pages: List[int]
+
+
+class AdminGraphResponse(AdminGraphSummaryResponse):
+    nodes: List[AdminGraphNodeResponse]
+    edges: List[AdminGraphEdgeResponse]
+    returned_node_count: int
+    returned_edge_count: int
+    truncated: bool
+
+
 # ── Chat ─────────────────────────────────────────────
 
 class ChatRequest(BaseModel):
