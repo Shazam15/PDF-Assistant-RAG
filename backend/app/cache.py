@@ -12,7 +12,6 @@ short, stable, and unique across all question/document combinations.
 import hashlib
 import json
 import logging
-import os
 from typing import Any, Optional
 
 from app.config import get_settings
@@ -23,11 +22,11 @@ logger = logging.getLogger(__name__)
 # Configuration — all values come from environment variables
 # ---------------------------------------------------------------------------
 
-CACHE_TTL: int = int(os.getenv("CACHE_TTL", "3600"))  # seconds; default 1 hour
-REDIS_URL: Optional[str] = os.getenv("REDIS_URL", None)
-LRU_MAX_SIZE: int = int(os.getenv("CACHE_LRU_MAX_SIZE", "128"))
-ROUTER_CACHE_VERSION = "evidence-agent-v2"
 _settings = get_settings()
+CACHE_TTL: int = _settings.CACHE_TTL
+REDIS_URL: Optional[str] = _settings.REDIS_URL or None
+LRU_MAX_SIZE: int = _settings.CACHE_LRU_MAX_SIZE
+ROUTER_CACHE_VERSION = "evidence-agent-v2"
 PIPELINE_CACHE_FINGERPRINT = ":".join(
     (
         _settings.EMBEDDING_INDEX_VERSION,

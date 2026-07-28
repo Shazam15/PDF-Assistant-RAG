@@ -1,0 +1,19 @@
+{$ATLAS_DOMAIN:localhost} {
+    encode zstd gzip
+
+    handle /api/* {
+        reverse_proxy 127.0.0.1:7860 {
+            flush_interval -1
+            transport http {
+                read_timeout 35m
+                write_timeout 35m
+            }
+        }
+    }
+
+    handle {
+        root * /opt/atlas/PDF-Assistant-RAG/frontend/out
+        try_files {path} {path}.html /index.html
+        file_server
+    }
+}

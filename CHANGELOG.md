@@ -6,9 +6,22 @@ El repositorio todavía no contiene tags de release. Por ello, las entradas ante
 
 ## [Unreleased]
 
+### Añadido
+
+- Perfil `ubuntu_t4` para Xeon/Tesla T4 con Ollama local y recuperación en CPU.
+- Diagnóstico `make doctor-ubuntu` para GPU, Ollama, modelo, PostgreSQL, extensiones y Redis.
+- Arranque de desarrollo `make dev-ubuntu` e instalación CPU `install-backend-ubuntu`.
+- Plantillas `systemd` para FastAPI y Celery, y Caddy para frontend, SSE y WebSocket.
+
+### Cambiado
+
+- Esta rama usa `ubuntu_t4` como perfil predeterminado y `127.0.0.1:11434` como Ollama.
+- PostgreSQL y Redis se publican solo en localhost; `make docker-up` inicia ambos.
+- La caché obtiene `REDIS_URL` y sus límites desde la configuración Pydantic cargada desde `.env`.
+
 ### Documentación
 
-- Arquitectura sincronizada con la ingesta adaptable, disponibilidad temprana, timeouts vigentes y despliegue Windows/WSL2/T4.
+- Arquitectura sincronizada con la ingesta adaptable, disponibilidad temprana, timeouts vigentes y despliegues Ubuntu/T4 y Windows/WSL2/T4.
 - Incorporado este historial como fuente única para futuras notas de versión.
 
 ## [2.0.0] - 2026-07-22

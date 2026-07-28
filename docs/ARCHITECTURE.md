@@ -14,7 +14,7 @@ La versión pública actual de la API es `2.0.0`. Los cambios por versión y los
 - Recuperar información en español, inglés y otros idiomas sin vocabularios de dominio codificados.
 - Permitir investigación iterativa sin exponer cadena de pensamiento.
 - Conservar una ruta rápida para consultas directas y una ruta profunda para síntesis multifuente.
-- Operar con perfiles reproducibles para desarrollo ligero, Mac con MPS, servidores NVIDIA y Windows/WSL2 con Ollama separado del backend.
+- Operar con perfiles reproducibles para desarrollo ligero, Mac con MPS, servidores NVIDIA, Ubuntu/T4 bare metal y Windows/WSL2.
 
 ## Vista general
 
@@ -108,6 +108,26 @@ El perfil `research_gpu` selecciona automáticamente:
 | Planificador y redactor | `qwen3:30b-a3b` mediante Ollama |
 
 El embedding se mantiene en CPU y el reranker en CUDA. Antes de invocar el redactor se liberan los modelos de recuperación para reducir la presión sobre la VRAM.
+
+### Ubuntu bare metal y Tesla T4
+
+El perfil predeterminado de esta rama es `ubuntu_t4`. Reserva la Tesla T4 de 16 GB
+para Ollama y distribuye la recuperación sobre el Xeon:
+
+| Componente | Ubicación y configuración |
+| --- | --- |
+| Frontend, API y Celery | Procesos nativos administrados por `systemd` |
+| PostgreSQL 16 + pgvector | Docker, publicado solo en `127.0.0.1` |
+| Redis | Docker, publicado solo en `127.0.0.1` |
+| Ollama | Servicio Linux local en `127.0.0.1:11434` |
+| LLM | `qwen3:14b-q4_K_M`, contexto 8192, Tesla T4 dedicada |
+| Embeddings | Qwen3-Embedding-0.6B, CPU, lote 64 |
+| Reranker y NLI | CPU Intel |
+| Paralelismo PyTorch | 28 hilos por defecto, configurable |
+
+`make doctor-ubuntu` valida el perfil efectivo, la T4 mediante `nvidia-smi`, el
+modelo instalado en Ollama, PostgreSQL y sus extensiones, y Redis cuando Celery está
+activo. `make dev-ubuntu` solo arranca la aplicación cuando ese diagnóstico pasa.
 
 ### Windows, WSL2 y Tesla T4
 
@@ -512,6 +532,37 @@ flowchart TB
 El `Dockerfile` ejecuta `init_db`, aplica `alembic upgrade head` y luego inicia Uvicorn. `docker-compose.yml` ofrece perfiles `cpu` y `gpu`; ambos usan PostgreSQL en producción, mientras que `gpu` activa `MODEL_PROFILE=research_gpu`. Este perfil reserva la GPU NVIDIA para Ollama y el reranker, y ejecuta los embeddings en el CPU Intel con lotes de 64 para aprovechar la RAM del servidor. `CPU_THREADS=0` deja que PyTorch determine el paralelismo; puede fijarse explícitamente después de medir el servidor. Si CUDA no está disponible, el reranker cae a CPU sin impedir el arranque.
 
 Para el despliegue Windows/T4 recomendado, no se usan los contenedores de aplicación ni GPU: `docker compose up -d postgres` inicia únicamente PostgreSQL, mientras frontend y backend corren en WSL y Ollama corre en Windows. La T4 queda reservada para un solo modelo generativo; embeddings, reranking y NLI se ejecutan en CPU. La guía operativa completa está en la sección “Tesla T4 y Qwen3-14B” del `README.md`.
+
+Para Ubuntu/T4 bare metal se ejecutan `postgres` y `redis` en Docker; Ollama,
+FastAPI y Celery son servicios locales. Caddy sirve la exportación estática del
+frontend y reenvía `/api/*` a FastAPI con streaming inmediato y timeouts de 35
+minutos. Las plantillas reproducibles están en `deploy/ubuntu-t4`.
+
+### Topología Ubuntu/T4 bare metal
+
+```mermaid
+flowchart LR
+    Browser["Navegador"]
+    Caddy["Caddy<br/>HTTPS y frontend estático"]
+    Backend["FastAPI<br/>systemd"]
+    Worker["Celery<br/>systemd"]
+    Retrieval["Embeddings, reranker y NLI<br/>CPU Xeon"]
+    Ollama["Ollama local<br/>Qwen3-14B en Tesla T4"]
+    Postgres["PostgreSQL + pgvector<br/>Docker localhost"]
+    Redis["Redis<br/>Docker localhost"]
+    Files["Documentos y grafos<br/>volumen Linux persistente"]
+
+    Browser --> Caddy
+    Caddy --> Backend
+    Backend --> Retrieval
+    Backend --> Ollama
+    Backend --> Postgres
+    Backend --> Redis
+    Redis --> Worker
+    Worker --> Postgres
+    Worker --> Files
+    Backend --> Files
+```
 
 ### Topología Windows/WSL2/T4
 

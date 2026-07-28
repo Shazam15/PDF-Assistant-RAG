@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
     CELERY_TASK_TRACK_STARTED: bool = True
+    REDIS_URL: str = ""
+    CACHE_TTL: int = 3600
+    CACHE_LRU_MAX_SIZE: int = 128
 
     # ── Document Processing ──────────────────────────────
     DOC_PROCESSING_TIMEOUT_MINUTES: int = 30
@@ -136,9 +139,9 @@ class Settings(BaseSettings):
     GRAPH_MAX_RELATIONSHIPS: int = 12
 
     # ── Embeddings (local HuggingFace model) ─────────────
-    # This experimental branch targets native WSL2 with Ollama on a Windows T4.
-    # Other machines can still opt into local, local_balanced, or custom.
-    MODEL_PROFILE: str = "wsl_t4"
+    # This experimental branch targets Ubuntu bare metal on a Xeon/Tesla T4 host.
+    # Other machines can still opt into local, local_balanced, wsl_t4, or custom.
+    MODEL_PROFILE: str = "ubuntu_t4"
     DEVICE: str = "cpu"
     EMBEDDING_DEVICE: str = "cpu"
     RERANKER_DEVICE: str = "cpu"
@@ -262,9 +265,9 @@ class Settings(BaseSettings):
                 self.EMBEDDING_DIMENSION = 1024
             if "EMBEDDING_INDEX_VERSION" not in self.model_fields_set:
                 self.EMBEDDING_INDEX_VERSION = "hierarchical-qwen3-1024-v1"
-        elif profile == "wsl_t4":
-            # Windows hosts Ollama on the T4; WSL keeps retrieval models on the
-            # high-core-count Xeon so the 16 GB GPU remains dedicated to the LLM.
+        elif profile in {"wsl_t4", "ubuntu_t4"}:
+            # Keep the 16 GB T4 dedicated to Ollama. Retrieval models use the
+            # high-core-count Xeon in both WSL and native Ubuntu deployments.
             profile_defaults = {
                 "DEVICE": "cpu",
                 "EMBEDDING_DEVICE": "cpu",
@@ -292,6 +295,8 @@ class Settings(BaseSettings):
                 "TOP_K_RERANK": 12,
                 "PDF_EXTRACTION_MODE": "auto",
             }
+            if profile == "ubuntu_t4":
+                profile_defaults["OLLAMA_BASE_URL"] = "http://127.0.0.1:11434"
             for field_name, value in profile_defaults.items():
                 if field_name not in self.model_fields_set:
                     setattr(self, field_name, value)
@@ -299,7 +304,8 @@ class Settings(BaseSettings):
             self.RETRIEVAL_PLANNER_VERSION = "research-brief-qwen3-v1"
         elif profile not in {"local", "custom"}:
             raise ValueError(
-                "MODEL_PROFILE must be local, local_balanced, custom, research_gpu, or wsl_t4"
+                "MODEL_PROFILE must be local, local_balanced, custom, research_gpu, "
+                "wsl_t4, or ubuntu_t4"
             )
 
         if extraction_mode not in {"auto", "fast", "quality"}:

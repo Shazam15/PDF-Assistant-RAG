@@ -3,13 +3,14 @@ import pytest
 from app.config import Settings
 
 
-def test_experimental_branch_defaults_to_wsl_t4_and_14b_llm():
+def test_experimental_branch_defaults_to_ubuntu_t4_and_14b_llm():
     settings = Settings(_env_file=None)
 
-    assert settings.MODEL_PROFILE == "wsl_t4"
+    assert settings.MODEL_PROFILE == "ubuntu_t4"
     assert settings.LLM_MODEL == "qwen3:14b-q4_K_M"
     assert settings.LLM_CONTEXT_WINDOW == 8192
     assert settings.LLM_DISABLE_THINKING is True
+    assert settings.OLLAMA_BASE_URL == "http://127.0.0.1:11434"
 
 
 def test_production_settings_require_secret_key():
@@ -71,6 +72,31 @@ def test_wsl_t4_profile_reserves_gpu_for_windows_ollama_and_respects_overrides()
     assert overridden.CPU_THREADS == 20
     assert overridden.EMBEDDING_BATCH_SIZE == 32
     assert overridden.OLLAMA_BASE_URL == "http://172.20.0.1:11434"
+
+
+def test_ubuntu_t4_profile_uses_local_ollama_and_reserves_gpu_for_llm():
+    settings = Settings(_env_file=None, MODEL_PROFILE="ubuntu_t4")
+
+    assert settings.DEVICE == "cpu"
+    assert settings.EMBEDDING_DEVICE == "cpu"
+    assert settings.RERANKER_DEVICE == "cpu"
+    assert settings.CPU_THREADS == 28
+    assert settings.LLM_MODEL == "qwen3:14b-q4_K_M"
+    assert settings.OLLAMA_BASE_URL == "http://127.0.0.1:11434"
+    assert settings.OLLAMA_KEEP_ALIVE == "30m"
+
+
+def test_redis_cache_configuration_is_loaded_from_env_file_settings():
+    settings = Settings(
+        _env_file=None,
+        REDIS_URL="redis://localhost:6379/0",
+        CACHE_TTL=7200,
+        CACHE_LRU_MAX_SIZE=256,
+    )
+
+    assert settings.REDIS_URL == "redis://localhost:6379/0"
+    assert settings.CACHE_TTL == 7200
+    assert settings.CACHE_LRU_MAX_SIZE == 256
 
 
 def test_ollama_base_url_requires_http_transport():

@@ -150,6 +150,10 @@ Para `wsl_t4`, Ollama usa la GPU desde Windows y el backend ejecuta embeddings,
 reranking y NLI en CPU dentro de WSL2. No se requiere instalar CUDA ni un driver
 NVIDIA Linux dentro de WSL.
 
+Para `ubuntu_t4`, todo se ejecuta directamente en Ubuntu: Ollama usa la Tesla T4 y
+los modelos de recuperación usan el Xeon. Se requiere el driver NVIDIA Server de
+Linux; PostgreSQL y Redis permanecen como los únicos servicios Docker obligatorios.
+
 ## Instalación local
 
 ### 1. Dependencias del sistema
@@ -350,7 +354,146 @@ nvidia-smi
 ollama list
 ```
 
-### Tesla T4 y Qwen3-14B
+### Ubuntu bare metal, Tesla T4 y Qwen3-14B
+
+Esta rama usa `ubuntu_t4` por defecto y está diseñada para Ubuntu instalado en un
+disco dedicado, un Xeon Gold con RAM abundante y una Tesla T4 de 16 GB. Ollama,
+FastAPI, Celery y el frontend se ejecutan en Linux; Docker aloja PostgreSQL/pgvector
+y Redis.
+
+#### 1. Ubuntu y driver NVIDIA
+
+Instale las dependencias y el driver de cómputo recomendado por Ubuntu:
+
+```bash
+sudo apt update
+sudo apt install -y git make build-essential curl libmagic1 poppler-utils \
+  tesseract-ocr tesseract-ocr-eng tesseract-ocr-spa python3.11 \
+  python3.11-venv docker.io docker-compose-v2 ubuntu-drivers-common caddy
+sudo usermod -aG docker "$USER"
+sudo ubuntu-drivers install --gpgpu
+sudo reboot
+```
+
+Después del reinicio, `nvidia-smi` debe mostrar la Tesla T4.
+
+#### 2. Ollama y Qwen3
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+sudo systemctl enable --now ollama
+ollama pull qwen3:14b-q4_K_M
+curl http://127.0.0.1:11434/api/tags
+```
+
+Mantenga Ollama escuchando únicamente en `127.0.0.1:11434`. No es necesario abrir
+el puerto 11434 ni configurar un gateway de Windows.
+
+#### 3. ATLAS y dependencias
+
+```bash
+git clone <URL_DEL_REPOSITORIO>
+cd PDF-Assistant-RAG
+git switch codex/experimental-ubuntu-t4
+
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip setuptools wheel
+make install-backend-ubuntu PYTHON="$PWD/.venv/bin/python"
+make install-frontend
+```
+
+El instalador Ubuntu usa PyTorch CPU para evitar que embeddings, reranker y NLI
+compitan con Ollama por los 16 GB de VRAM.
+
+#### 4. Entorno, PostgreSQL y Redis
+
+```bash
+cp .env.example .env
+cp .env.example backend/.env
+python3.11 -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+Reemplace `SECRET_KEY` y `POSTGRES_PASSWORD` en ambos archivos y mantenga el mismo
+valor dentro de `DATABASE_URL`. Después:
+
+```bash
+make docker-up
+docker compose ps postgres redis
+make migrate PYTHON="$PWD/.venv/bin/python"
+```
+
+PostgreSQL y Redis solo publican puertos en `127.0.0.1`; no quedan accesibles desde
+la red externa.
+
+#### 5. Diagnóstico y prueba
+
+```bash
+make doctor-ubuntu PYTHON="$PWD/.venv/bin/python"
+make dev-ubuntu PYTHON="$PWD/.venv/bin/python"
+```
+
+Salida esperada:
+
+```text
+ATLAS Ubuntu/T4 runtime check
+[OK] profile=ubuntu_t4, llm=qwen3:14b-q4_K_M, CPU threads=28
+[OK] NVIDIA GPU available: Tesla T4, ...
+[OK] Ollama at http://127.0.0.1:11434 provides qwen3:14b-q4_K_M
+[OK] PostgreSQL and pgvector extensions are available
+[OK] Redis is available for Celery document processing
+ATLAS is ready to start in Ubuntu/T4 mode.
+```
+
+#### 6. Ejecución permanente
+
+Las plantillas bajo `deploy/ubuntu-t4` asumen el repositorio en
+`/opt/atlas/PDF-Assistant-RAG`, un usuario de servicio `atlas`, variables en
+`/etc/atlas/atlas.env` y datos persistentes fuera del repositorio. Incluyen:
+
+- `atlas-backend.service`: un proceso FastAPI para no duplicar modelos en RAM.
+- `atlas-worker.service`: Celery con concurrencia inicial de uno.
+- `Caddyfile`: frontend estático, proxy de `/api/*`, WebSocket, SSE y timeouts de 35 minutos.
+
+Prepare el usuario, el entorno y el volumen persistente. En la copia de producción
+cambie `UPLOAD_DIR` y `GRAPH_PERSIST_DIR` a rutas bajo `/srv/atlas/data`:
+
+```dotenv
+ENVIRONMENT=production
+ALLOWED_ORIGINS=https://atlas.example.org
+FRONTEND_URL=https://atlas.example.org
+NEXT_PUBLIC_API_URL=https://atlas.example.org
+UPLOAD_DIR=/srv/atlas/data/uploads
+GRAPH_PERSIST_DIR=/srv/atlas/data/graphs
+```
+
+```bash
+sudo useradd --system --create-home --home-dir /var/lib/atlas \
+  --shell /usr/sbin/nologin atlas
+sudo install -d -o atlas -g atlas /etc/atlas /srv/atlas/data/uploads \
+  /srv/atlas/data/graphs
+sudo install -m 600 -o atlas -g atlas backend/.env /etc/atlas/atlas.env
+sudo chown -R atlas:atlas /opt/atlas/PDF-Assistant-RAG
+```
+
+Compile el frontend con la URL pública antes de habilitar Caddy:
+
+```bash
+cd frontend
+NEXT_PUBLIC_API_URL=https://atlas.example.org npm run build
+cd ..
+```
+
+Copie y habilite las unidades solo después de adaptar rutas y dominio:
+
+```bash
+sudo cp deploy/ubuntu-t4/atlas-*.service /etc/systemd/system/
+sudo cp deploy/ubuntu-t4/Caddyfile /etc/caddy/Caddyfile
+sudo systemctl daemon-reload
+sudo systemctl enable --now atlas-backend atlas-worker caddy
+```
+
+### Windows, WSL2, Tesla T4 y Qwen3-14B
 
 El perfil `wsl_t4` está diseñado para Windows con WSL2 en modo NAT, un Xeon Gold con
 RAM abundante y una Tesla T4 de 16 GB dedicada exclusivamente a Ollama. El backend y
@@ -526,7 +669,7 @@ El worker debe recibir la misma configuración de base de datos, modelos, almace
 
 | Variable | Valor local | Valor de investigación | Propósito |
 |---|---|---|---|
-| `MODEL_PROFILE` | `local_balanced` | `wsl_t4` | Selecciona el conjunto de modelos y dispositivos. |
+| `MODEL_PROFILE` | `local_balanced` | `ubuntu_t4` | Selecciona el conjunto de modelos y dispositivos. |
 | `LLM_MODEL` | `qwen3:4b-instruct-2507-q4_K_M` | `qwen3:14b-q4_K_M` | Modelo servido por Ollama. |
 | `DATABASE_URL` | `sqlite:///./data/app.db` | `postgresql+psycopg://...` | Base de datos SQLAlchemy. |
 | `CORPUS_STORE_BACKEND` | `local` | `postgres` | Índices locales o pgvector/tsvector. |
@@ -539,8 +682,8 @@ El worker debe recibir la misma configuración de base de datos, modelos, almace
 | `RESEARCH_TIMEOUT_SECONDS` | `1800` | `1800` | Presupuesto total de investigación. |
 | `RESEARCH_SYNTHESIS_RESERVE_SECONDS` | `600` | `600` | Tiempo reservado para redactar y verificar la respuesta final. |
 | `RESEARCH_MAX_ROUNDS` | `2` | `2` | Rondas correctivas máximas. |
-| `CELERY_ENABLED` | `False` | `False` | La primera configuración WSL procesa dentro del backend y no inicia Redis. |
-| `OLLAMA_BASE_URL` | vacío | dinámico | `make dev-wsl` lo resuelve desde el gateway NAT de Windows. |
+| `CELERY_ENABLED` | `False` | `True` | Ubuntu procesa la ingesta mediante Redis y un worker separado. |
+| `OLLAMA_BASE_URL` | vacío | `http://127.0.0.1:11434` | Ollama se ejecuta en el mismo host Ubuntu. |
 | `OLLAMA_KEEP_ALIVE` | `5m` | `30m` | Evita recargar el modelo entre fases de investigación. |
 
 Consulte [.env.example](.env.example) y [backend/app/config.py](backend/app/config.py) para ver todas las opciones.
@@ -552,6 +695,8 @@ Consulte [.env.example](.env.example) y [backend/app/config.py](backend/app/conf
 | `make install` | Instala backend y frontend. |
 | `make migrate` | Inicializa la base y aplica Alembic. |
 | `make dev` | Inicia FastAPI y Next.js. |
+| `make doctor-ubuntu` | Verifica T4, Ollama, modelo, PostgreSQL, extensiones y Redis. |
+| `make dev-ubuntu` | Ejecuta el diagnóstico e inicia backend, frontend y worker en Ubuntu. |
 | `make dev-backend` | Inicia solo FastAPI en el puerto 7860. |
 | `make dev-frontend` | Inicia solo Next.js en el puerto 3000. |
 | `make test` | Ejecuta las pruebas del backend. |
