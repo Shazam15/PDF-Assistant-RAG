@@ -4,5 +4,8 @@
 -- but we can add custom schemas, extensions, or default data here if needed.
 
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS unaccent;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 -- Additional setup (if any) can be placed below

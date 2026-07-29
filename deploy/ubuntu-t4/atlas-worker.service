@@ -1,0 +1,21 @@
+[Unit]
+Description=ATLAS Celery document worker
+After=network-online.target docker.service ollama.service atlas-backend.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=atlas
+Group=atlas
+WorkingDirectory=/opt/atlas/PDF-Assistant-RAG/backend
+EnvironmentFile=/etc/atlas/atlas.env
+ExecStart=/opt/atlas/PDF-Assistant-RAG/.venv/bin/celery -A app.celery_app.celery_app worker --loglevel=info --concurrency=1
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=90
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

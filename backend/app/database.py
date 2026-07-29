@@ -166,6 +166,11 @@ def _migrate_schema():
         ("documents", "drive_file_id", "ALTER TABLE documents ADD COLUMN drive_file_id VARCHAR(255)"),
         ("documents", "drive_folder_id", "ALTER TABLE documents ADD COLUMN drive_folder_id VARCHAR(255)"),
         ("documents", "drive_synced_at", "ALTER TABLE documents ADD COLUMN drive_synced_at TIMESTAMP"),
+        ("documents", "processing_current", "ALTER TABLE documents ADD COLUMN processing_current INTEGER"),
+        ("documents", "processing_total", "ALTER TABLE documents ADD COLUMN processing_total INTEGER"),
+        ("documents", "processing_updated_at", "ALTER TABLE documents ADD COLUMN processing_updated_at TIMESTAMP"),
+        ("documents", "searchable_at", "ALTER TABLE documents ADD COLUMN searchable_at TIMESTAMP"),
+        ("documents", "processing_warning", "ALTER TABLE documents ADD COLUMN processing_warning TEXT"),
     ]
     for table, column, ddl in docs_migrations:
         if column not in existing_docs_columns:
@@ -197,10 +202,58 @@ def _migrate_schema():
                     "Migration skipped (may already exist): %s.%s", table, column
                 )
 
+    if inspector.has_table("document_profiles"):
+        profile_columns = {column["name"] for column in inspector.get_columns("document_profiles")}
+        if "embedding" not in profile_columns:
+            embedding_type = f"vector({settings.EMBEDDING_DIMENSION})" if engine.dialect.name == "postgresql" else "TEXT"
+            with engine.begin() as connection:
+                connection.execute(text(f"ALTER TABLE document_profiles ADD COLUMN embedding {embedding_type}"))
+
 
 
 def init_db():
     """Create all tables on startup and apply schema migrations."""
     from app import models  # noqa: F401 — import to register models
+    if engine.dialect.name == "postgresql":
+        # pgvector must exist before create_all emits columns of type vector.
+        with engine.begin() as connection:
+            connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            connection.execute(text("CREATE EXTENSION IF NOT EXISTS unaccent"))
+            connection.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
     Base.metadata.create_all(bind=engine)
     _migrate_schema()
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as connection:
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_document_chunks_embedding_hnsw "
+                "ON document_chunks USING hnsw (embedding vector_cosine_ops) WHERE embedding IS NOT NULL"
+            ))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_document_profiles_embedding_hnsw "
+                "ON document_profiles USING hnsw (embedding vector_cosine_ops) WHERE embedding IS NOT NULL"
+            ))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_document_chunks_search_gin "
+                "ON document_chunks USING gin (to_tsvector('simple', COALESCE(search_text,text)))"
+            ))
+            vector_type = connection.execute(text(
+                "SELECT format_type(a.atttypid, a.atttypmod) FROM pg_attribute a "
+                "JOIN pg_class c ON c.oid=a.attrelid "
+                "WHERE c.relname='document_chunks' AND a.attname='embedding' AND NOT a.attisdropped"
+            )).scalar()
+            expected = f"vector({settings.EMBEDDING_DIMENSION})"
+            if vector_type and vector_type != expected:
+                raise RuntimeError(
+                    f"Embedding index dimension mismatch: database={vector_type}, configured={expected}. "
+                    "Run the corpus reindex migration before serving requests."
+                )
+            profile_vector_type = connection.execute(text(
+                "SELECT format_type(a.atttypid, a.atttypmod) FROM pg_attribute a "
+                "JOIN pg_class c ON c.oid=a.attrelid "
+                "WHERE c.relname='document_profiles' AND a.attname='embedding' AND NOT a.attisdropped"
+            )).scalar()
+            if profile_vector_type and profile_vector_type != expected:
+                raise RuntimeError(
+                    f"Profile embedding dimension mismatch: database={profile_vector_type}, configured={expected}. "
+                    "Run the corpus reindex migration before serving requests."
+                )

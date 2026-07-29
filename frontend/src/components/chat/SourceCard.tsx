@@ -13,7 +13,7 @@ import { ChevronDown, ChevronUp, FileText, Eye, TextQuote } from "lucide-react";
 
 const EXCERPT_THRESHOLD = 200;
 
-type ConfidenceLevel = "High" | "Medium" | "Low" | "Unknown";
+type ConfidenceLevel = "Alta" | "Media" | "Baja" | "Desconocido";
 
 interface ConfidenceBadgeMeta {
   label: ConfidenceLevel;

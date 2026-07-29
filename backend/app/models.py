@@ -5,6 +5,7 @@ import uuid
 import enum
 import base64
 import hashlib
+import json
 from datetime import datetime, timezone
 
 from cryptography.fernet import Fernet
@@ -16,6 +17,8 @@ from sqlalchemy import (
     ForeignKey,
     Text,
     Boolean,
+    Float,
+    Index,
     Enum as SQLAlchemyEnum,
 )
 from sqlalchemy.types import TypeDecorator, CHAR
@@ -59,6 +62,34 @@ class GUID(TypeDecorator):
         if value is None:
             return value
         return str(value)
+
+
+class EmbeddingVector(TypeDecorator):
+    """pgvector in production and JSON text in the lightweight local store."""
+
+    impl = Text
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "postgresql":
+            from app.config import get_settings
+            from pgvector.sqlalchemy import Vector
+
+            return dialect.type_descriptor(Vector(get_settings().EMBEDDING_DIMENSION))
+        return dialect.type_descriptor(Text())
+
+    def process_bind_param(self, value, dialect):
+        if value is None or dialect.name == "postgresql":
+            return value
+        return json.dumps(value)
+
+    def process_result_value(self, value, dialect):
+        if value is None or dialect.name == "postgresql" or isinstance(value, list):
+            return value
+        try:
+            return json.loads(value)
+        except (TypeError, json.JSONDecodeError):
+            return None
 
 
 class EncryptedString(TypeDecorator):
@@ -255,7 +286,12 @@ class Document(Base):
     is_deleted = Column(Boolean, default=False, nullable=False, index=True)
     deleted_at = Column(DateTime, nullable=True)
     processing_progress = Column(Integer, default=0)
-    processing_stage = Column(String(20), default="queued")
+    processing_stage = Column(String(40), default="queued")
+    processing_current = Column(Integer, nullable=True)
+    processing_total = Column(Integer, nullable=True)
+    processing_updated_at = Column(DateTime, nullable=True)
+    searchable_at = Column(DateTime, nullable=True)
+    processing_warning = Column(Text, nullable=True)
     retry_count = Column(Integer, default=0)
     last_error_traceback = Column(Text, nullable=True)
     processing_started_at = Column(DateTime, nullable=True)
@@ -269,6 +305,95 @@ class Document(Base):
         back_populates="document",
         cascade="all, delete-orphan",
     )
+
+
+class DocumentProfile(Base):
+    __tablename__ = "document_profiles"
+
+    id = Column(GUID, primary_key=True, default=uuid.uuid4)
+    document_id = Column(GUID, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    user_id = Column(GUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    title = Column(String(500), nullable=False)
+    summary = Column(Text, nullable=True)
+    methodology = Column(Text, nullable=True)
+    findings = Column(Text, nullable=True)
+    limitations = Column(Text, nullable=True)
+    embedding = Column(EmbeddingVector(), nullable=True)
+    section_count = Column(Integer, default=0, nullable=False)
+    index_version = Column(String(100), nullable=False)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+
+class DocumentSection(Base):
+    __tablename__ = "document_sections"
+
+    id = Column(String(100), primary_key=True)
+    document_id = Column(GUID, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(GUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    title = Column(String(500), nullable=False)
+    section_path = Column(Text, nullable=True)
+    page_start = Column(Integer, nullable=False)
+    page_end = Column(Integer, nullable=False)
+    summary = Column(Text, nullable=True)
+    text = Column(Text, nullable=False)
+
+
+class DocumentChunk(Base):
+    __tablename__ = "document_chunks"
+
+    id = Column(String(160), primary_key=True)
+    document_id = Column(GUID, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(GUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    filename = Column(String(500), nullable=False)
+    chunk_index = Column(Integer, nullable=False)
+    parent_id = Column(String(100), nullable=True, index=True)
+    section_id = Column(String(100), nullable=True, index=True)
+    section_title = Column(String(500), nullable=True)
+    text = Column(Text, nullable=False)
+    parent_text = Column(Text, nullable=True)
+    page = Column(Integer, nullable=False)
+    page_start = Column(Integer, nullable=False)
+    page_end = Column(Integer, nullable=False)
+    token_count = Column(Integer, default=0, nullable=False)
+    chunk_type = Column(String(40), default="text", nullable=False)
+    bbox = Column(Text, nullable=True)
+    table_index = Column(Integer, nullable=True)
+    embedding = Column(EmbeddingVector(), nullable=True)
+    search_text = Column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_document_chunks_user_document", "user_id", "document_id"),
+    )
+
+
+class DocumentEvidence(Base):
+    __tablename__ = "document_evidence"
+
+    id = Column(GUID, primary_key=True, default=uuid.uuid4)
+    document_id = Column(GUID, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(GUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    chunk_id = Column(String(160), ForeignKey("document_chunks.id", ondelete="CASCADE"), nullable=False, index=True)
+    evidence_kind = Column(String(40), nullable=False)
+    claim = Column(Text, nullable=False)
+    exact_quote = Column(Text, nullable=False)
+    page = Column(Integer, nullable=False)
+    section_title = Column(String(500), nullable=True)
+    confidence = Column(Float, default=1.0, nullable=False)
+
+
+class ResearchRun(Base):
+    __tablename__ = "research_runs"
+
+    id = Column(GUID, primary_key=True, default=uuid.uuid4)
+    user_id = Column(GUID, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    document_id = Column(GUID, ForeignKey("documents.id", ondelete="SET NULL"), nullable=True, index=True)
+    question = Column(Text, nullable=False)
+    state_json = Column(Text, nullable=True)
+    status = Column(String(30), default="running", nullable=False, index=True)
+    rounds = Column(Integer, default=0, nullable=False)
+    evidence_count = Column(Integer, default=0, nullable=False)
+    started_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    completed_at = Column(DateTime, nullable=True)
 
 
 class ChatMessage(Base):

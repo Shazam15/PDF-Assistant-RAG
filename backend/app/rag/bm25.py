@@ -1,7 +1,4 @@
-"""
-BM25 Keyword Search implementation using rank_bm25.
-Stores a BM25 index per document to allow easy updates and deletions.
-"""
+"""Legacy local lexical fallback with one corpus-wide BM25 ranking per query."""
 import os
 import glob
 import pickle
@@ -45,10 +42,6 @@ def store_bm25_index(chunks: List[Dict[str, Any]], document_id: str, filename: s
     if not chunks:
         return
 
-    texts = [chunk["text"] for chunk in chunks]
-    tokenized_texts = [tokenize(text) for text in texts]
-    bm25 = BM25Okapi(tokenized_texts)
-
     # Format chunks to match vectorstore output
     formatted_chunks = []
     for chunk in chunks:
@@ -65,7 +58,7 @@ def store_bm25_index(chunks: List[Dict[str, Any]], document_id: str, filename: s
         })
 
     data = {
-        "bm25": bm25,
+        "format_version": 2,
         "chunks": formatted_chunks
     }
 
@@ -122,22 +115,50 @@ def query_bm25(
         return []
 
     tokenized_query = tokenize(query)
-    
-    if document_id:
-        path = get_bm25_path(user_id, document_id)
-        return _query_single_index(path, tokenized_query, top_k)
-    
-    # If no document_id, query all documents for this user
-    user_dir = get_bm25_dir(user_id)
-    all_results = []
-    
-    for path in glob.glob(os.path.join(user_dir, "*.pkl")):
-        results = _query_single_index(path, tokenized_query, top_k)
-        all_results.extend(results)
-        
-    # Sort all results by score and take top_k
-    all_results.sort(key=lambda x: x["score"], reverse=True)
-    return all_results[:top_k]
+    paths = (
+        [get_bm25_path(user_id, document_id)]
+        if document_id
+        else glob.glob(os.path.join(get_bm25_dir(user_id), "*.pkl"))
+    )
+    corpus_chunks: List[Dict[str, Any]] = []
+    for path in paths:
+        if not os.path.exists(path):
+            continue
+        try:
+            with open(path, "rb") as handle:
+                corpus_chunks.extend(dict(chunk) for chunk in pickle.load(handle).get("chunks", []))
+        except Exception as exc:
+            logger.warning("Could not read lexical fallback index %s: %s", path, exc)
+
+    if not corpus_chunks:
+        return []
+    model = BM25Okapi([tokenize(chunk["text"]) for chunk in corpus_chunks])
+    scores = model.get_scores(tokenized_query)
+    ranked_indices = sorted(range(len(scores)), key=lambda index: scores[index], reverse=True)
+    results = []
+    for index in ranked_indices:
+        if scores[index] <= 0:
+            continue
+        chunk = dict(corpus_chunks[index])
+        chunk["score"] = float(scores[index])
+        results.append(chunk)
+        if len(results) >= top_k:
+            break
+    return results
+
+
+def load_bm25_chunks(user_id: str, document_id: str) -> List[Dict[str, Any]]:
+    """Load the stored chunks so embedding migrations do not reparse source files."""
+    path = get_bm25_path(user_id, document_id)
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "rb") as handle:
+            data = pickle.load(handle)
+        return [dict(chunk) for chunk in data.get("chunks", [])]
+    except Exception as exc:
+        logger.warning("Could not reuse BM25 chunks for %s: %s", document_id, exc)
+        return []
 
 def delete_bm25_index(document_id: str, user_id: str):
     """Delete a specific document's BM25 index."""

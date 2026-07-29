@@ -7,7 +7,7 @@ def test_workspace_invite_requires_admin(client, db_session, user):
     response = client.post(
         "/api/v1/workspaces/invite",
         headers={"Authorization": f"Bearer {token}"},
-        json={"email": "invitee@example.com", "workspace_name": "Engineering"},
+        json={"email": "invitee@utp.ac.pa", "workspace_name": "Engineering"},
     )
 
     assert response.status_code == 403
@@ -38,19 +38,19 @@ def test_workspace_invite_creates_invitation_and_sends_email(client, db_session,
     response = client.post(
         "/api/v1/workspaces/invite",
         headers={"Authorization": f"Bearer {token}"},
-        json={"email": "invitee@example.com", "workspace_name": "Engineering"},
+        json={"email": "invitee@utp.ac.pa", "workspace_name": "Engineering"},
     )
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["email"] == "invitee@example.com"
+    assert payload["email"] == "invitee@utp.ac.pa"
     assert payload["workspace_name"] == "Engineering"
     assert "invite_link" in payload
     assert payload["invite_link"].startswith("http")
     assert "token=" in payload["invite_link"]
-    assert sent["to"] == "invitee@example.com"
+    assert sent["to"] == "invitee@utp.ac.pa"
     assert "Invitation to join workspace" in sent["subject"]
 
-    invitation = db_session.query(WorkspaceInvitation).filter_by(email="invitee@example.com").first()
+    invitation = db_session.query(WorkspaceInvitation).filter_by(email="invitee@utp.ac.pa").first()
     assert invitation is not None
     assert invitation.workspace_name == "Engineering"

@@ -1,12 +1,11 @@
-"""
-Cross-encoder reranker using BAAI/bge-reranker-v2-m3.
-Loads the model once and provides a rerank method.
-"""
+"""Multilingual reranking with raw, model-relative scores."""
 
 import logging
 from typing import List, Dict, Any, Optional
 
 from sentence_transformers import CrossEncoder
+import torch
+from torch import nn
 
 from app.config import get_settings
 
@@ -34,11 +33,28 @@ class Reranker:
         """Lazy-load the cross-encoder model."""
         if self._model is None:
             logger.info(f"Loading reranker: {self.model_name}")
-            self._model = CrossEncoder(
-                self.model_name,
-                max_length=512,
-                device=self.device
-            )
+            requested_device = self.device or get_settings().RERANKER_DEVICE
+            device = requested_device
+            if requested_device.startswith("cuda") and not torch.cuda.is_available():
+                device = "cpu"
+                logger.warning(
+                    "CUDA was requested for the reranker but is unavailable; falling back to CPU."
+                )
+            kwargs = {
+                "max_length": get_settings().RERANK_MAX_LENGTH,
+                "device": device,
+            }
+            if "qwen3-reranker" in self.model_name.lower():
+                kwargs.update({
+                    "prompts": {
+                        "research": (
+                            "Given a research question, determine whether the document passage provides direct "
+                            "evidence that helps answer the query"
+                        )
+                    },
+                    "default_prompt_name": "research",
+                })
+            self._model = CrossEncoder(self.model_name, **kwargs)
             logger.info("Reranker loaded successfully")
         return self._model
 
@@ -67,13 +83,22 @@ class Reranker:
 
         model = self._load_model()
 
-        # Prepare query-document pairs
-        pairs = [(query, doc[text_key]) for doc in documents]
+        # Repeat neutral document/section context for the cross-encoder while
+        # retaining the literal child text separately for citation checks.
+        pairs = []
+        for document in documents:
+            labels = [document.get("filename"), document.get("section") or document.get("section_title")]
+            passage = "\n".join(
+                [str(label) for label in labels if label] + [str(document[text_key])]
+            )
+            pairs.append((query, passage))
 
-        # Get relevance scores
-        scores = model.predict(pairs)
+        # Request raw logits explicitly. CrossEncoder otherwise applies its own
+        # sigmoid for single-label models, which would calibrate the score twice.
+        scores = model.predict(pairs, activation_fn=nn.Identity())
 
-        # Pair scores with documents and sort in descending order
+        # Raw logits are only comparable inside this query. They are deliberately
+        # not converted to probabilities or compared with a global threshold.
         scored = list(zip(scores, documents))
         scored.sort(key=lambda x: x[0], reverse=True)
 
@@ -81,9 +106,12 @@ class Reranker:
         reranked = [doc for _, doc in scored[:top_k]]
 
         # Attach rerank_score to each returned document
-        for (score, doc) in scored:
+        for rank, (score, doc) in enumerate(scored, 1):
             if doc in reranked:
-                doc["rerank_score"] = float(score)
+                logit = float(score)
+                doc["rerank_score"] = logit
+                doc["rerank_rank"] = rank
+                doc["relevance_score"] = 1.0 / rank
 
         return reranked
 
@@ -98,3 +126,19 @@ def get_reranker(model_name: Optional[str] = None) -> Reranker:
     if _reranker_instance is None:
         _reranker_instance = Reranker(model_name=model_name)
     return _reranker_instance
+
+
+def release_reranker() -> None:
+    global _reranker_instance
+    if _reranker_instance is not None:
+        _reranker_instance._model = None
+    _reranker_instance = None
+    try:
+        import gc
+        import torch
+
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass

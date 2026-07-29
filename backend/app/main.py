@@ -95,11 +95,40 @@ async def document_cleanup_job():
         await asyncio.sleep(86400)
 
 
+async def embedding_migration_job():
+    """Run model-index migrations without blocking application startup."""
+    import asyncio
+    try:
+        from app.services.document_ingestion import migrate_embedding_indexes
+
+        await asyncio.to_thread(migrate_embedding_indexes)
+    except Exception as exc:
+        logger.error("Embedding index migration aborted: %s", exc, exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup/shutdown lifecycle."""
     # ── Startup ──────────────────────────────────────
     logger.info(f"Starting {settings.APP_NAME}")
+    logger.info(
+        "RAG runtime profile=%s corpus=%s embedding=%s dimension=%d index=%s reranker=%s llm=%s pipeline=%s",
+        settings.MODEL_PROFILE,
+        settings.CORPUS_STORE_BACKEND,
+        settings.EMBEDDING_MODEL,
+        settings.EMBEDDING_DIMENSION,
+        settings.EMBEDDING_INDEX_VERSION,
+        settings.RERANKER_MODEL,
+        settings.LLM_MODEL,
+        settings.RESEARCH_PIPELINE_VERSION,
+    )
+    logger.info(
+        "RAG devices embedding=%s reranker=%s ollama=%s keep_alive=%s",
+        settings.EMBEDDING_DEVICE,
+        settings.RERANKER_DEVICE,
+        settings.OLLAMA_BASE_URL or os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434"),
+        settings.OLLAMA_KEEP_ALIVE,
+    )
 
     # Create tables
     init_db()
@@ -115,6 +144,7 @@ async def lifespan(app: FastAPI):
     # Start background cleanup task
     import asyncio
     cleanup_task = asyncio.create_task(document_cleanup_job())
+    migration_task = asyncio.create_task(embedding_migration_job())
 
     yield
 
@@ -122,12 +152,20 @@ async def lifespan(app: FastAPI):
     stop_scheduler()
     logger.info("Shutting down")
     cleanup_task.cancel()
+    if not migration_task.done():
+        migration_task.cancel()
     try:
         await cleanup_task
     except asyncio.CancelledError:
         pass
     except Exception as e:
         logger.warning(f"Error cancelling cleanup task: {e}")
+    try:
+        await migration_task
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        logger.warning("Error finishing embedding migration task: %s", e)
 
 
 # ── Create App ───────────────────────────────────────
@@ -261,7 +299,7 @@ def health_check():
 @app.get('/health')
 def db_health():
     db_status = "down"
-    chroma_status = "down"
+    corpus_status = "down"
 
     # --- DB check ---
     try:
@@ -273,18 +311,20 @@ def db_health():
     except Exception:
         db_status = "down"
 
-    # --- Chroma check ---
-    try:
-        chroma = get_chroma_client()
-        chroma.heartbeat()
-        chroma_status = "up"
-    except Exception:
-        chroma_status = "down"
+    if settings.CORPUS_STORE_BACKEND == "postgres":
+        corpus_status = db_status
+    else:
+        try:
+            chroma = get_chroma_client()
+            chroma.heartbeat()
+            corpus_status = "up"
+        except Exception:
+            corpus_status = "down"
 
-    overall_status = "ok" if db_status == "up" and chroma_status == "up" else "degraded"
+    overall_status = "ok" if db_status == "up" and corpus_status == "up" else "degraded"
     return{
-        "status": db_status,
-        "chroma": chroma_status,
+        "status": overall_status,
+        "corpus": corpus_status,
         "db": db_status
     }
 

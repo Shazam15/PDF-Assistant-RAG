@@ -1,0 +1,21 @@
+[Unit]
+Description=ATLAS FastAPI backend
+After=network-online.target docker.service ollama.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=atlas
+Group=atlas
+WorkingDirectory=/opt/atlas/PDF-Assistant-RAG/backend
+EnvironmentFile=/etc/atlas/atlas.env
+ExecStart=/opt/atlas/PDF-Assistant-RAG/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 7860 --workers 1
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=45
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

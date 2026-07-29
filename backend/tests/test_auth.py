@@ -13,7 +13,7 @@ def test_register_success(client):
         "/api/v1/auth/register",
         json={
             "username": "newuser",
-            "email": "newuser@example.com",
+            "email": "newuser@utp.ac.pa",
             "password": VALID_TEST_PASSWORD,
         },
     )
@@ -21,14 +21,14 @@ def test_register_success(client):
     assert response.status_code == 201
     payload = response.json()
     assert payload["message"] == "Registration successful. Please check your email to verify your account before logging in."
-    assert payload["email"] == "newuser@example.com"
+    assert payload["email"] == "newuser@utp.ac.pa"
     assert payload["verification_url"].startswith("/verify-email?token=")
 
 
 def test_register_duplicate_email_or_username_conflict(client):
     payload = {
         "username": "dupuser",
-        "email": "dup@example.com",
+        "email": "dup@utp.ac.pa",
         "password": VALID_TEST_PASSWORD,
     }
     first = client.post("/api/v1/auth/register", json=payload)
@@ -43,7 +43,7 @@ def test_register_duplicate_email_or_username_conflict(client):
 
     duplicate_username = client.post(
         "/api/v1/auth/register",
-        json={**payload, "email": "another@example.com"},
+        json={**payload, "email": "another@utp.ac.pa"},
     )
     assert duplicate_username.status_code == 409
     assert duplicate_username.json()["error"]["message"] == "Username already taken"
@@ -54,7 +54,7 @@ def test_register_rejects_weak_password(client):
         "/api/v1/auth/register",
         json={
             "username": "weakpassuser",
-            "email": "weakpass@example.com",
+            "email": "weakpass@utp.ac.pa",
             "password": "123456",
         },
     )
@@ -70,7 +70,7 @@ def test_register_rejects_password_missing_special_character(client):
         "/api/v1/auth/register",
         json={
             "username": "specialcharuser",
-            "email": "specialchar@example.com",
+            "email": "specialchar@utp.ac.pa",
             "password": "Password1",
         },
     )
@@ -107,7 +107,7 @@ def test_login_invalid_password(client, user):
 def test_login_invalid_email(client):
     response = client.post(
         "/api/v1/auth/login",
-        json={"email": "missing@example.com", "password": "password123"},
+        json={"email": "missing@utp.ac.pa", "password": "password123"},
     )
 
     assert response.status_code == 401

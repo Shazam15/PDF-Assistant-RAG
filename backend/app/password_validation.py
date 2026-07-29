@@ -5,6 +5,9 @@ from __future__ import annotations
 
 import re
 
+# Compatibility export for older callers; email validation lives in its own module.
+from app.email_validation import validate_email
+
 MIN_PASSWORD_LENGTH = 8
 SPECIAL_CHAR_PATTERN = re.compile(r'[!@#$%^&*(),.?":{}|<>\-_=+\[\]\\;/\'`~]')
 
@@ -100,6 +103,5 @@ def validate_password(password: str) -> None:
 
     if errors:
         raise ValueError("; ".join(errors))
-
 
 

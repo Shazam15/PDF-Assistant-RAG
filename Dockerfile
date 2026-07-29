@@ -75,6 +75,8 @@ COPY --from=python-builder /opt/venv /opt/venv
 # Copy backend code
 COPY backend/app ./app
 COPY backend/__init__.py ./backend/__init__.py
+COPY backend/alembic.ini ./alembic.ini
+COPY backend/alembic ./alembic
 
 # Copy frontend build from stage 1
 COPY --from=frontend-builder /app/frontend/out ./frontend/out
@@ -89,4 +91,4 @@ USER appuser
 # HuggingFace Spaces requires port 7860
 EXPOSE 7860
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "7860"]
+CMD ["sh", "-c", "python -c 'from app.database import init_db; init_db()' && alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 7860"]

@@ -9,6 +9,8 @@ import time
 from datetime import datetime, timezone
 from io import BytesIO
 import logging
+import asyncio
+from threading import Event
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect, Query
@@ -43,6 +45,19 @@ from app.schemas import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
+
+
+def _document_is_searchable(document: Document) -> bool:
+    return document.status == "ready" or (
+        document.status == "enriching" and document.searchable_at is not None
+    )
+
+
+def _next_stream_chunk(generator):
+    try:
+        return True, next(generator)
+    except StopIteration:
+        return False, None
 
 
 def _json_safe_value(value):
@@ -170,7 +185,7 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
                 await websocket.send_json({"type": "error", "data": "Document not found"})
                 await websocket.close()
                 return
-            if doc.status != "ready":
+            if not _document_is_searchable(doc):
                 progress = getattr(doc, "processing_progress", None)
                 stage = getattr(doc, "processing_stage", None)
                 detail = f"Document is still {doc.status}."
@@ -210,14 +225,20 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
         try:
             full_answer = ""
             sources = []
-            for chunk in generate_answer_stream(
+            cancellation_event = Event()
+            answer_generator = generate_answer_stream(
                 question=question,
                 user_id=user.id,
                 document_id=document_id,
                 hf_token=user.hf_token,
                 chat_history=chat_history,
                 routing_mode=routing_mode,
-            ):
+                cancellation_event=cancellation_event,
+            )
+            while True:
+                has_chunk, chunk = await asyncio.to_thread(_next_stream_chunk, answer_generator)
+                if not has_chunk:
+                    break
                 # chunk is SSE-style string like 'data: {json}\n\n' or similar
                 try:
                     if chunk.startswith("data: "):
@@ -251,9 +272,17 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
             await websocket.send_json({"type": "done"})
 
         except WebSocketDisconnect:
+            cancellation_event.set()
             return
         except Exception as e:
+            cancellation_event.set()
             await websocket.send_json({"type": "error", "data": str(e)})
+        finally:
+            cancellation_event.set()
+            try:
+                answer_generator.close()
+            except Exception:
+                pass
 
     except WebSocketDisconnect:
         return
@@ -520,6 +549,7 @@ def generate_answer_stream(
     top_k: Optional[int] = None,
     chat_history: Optional[list] = None,
     routing_mode: str = "auto",
+    cancellation_event: Optional[Event] = None,
 ):
     from app.rag.agent import generate_answer_stream as _generate_answer_stream
 
@@ -531,6 +561,7 @@ def generate_answer_stream(
         top_k=top_k,
         chat_history=chat_history,
         routing_mode=routing_mode,
+        cancellation_event=cancellation_event,
     )
 
 
@@ -573,7 +604,7 @@ def ask_question(
             if not doc:
                 raise NotFoundException("Document")
 
-            if doc.status != "ready":
+            if not _document_is_searchable(doc):
                 progress = getattr(doc, "processing_progress", None)
                 stage = getattr(doc, "processing_stage", None)
                 detail = f"Document is still {doc.status}. Please wait for processing to complete."
@@ -717,7 +748,7 @@ def ask_question_stream(
         if not doc:
             raise NotFoundException("Document")
 
-        if doc.status != "ready":
+        if not _document_is_searchable(doc):
             progress = getattr(doc, "processing_progress", None)
             stage = getattr(doc, "processing_stage", None)
             detail = f"Document is still {doc.status}. Please wait for processing to complete."
@@ -804,6 +835,7 @@ def ask_question_stream(
     def event_stream():
         full_answer = ""
         sources = []
+        cancellation_event = Event()
 
         try:
             for chunk in generate_answer_stream(
@@ -814,6 +846,7 @@ def ask_question_stream(
                 top_k=payload.top_k,
                 chat_history=chat_history,
                 routing_mode=payload.routing_mode,
+                cancellation_event=cancellation_event,
             ):
                 yield chunk
 
@@ -856,6 +889,7 @@ def ask_question_stream(
 
             #End----------- 
         finally:
+            cancellation_event.set()
             record_query_response_time(time.perf_counter() - started_at)
 
     return StreamingResponse(

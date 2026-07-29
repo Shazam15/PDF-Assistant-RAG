@@ -17,11 +17,17 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 os.environ["SECRET_KEY"] = "test-secret-key-that-is-long-enough"
+os.environ["ENVIRONMENT"] = "development"
 os.environ["DATABASE_URL"] = "sqlite:///./test_bootstrap.db"
 os.environ["DEBUG"] = "false"
 os.environ["HF_TOKEN"] = "test-hf-token"
 os.environ["UPLOAD_DIR"] = str(ROOT / "backend" / "test_uploads")
 os.environ["CHROMA_PERSIST_DIR"] = str(ROOT / "backend" / "test_chroma")
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
 
 
 fake_embeddings = types.ModuleType("app.rag.embeddings")
@@ -41,6 +47,10 @@ fake_vectorstore.get_chroma_client = lambda: _FakeChromaClient()
 fake_vectorstore.store_chunks = lambda chunks, document_id, filename, user_id: len(chunks)
 fake_vectorstore.delete_document_chunks = lambda document_id, user_id: None
 fake_vectorstore.query_chunks = lambda query_embedding, user_id, document_id=None, top_k=10: []
+fake_vectorstore.user_index_needs_migration = lambda user_id: False
+fake_vectorstore.start_user_index_migration = lambda user_id: None
+fake_vectorstore.document_index_is_current = lambda user_id, document_id, expected_count: False
+fake_vectorstore.finish_user_index_migration = lambda user_id: None
 sys.modules.setdefault("app.rag.vectorstore", fake_vectorstore)
 
 slowapi_module = types.ModuleType("slowapi")
@@ -135,7 +145,7 @@ def client(db_session, monkeypatch):
 def user(db_session):
     instance = User(
         username="tester",
-        email="tester@example.com",
+        email="tester@utp.ac.pa",
         hashed_password=hash_password("password123"),
     )
     db_session.add(instance)
@@ -148,7 +158,7 @@ def user(db_session):
 def other_user(db_session):
     instance = User(
         username="other",
-        email="other@example.com",
+        email="other@utp.ac.pa",
         hashed_password=hash_password("password123"),
     )
     db_session.add(instance)

@@ -3,577 +3,774 @@
 <br/>
 
 ```
-██████╗ ██████╗ ███████╗     █████╗ ███████╗███████╗██╗███████╗████████╗ █████╗ ███╗   ██╗████████╗
-██╔══██╗██╔══██╗██╔════╝    ██╔══██╗██╔════╝██╔════╝██║██╔════╝╚══██╔══╝██╔══██╗████╗  ██║╚══██╔══╝
-██████╔╝██║  ██║█████╗      ███████║███████╗███████╗██║███████╗   ██║   ███████║██╔██╗ ██║   ██║
-██╔═══╝ ██║  ██║██╔══╝      ██╔══██║╚════██║╚════██║██║╚════██║   ██║   ██╔══██║██║╚██╗██║   ██║
-██║     ██████╔╝██║         ██║  ██║███████║███████║██║███████║   ██║   ██║  ██║██║ ╚████║   ██║
-╚═╝     ╚═════╝ ╚═╝         ╚═╝  ╚═╝╚══════╝╚══════╝╚═╝╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═══╝   ╚═╝
-                                                                                                    
-                        ██████╗  █████╗  ██████╗
-                        ██╔══██╗██╔══██╗██╔════╝
-                        ██████╔╝███████║██║  ███╗
-                        ██╔══██╗██╔══██║██║   ██║
-                        ██║  ██║██║  ██║╚██████╔╝
-                        ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝
+ ▄▄▄▄▄▄▄▄▄▄▄  ▄▄▄▄▄▄▄▄▄▄▄  ▄               ▄▄▄▄▄▄▄▄▄▄▄     ▄▄▄▄▄▄▄▄▄▄▄    
+▐░░░░░░░░░░░▌▐░░░░░░░░░░░▌▐░▌             ▐░░░░░░░░░░░▌   ▐░░░░░░░░░░░▌   
+▐░█▀▀▀▀▀▀▀█░▌ ▀▀▀▀█░█▀▀▀▀ ▐░▌             ▐░█▀▀▀▀▀▀▀█░▌   ▐░█▀▀▀▀▀▀▀▀▀    
+▐░▌       ▐░▌     ▐░▌     ▐░▌             ▐░▌       ▐░▌   ▐░▌             
+▐░█▄▄▄▄▄▄▄█░▌     ▐░▌     ▐░▌             ▐░█▄▄▄▄▄▄▄█░▌   ▐░█▄▄▄▄▄▄▄▄▄    
+▐░░░░░░░░░░░▌     ▐░▌     ▐░▌             ▐░░░░░░░░░░░▌   ▐░░░░░░░░░░░▌   
+▐░█▀▀▀▀▀▀▀█░▌     ▐░▌     ▐░▌             ▐░█▀▀▀▀▀▀▀█░▌    ▀▀▀▀▀▀▀▀▀█░▌   
+▐░▌       ▐░▌     ▐░▌     ▐░▌             ▐░▌       ▐░▌             ▐░▌   
+▐░▌       ▐░▌ ▄   ▐░▌ ▄   ▐░█▄▄▄▄▄▄▄▄▄  ▄ ▐░▌       ▐░▌ ▄  ▄▄▄▄▄▄▄▄▄█░▌ ▄ 
+▐░▌       ▐░▌▐░▌  ▐░▌▐░▌  ▐░░░░░░░░░░░▌▐░▌▐░▌       ▐░▌▐░▌▐░░░░░░░░░░░▌▐░▌
+ ▀         ▀  ▀    ▀  ▀    ▀▀▀▀▀▀▀▀▀▀▀  ▀  ▀         ▀  ▀  ▀▀▀▀▀▀▀▀▀▀▀  ▀ 
+                                                                          
 ```
 
-### Enterprise Agentic Retrieval-Augmented Generation System
+### AI Text and Language Assistant
 
 <br/>
-
-[![Flask](https://img.shields.io/badge/Flask-2.x-000000?style=for-the-badge&logo=flask&logoColor=white)](https://flask.palletsprojects.com/)
-[![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org/)
-[![MongoDB](https://img.shields.io/badge/MongoDB-Atlas-47A248?style=for-the-badge&logo=mongodb&logoColor=white)](https://mongodb.com/)
-[![Pinecone](https://img.shields.io/badge/Pinecone-VectorDB-000000?style=for-the-badge)](https://pinecone.io/)
-[![Groq](https://img.shields.io/badge/Groq-LLM-F55036?style=for-the-badge)](https://console.groq.com/)
-[![Gemini](https://img.shields.io/badge/Google_Gemini-Embeddings-4285F4?style=for-the-badge&logo=google&logoColor=white)](https://aistudio.google.com/)
-[![Docker](https://img.shields.io/badge/Docker-Multi--Stage-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://docker.com/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-F59E0B?style=for-the-badge)](LICENSE)
-
-<br/>
-
-> **Upload · Embed · Retrieve · Chat** — A production-grade AI document assistant built end-to-end with an agentic RAG pipeline, streaming responses, and per-user data isolation.
-
-<br/>
-
-[Features](#-key-features) · [Tech Stack](#-tech-stack) · [Getting Started](#-getting-started) · [Architecture](#-architecture) · [RAG Pipeline](#-rag-pipeline) · [API Reference](#-api-reference) · [Deployment](#-deployment) · [Contributing](#-contributing)
-
----
-
 </div>
 
+ATLAS es un asistente de investigación académica basado en recuperación aumentada por generación (RAG). Permite cargar documentos, procesarlos, conversar con un documento seleccionado o investigar sobre todo el corpus, y producir respuestas trazables con citas de página, sección, tabla o figura.
 
-## 🌟 Overview
+El sistema está diseñado para dos entornos:
 
-**PDF-Assistant-RAG** is a complete, production-ready AI document assistant that lets users upload complex PDFs, financial reports, legal contracts, and research papers — then chat with an AI that provides **accurate, cited answers** powered by a multi-stage Retrieval-Augmented Generation pipeline.
+- Desarrollo local ligero con SQLite, Chroma y modelos multilingües pequeños.
+- Investigación en servidor con PostgreSQL 16, pgvector, CPU Intel y GPU NVIDIA.
 
-The system uses **semantic search + cross-encoder reranking** to find the most relevant document chunks, streams AI-generated answers token-by-token, and highlights exact source citations with page numbers — all inside a clean Flask-served UI with session-based per-user data isolation.
-<br/>
+La arquitectura detallada está documentada en [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) y el historial de versiones en [CHANGELOG.md](CHANGELOG.md).
 
-## 🏗️ Architecture
+## Capacidades
 
-> Contributor note: see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a
-> route-by-route system map, request-flow diagrams, ownership boundaries, and
-> Swagger/OpenAPI documentation guidance.
+- Ingesta de PDF, DOCX, TXT, Markdown y archivos de código.
+- Extracción estructurada con Docling y fallbacks mediante PyMuPDF, pdfplumber y OCR.
+- Fragmentación jerárquica en hijos recuperables y contextos padre para síntesis.
+- Resúmenes globales y por sección, perfiles documentales y registros de evidencia.
+- Recuperación híbrida densa y léxica mediante Reciprocal Rank Fusion (RRF).
+- Reranking semántico multilingüe y expansión de contexto.
+- Investigación iterativa basada en vacíos de evidencia.
+- Comparación multifuente, detección de contradicciones y declaración de incertidumbre.
+- Citas inmediatas con documento, página, sección, tabla o figura cuando están disponibles.
+- Historial persistente de conversaciones.
+- Streaming mediante SSE y WebSocket.
+- Cancelación de respuestas en curso.
+- Selección de alcance por documento.
+- Modos `Auto`, `Rápido` e `Investigación`.
+- Autenticación JWT, aislamiento de datos por usuario y caché sensible al modo de consulta.
+
+ATLAS no muestra cadena de pensamiento. Durante una investigación transmite estados verificables, como planificación, búsqueda de evidencia, revisión de vacíos y número de fuentes examinadas.
+
+## Arquitectura
 
 ```mermaid
-graph TD
-    subgraph Frontend["Frontend (Next.js 16)"]
-        UI["Dashboard UI (React)"]
-        Chat["Chat Panel (SSE)"]
-        Viewer["PDF Viewer (iframe)"]
-    end
-
-    subgraph Backend["Backend (FastAPI 0.115+)"]
-        API["API Router (/api/v1)"]
-        Auth["Auth (JWT/bcrypt)"]
-        DB[(SQLite Metadata)]
-
-        subgraph RAG["RAG Pipeline"]
-            Upload["Ingestion Task (Chunking)"]
-            Embed["Local Embeddings (all-MiniLM-L6-v2)"]
-            Retriever["Two-Stage Retriever"]
-            Rerank["Cross-Encoder Reranker"]
-            Agent["Agent/Generator"]
-        end
-    end
-
-    subgraph Storage["Vector Storage"]
-        Chroma[(ChromaDB)]
-    end
-
-    subgraph External["External Services"]
-        HF["HuggingFace Inference API (Qwen 72B)"]
-    end
-
-    %% Frontend to Backend Connections
-    UI <-->|REST / Auth| API
-    Chat <-->|SSE Streaming| API
-    Viewer -->|Fetch PDF| API
-
-    %% Backend Internals
-    API <--> Auth
-    API <--> DB
-    API --> Upload
-    API <--> Retriever
-    API <--> Agent
-
-    %% RAG Ingestion Flow
-    Upload --> Embed
-    Embed -->|Store Vectors| Chroma
-
-    %% RAG Query Flow
-    Retriever -->|1. Semantic Search| Chroma
-    Retriever -->|2. Score & Sort| Rerank
-    Retriever -->|Context| Agent
-
-    %% External LLM Flow
-    Agent <-->|LLM Generation| HF
+flowchart LR
+    Browser["Next.js 16"] --> API["FastAPI"]
+    API --> Router["Router adaptativo"]
+    API --> Ingestion["Ingesta documental"]
+    Ingestion --> Extractor["Docling / PyMuPDF / OCR"]
+    Extractor --> Memory["Memoria documental jerárquica"]
+    Memory --> Vector["Chroma o pgvector"]
+    Memory --> Lexical["FTS5 o PostgreSQL tsvector"]
+    Router --> Simple["RAG simple o acotado"]
+    Router --> Research["Grafo de investigación"]
+    Router --> Tools["Agente de herramientas"]
+    Simple --> Retrieval["Dense + lexical + RRF + reranker"]
+    Research --> Retrieval
+    Retrieval --> Ollama["LLM mediante Ollama"]
+    API --> Database["SQLite o PostgreSQL"]
+    API --> Redis["Redis / Celery opcional"]
 ```
 
-<br/>
+### Rutas de consulta
 
-### 🔄 System Flow Overview
+| Ruta | Uso |
+|---|---|
+| `scoped_rag` | Preguntas sobre un documento seleccionado; nunca ignora el alcance. |
+| `simple_rag` | Resumen, extracción, explicación o redacción directa. |
+| `research_rag` | Comparación o síntesis de múltiples documentos con rondas correctivas. |
+| `tool_agent` | Web, cálculos, revisión de código o acciones que realmente requieren herramientas. |
 
-1. The user interacts with the Next.js frontend to upload documents and ask questions.
-2. FastAPI handles authentication, document ingestion, and chat APIs.
-3. Uploaded documents are parsed, chunked, and converted into vector embeddings.
-4. Embeddings are stored in ChromaDB for semantic retrieval.
-5. During querying, the retriever fetches relevant chunks from ChromaDB.
-6. A reranker improves retrieval quality before sending context to the LLM.
-7. Hugging Face Inference API generates the final response.
-8. Responses are streamed back to the frontend using SSE.
+El modo `Rápido` evita el agente y usa únicamente los documentos cargados. El modo `Investigación` fuerza recuperación profunda. `Auto` decide mediante alcance, estructura sustantiva de la tarea, herramientas necesarias y evidencia recuperada; los requisitos de estilo no activan por sí solos un agente.
 
-<br/>
+## Stack
 
-## 🛠 Tech Stack
+| Componente | Tecnología |
+|---|---|
+| Frontend | Next.js 16, React 19, TypeScript |
+| Backend | Python 3.11, FastAPI, SQLAlchemy, Alembic |
+| LLM | Ollama y modelos Qwen/Mistral configurables |
+| Investigación | LangGraph |
+| Extracción | Docling, PyMuPDF, pdfplumber, Tesseract |
+| Desarrollo local | SQLite, FTS5, Chroma |
+| Producción | PostgreSQL 16, pgvector, tsvector, pg_trgm |
+| Procesamiento asíncrono | Redis y Celery |
+| Embeddings locales | Multilingual E5 |
+| Embeddings de investigación | Qwen3-Embedding-0.6B |
+| Reranking local | mMARCO MiniLM multilingüe |
+| Reranking de investigación | Qwen3-Reranker-0.6B |
 
-<div align="center">
+## Estructura
 
-### Backend
-
-| | Technology | Purpose |
-|---|---|---|
-| <img src="https://skillicons.dev/icons?i=flask" width="30"/> | **Flask 2.x** | Web framework + routing |
-| <img src="https://skillicons.dev/icons?i=python" width="30"/> | **Python 3.11** | Runtime environment |
-| <img src="https://skillicons.dev/icons?i=mongodb" width="30"/> | **MongoDB + PyMongo** | User accounts & metadata storage |
-| <img src="https://img.shields.io/badge/Flask--Login-000000?style=flat" height="24"/> | **Flask-Login + Flask-Dance** | Session auth + Google OAuth |
-| <img src="https://img.shields.io/badge/Pinecone-000000?style=flat" height="24"/> | **Pinecone** | Vector store (per-user namespace) |
-| <img src="https://img.shields.io/badge/Google_Gemini-4285F4?style=flat&logo=google&logoColor=white" height="24"/> | **Google Gemini API** | Document chunk embeddings |
-| <img src="https://img.shields.io/badge/Groq-F55036?style=flat" height="24"/> | **Groq (Llama 3)** | LLM answer generation |
-
-### Frontend
-
-| | Technology | Purpose |
-|---|---|---|
-| <img src="https://skillicons.dev/icons?i=html" width="30"/> | **Jinja2 (via Flask)** | Server-side HTML templating |
-| <img src="https://skillicons.dev/icons?i=js" width="30"/> | **HTML + CSS + JavaScript** | Frontend UI (served from `/static` and `/templates`) |
-
-### AI / ML Pipeline
-
-| | Technology | Purpose |
-|---|---|---|
-| <img src="https://img.shields.io/badge/Google_Gemini-4285F4?style=flat&logo=google&logoColor=white" height="24"/> | **Google Gemini API** | Generates vector embeddings for document chunks |
-| <img src="https://img.shields.io/badge/Pinecone-000000?style=flat" height="24"/> | **Pinecone** | Stores + retrieves embeddings per user namespace |
-| <img src="https://img.shields.io/badge/Groq-F55036?style=flat" height="24"/> | **Groq API (Llama 3)** | Generates answers from retrieved context |
-| <img src="https://img.shields.io/badge/PyMuPDF-FF0000?style=flat" height="24"/> | **PyMuPDF + pdfplumber + python-docx** | Document text extraction |
-
-### DevOps & Tooling
-
-| | Technology | Purpose |
-|---|---|---|
-| <img src="https://skillicons.dev/icons?i=docker" width="30"/> | **Docker Multi-Stage** | Containerized deployment |
-| <img src="https://skillicons.dev/icons?i=githubactions" width="30"/> | **GitHub Actions** | CI pipeline (dev branch) |
-| <img src="https://skillicons.dev/icons?i=git" width="30"/> | **Git LFS** | Binary asset management |
-| <img src="https://img.shields.io/badge/HuggingFace_Spaces-FFD21E?style=flat&logo=huggingface&logoColor=black" height="24"/> | **HuggingFace Spaces** | Production deployment |
-
-</div>
-
-<br/>
-
-## ✨ Key Features
-
-<table>
-<tr>
-<td width="33%" valign="top">
-
-### 👤 Users
-- 🔐 JWT-secured register & login
-- 📄 Upload **PDF** and **DOCX** documents
-- 💬 Ask questions in natural language
-- 🌊 **Streaming AI responses** token-by-token
-- 📚 Inline **source citations** with page numbers
-- 🗂️ Per-user complete data isolation
-
-</td>
-<td width="33%" valign="top">
-
-### 🤖 RAG Pipeline
-- 🔪 Smart **recursive text chunking** (configurable size & overlap)
-- 🧠 **Local embeddings** — no data leaves your machine
-- 🔍 **Two-stage retrieval** — semantic search → cross-encoder rerank
-- ✂️ Top-K filtering for precision answers
-- 📝 Custom **system prompts** with citation instructions
-- 🧾 Source scoring with confidence levels
-
-</td>
-<td width="33%" valign="top">
-
-### ⚙️ Engineering
-- 🚀 **Async FastAPI** with Server-Sent Events streaming
-- 🗄️ **ChromaDB** with persistent per-user collections
-- 🐳 **Multi-stage Docker** build (Node → Python)
-- 🔄 **GitHub Actions CI** on `dev` branch
-- 🛡️ CORS, file validation, JWT expiry
-- 📊 Chat **history persistence** per document
-
-</td>
-</tr>
-</table>
-
-<br/>
-
-## 📁 Project Structure
-
-```
+```text
 PDF-Assistant-RAG/
-│
-├── app.py                  # Flask app — all routes (upload, ask, download, auth)
-├── config.py               # Loads SECRET_KEY, MONGO_URI, Google OAuth credentials
-├── models.py               # User model (MongoDB via PyMongo)
-├── make_admin.py           # CLI script to promote a user to admin
-│
-├── rag/
-│   ├── chunker.py          # Splits PDF/DOCX/TXT into text chunks
-│   ├── embeddings.py       # Gemini embeddings → Pinecone store/delete
-│   ├── retriever.py        # Pinecone similarity search → top-K chunks
-│   └── generator.py        # Groq LLM → answer from retrieved context
-│
-├── static/                 # CSS, JS, images
-├── templates/              # Jinja2 HTML templates (login, register, chat, admin)
-├── uploads/                # Per-user uploaded files (gitignored)
-├── instance/               # Flask instance folder
-│
-├── .github/
-│   ├── workflows/
-│   │   ├── ci.yml          # CI — runs on dev branch only
-│   │   ├── deploy.yml      # Docker build — main branch only
-│   │   └── devsecops.yml   # Security scans — main branch only
-│   ├── ISSUE_TEMPLATE/     # Bug report & feature request forms
-│   └── pull_request_template.md
-│
-├── .env.example            # Template for required environment variables
-├── requirements.txt        # Python dependencies
-├── Dockerfile              # Docker build
-├── docker-compose.yml      # Local Docker stack
-├── start.sh                # Gunicorn startup script
-└── render.yaml             # Render.com deployment config
+├── backend/
+│   ├── app/
+│   │   ├── routes/              # REST, SSE y WebSocket
+│   │   ├── rag/                 # Router, recuperación y agente de investigación
+│   │   ├── services/            # Ingesta, migración y mantenimiento
+│   │   ├── config.py            # Configuración centralizada
+│   │   ├── database.py          # SQLite/PostgreSQL
+│   │   └── models.py            # Datos y memoria documental
+│   ├── alembic/                 # Migraciones de esquema
+│   ├── requirements.txt
+│   └── tests/
+├── frontend/
+│   ├── src/app/
+│   ├── src/components/
+│   └── package.json
+├── scripts/
+│   └── init_postgres.sql        # Extensiones de PostgreSQL
+├── docs/ARCHITECTURE.md
+├── CHANGELOG.md
+├── docker-compose.yml
+├── Dockerfile
+├── Makefile
+└── .env.example
 ```
 
-<br/>
+## Requisitos
 
-## 🚀 Getting Started
+- Python 3.11. Python 3.9 no es compatible con varias dependencias actuales.
+- Node.js 20 o superior.
+- npm.
+- Make.
+- Ollama.
+- Poppler, Tesseract y libmagic.
+- Git.
 
-### Prerequisites
+Para `research_gpu` también se requiere:
 
-- ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat&logo=python&logoColor=white) **Python 3.11+**
-- ![MongoDB](https://img.shields.io/badge/MongoDB-Atlas-47A248?style=flat&logo=mongodb&logoColor=white) **MongoDB** (Atlas free tier or local)
-- ![Pinecone](https://img.shields.io/badge/Pinecone-000000?style=flat) **Pinecone** account — [pinecone.io](https://pinecone.io)
-- ![Gemini](https://img.shields.io/badge/Google_Gemini-4285F4?style=flat&logo=google&logoColor=white) **Google Gemini API key** — [aistudio.google.com](https://aistudio.google.com)
-- ![Groq](https://img.shields.io/badge/Groq-F55036?style=flat) **Groq API key** — [console.groq.com](https://console.groq.com)
+- GPU NVIDIA y driver compatible.
+- CUDA visible desde PyTorch y Ollama.
+- Se recomiendan al menos 24 GB de VRAM para el modelo predeterminado.
+- PostgreSQL 16 con pgvector para el despliegue de producción.
 
----
+Para `wsl_t4`, Ollama usa la GPU desde Windows y el backend ejecuta embeddings,
+reranking y NLI en CPU dentro de WSL2. No se requiere instalar CUDA ni un driver
+NVIDIA Linux dentro de WSL.
 
-### 1. Clone the Repository
+Para `ubuntu_t4`, todo se ejecuta directamente en Ubuntu: Ollama usa la Tesla T4 y
+los modelos de recuperación usan el Xeon. Se requiere el driver NVIDIA Server de
+Linux; PostgreSQL y Redis permanecen como los únicos servicios Docker obligatorios.
+
+## Instalación local
+
+### 1. Dependencias del sistema
+
+Ubuntu, Debian o WSL2:
 
 ```bash
-git clone https://github.com/param20h/PDF-Assistant-RAG.git
-cd PDF-Assistant-RAG
+sudo apt update
+sudo apt install -y git make build-essential libmagic1 poppler-utils \
+  tesseract-ocr tesseract-ocr-eng tesseract-ocr-spa \
+  python3.11 python3.11-venv curl
 ```
 
-### 2. Configure Environment
+macOS con Homebrew:
+
+```bash
+brew install python@3.11 node libmagic poppler tesseract make
+```
+
+En Windows se recomienda WSL2:
+
+```powershell
+wsl --install -d Ubuntu-24.04
+```
+
+Instale el proyecto dentro del sistema de archivos de WSL, por ejemplo `~/PDF-Assistant-RAG`, y no en `/mnt/c`, para evitar degradar el rendimiento de índices y bases de datos.
+
+### 2. Backend y frontend
+
+```bash
+git clone <URL_DEL_REPOSITORIO>
+cd PDF-Assistant-RAG
+
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install -r backend/requirements.txt
+
+cd frontend
+npm install
+cd ..
+```
+
+### 3. Ollama
+
+Instalación en Linux o WSL2:
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+ollama pull mistral
+ollama serve
+```
+
+En macOS y Windows también puede instalarse desde [ollama.com](https://ollama.com/).
+
+### 4. Variables de entorno
+
+```bash
+cp .env.example backend/.env
+```
+
+Configuración mínima local en `backend/.env`:
+
+```dotenv
+SECRET_KEY=reemplazar-por-una-clave-segura
+ENVIRONMENT=development
+ALLOWED_ORIGINS=http://localhost:3000,http://localhost:7860
+
+MODEL_PROFILE=local_balanced
+DEVICE=mps
+EMBEDDING_DEVICE=mps
+EMBEDDING_BATCH_SIZE=4
+RERANKER_DEVICE=cpu
+LLM_MODEL=qwen3:4b-instruct-2507-q4_K_M
+PDF_EXTRACTION_MODE=fast
+
+DATABASE_URL=sqlite:///./data/app.db
+CORPUS_STORE_BACKEND=local
+CELERY_ENABLED=False
+```
+
+Genere una clave con:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+Cree `frontend/.env.local`:
+
+```dotenv
+NEXT_PUBLIC_API_URL=http://localhost:7860
+```
+
+`HF_TOKEN` es opcional para modelos públicos, pero recomendable para evitar límites durante descargas de Hugging Face:
+
+```dotenv
+HF_TOKEN=hf_token
+```
+
+### 5. Base de datos y ejecución
+
+```bash
+make migrate PYTHON=.venv/bin/python
+make dev PYTHON=.venv/bin/python
+```
+
+Servicios:
+
+- Frontend: [http://localhost:3000](http://localhost:3000)
+- Backend: [http://localhost:7860](http://localhost:7860)
+- Swagger: [http://localhost:7860/docs](http://localhost:7860/docs)
+
+La primera ingesta o consulta puede tardar mientras se descargan los modelos.
+
+## PostgreSQL y pgvector
+
+PostgreSQL no es obligatorio para desarrollo local. Para producción o corpus grandes se recomienda PostgreSQL 16 con pgvector.
+
+La forma más simple de crear la base, el usuario y las extensiones es Docker:
+
+```bash
+docker volume create atlas_postgres_data
+
+docker run -d \
+  --name atlas-postgres \
+  --restart unless-stopped \
+  -e POSTGRES_DB=pdf_rag \
+  -e POSTGRES_USER=pdf_rag_user \
+  -e POSTGRES_PASSWORD=pdf_rag_pass \
+  -p 5432:5432 \
+  -v atlas_postgres_data:/var/lib/postgresql/data \
+  -v "$(pwd)/scripts/init_postgres.sql:/docker-entrypoint-initdb.d/init.sql:ro" \
+  pgvector/pgvector:pg16
+```
+
+No es necesario crear la base manualmente. La imagen crea `pdf_rag` y `scripts/init_postgres.sql` activa `vector`, `unaccent`, `pg_trgm` y `uuid-ossp` cuando se crea el volumen por primera vez.
+
+Configure `backend/.env`:
+
+```dotenv
+DATABASE_URL=postgresql+psycopg://pdf_rag_user:pdf_rag_pass@localhost:5432/pdf_rag
+CORPUS_STORE_BACKEND=postgres
+```
+
+Después aplique las migraciones:
+
+```bash
+make migrate PYTHON=.venv/bin/python
+```
+
+Verificación:
+
+```bash
+docker exec -it atlas-postgres \
+  psql -U pdf_rag_user -d pdf_rag \
+  -c "SELECT extname, extversion FROM pg_extension;"
+```
+
+Las migraciones crean las tablas y los índices HNSW/GIN. Configure el perfil de modelos antes de migrar para que la dimensión vectorial coincida con el modelo efectivo.
+
+## Perfil NVIDIA
+
+El perfil `research_gpu` está orientado a una máquina con CPU Intel, RAM abundante y GPU NVIDIA:
+
+- Los embeddings se ejecutan en CPU en lotes de 64.
+- El reranker usa CUDA.
+- Ollama administra la ejecución del LLM en NVIDIA.
+- Si CUDA no está disponible para el reranker, este cae a CPU.
+- `CPU_THREADS=0` permite que PyTorch determine el paralelismo.
+
+Descargue el modelo predeterminado:
+
+```bash
+ollama pull qwen3:30b-a3b
+```
+
+Configuración:
+
+```dotenv
+MODEL_PROFILE=research_gpu
+DEVICE=cuda
+EMBEDDING_DEVICE=cpu
+RERANKER_DEVICE=cuda
+EMBEDDING_BATCH_SIZE=64
+CPU_THREADS=0
+
+LLM_MODEL=qwen3:30b-a3b
+LLM_CONTEXT_WINDOW=32768
+
+DATABASE_URL=postgresql+psycopg://pdf_rag_user:pdf_rag_pass@localhost:5432/pdf_rag
+CORPUS_STORE_BACKEND=postgres
+```
+
+Compruebe el hardware antes de iniciar:
+
+```bash
+nvidia-smi
+ollama list
+```
+
+### Ubuntu bare metal, Tesla T4 y Qwen3-14B
+
+Esta rama usa `ubuntu_t4` por defecto y está diseñada para Ubuntu instalado en un
+disco dedicado, un Xeon Gold con RAM abundante y una Tesla T4 de 16 GB. Ollama,
+FastAPI, Celery y el frontend se ejecutan en Linux; Docker aloja PostgreSQL/pgvector
+y Redis.
+
+#### 1. Ubuntu y driver NVIDIA
+
+Instale las dependencias y el driver de cómputo recomendado por Ubuntu:
+
+```bash
+sudo apt update
+sudo apt install -y git make build-essential curl libmagic1 poppler-utils \
+  tesseract-ocr tesseract-ocr-eng tesseract-ocr-spa python3.11 \
+  python3.11-venv docker.io docker-compose-v2 ubuntu-drivers-common caddy
+sudo usermod -aG docker "$USER"
+sudo ubuntu-drivers install --gpgpu
+sudo reboot
+```
+
+Después del reinicio, `nvidia-smi` debe mostrar la Tesla T4.
+
+#### 2. Ollama y Qwen3
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+sudo systemctl enable --now ollama
+ollama pull qwen3:14b-q4_K_M
+curl http://127.0.0.1:11434/api/tags
+```
+
+Mantenga Ollama escuchando únicamente en `127.0.0.1:11434`. No es necesario abrir
+el puerto 11434 ni configurar un gateway de Windows.
+
+#### 3. ATLAS y dependencias
+
+```bash
+git clone <URL_DEL_REPOSITORIO>
+cd PDF-Assistant-RAG
+git switch codex/experimental-ubuntu-t4
+
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip setuptools wheel
+make install-backend-ubuntu PYTHON="$PWD/.venv/bin/python"
+make install-frontend
+```
+
+El instalador Ubuntu usa PyTorch CPU para evitar que embeddings, reranker y NLI
+compitan con Ollama por los 16 GB de VRAM.
+
+#### 4. Entorno, PostgreSQL y Redis
 
 ```bash
 cp .env.example .env
+cp .env.example backend/.env
+python3.11 -c "import secrets; print(secrets.token_urlsafe(48))"
+```
 
-Edit `.env`:
+Reemplace `SECRET_KEY` y `POSTGRES_PASSWORD` en ambos archivos y mantenga el mismo
+valor dentro de `DATABASE_URL`. Después:
 
-SECRET_KEY=your-strong-random-secret
-DATABASE_URL=sqlite:///./data/app.db
-HF_TOKEN=hf_your_huggingface_token_here
-UPLOAD_DIR=./data/uploads
-CHROMA_PERSIST_DIR=./data/chroma_db
+```bash
+make docker-up
+docker compose ps postgres redis
+make migrate PYTHON="$PWD/.venv/bin/python"
+```
+
+PostgreSQL y Redis solo publican puertos en `127.0.0.1`; no quedan accesibles desde
+la red externa.
+
+#### 5. Diagnóstico y prueba
+
+```bash
+make doctor-ubuntu PYTHON="$PWD/.venv/bin/python"
+make dev-ubuntu PYTHON="$PWD/.venv/bin/python"
+```
+
+Salida esperada:
+
+```text
+ATLAS Ubuntu/T4 runtime check
+[OK] profile=ubuntu_t4, llm=qwen3:14b-q4_K_M, CPU threads=28
+[OK] NVIDIA GPU available: Tesla T4, ...
+[OK] Ollama at http://127.0.0.1:11434 provides qwen3:14b-q4_K_M
+[OK] PostgreSQL and pgvector extensions are available
+[OK] Redis is available for Celery document processing
+ATLAS is ready to start in Ubuntu/T4 mode.
+```
+
+#### 6. Ejecución permanente
+
+Las plantillas bajo `deploy/ubuntu-t4` asumen el repositorio en
+`/opt/atlas/PDF-Assistant-RAG`, un usuario de servicio `atlas`, variables en
+`/etc/atlas/atlas.env` y datos persistentes fuera del repositorio. Incluyen:
+
+- `atlas-backend.service`: un proceso FastAPI para no duplicar modelos en RAM.
+- `atlas-worker.service`: Celery con concurrencia inicial de uno.
+- `Caddyfile`: frontend estático, proxy de `/api/*`, WebSocket, SSE y timeouts de 35 minutos.
+
+Prepare el usuario, el entorno y el volumen persistente. En la copia de producción
+cambie `UPLOAD_DIR` y `GRAPH_PERSIST_DIR` a rutas bajo `/srv/atlas/data`:
+
+```dotenv
+ENVIRONMENT=production
+ALLOWED_ORIGINS=https://atlas.example.org
+FRONTEND_URL=https://atlas.example.org
+NEXT_PUBLIC_API_URL=https://atlas.example.org
+UPLOAD_DIR=/srv/atlas/data/uploads
+GRAPH_PERSIST_DIR=/srv/atlas/data/graphs
+```
+
+```bash
+sudo useradd --system --create-home --home-dir /var/lib/atlas \
+  --shell /usr/sbin/nologin atlas
+sudo install -d -o atlas -g atlas /etc/atlas /srv/atlas/data/uploads \
+  /srv/atlas/data/graphs
+sudo install -m 600 -o atlas -g atlas backend/.env /etc/atlas/atlas.env
+sudo chown -R atlas:atlas /opt/atlas/PDF-Assistant-RAG
+```
+
+Compile el frontend con la URL pública antes de habilitar Caddy:
+
+```bash
+cd frontend
+NEXT_PUBLIC_API_URL=https://atlas.example.org npm run build
+cd ..
+```
+
+Copie y habilite las unidades solo después de adaptar rutas y dominio:
+
+```bash
+sudo cp deploy/ubuntu-t4/atlas-*.service /etc/systemd/system/
+sudo cp deploy/ubuntu-t4/Caddyfile /etc/caddy/Caddyfile
+sudo systemctl daemon-reload
+sudo systemctl enable --now atlas-backend atlas-worker caddy
+```
+
+### Windows, WSL2, Tesla T4 y Qwen3-14B
+
+El perfil `wsl_t4` está diseñado para Windows con WSL2 en modo NAT, un Xeon Gold con
+RAM abundante y una Tesla T4 de 16 GB dedicada exclusivamente a Ollama. El backend y
+frontend se ejecutan nativamente en WSL; Docker aloja solamente PostgreSQL/pgvector.
+
+#### 1. PowerShell de Windows
+
+Instale el driver NVIDIA de Windows y Ollama. No instale un driver NVIDIA Linux en WSL.
+Después, en PowerShell, configure Ollama para aceptar conexiones desde WSL y mantener
+un único modelo cargado:
+
+```powershell
+setx OLLAMA_HOST "0.0.0.0:11434"
+setx OLLAMA_KEEP_ALIVE "30m"
+setx OLLAMA_CONTEXT_LENGTH "8192"
+setx OLLAMA_MAX_LOADED_MODELS "1"
+setx OLLAMA_NUM_PARALLEL "1"
+setx OLLAMA_FLASH_ATTENTION "1"
+setx OLLAMA_NO_CLOUD "1"
+```
+
+Cierre Ollama completamente desde la bandeja y vuelva a abrirlo para aplicar las
+variables. Limite el acceso al adaptador virtual de WSL desde PowerShell como
+administrador:
+
+```powershell
+$wslInterface = Get-NetAdapter | Where-Object Name -Like "*WSL*" | Select-Object -First 1 -ExpandProperty Name
+New-NetFirewallRule -DisplayName "Ollama from WSL2" -Direction Inbound -Action Allow `
+  -Protocol TCP -LocalPort 11434 -InterfaceAlias $wslInterface
+```
+
+Descargue y compruebe el modelo:
+
+```powershell
+ollama pull qwen3:14b-q4_K_M
+ollama list
+nvidia-smi
+```
+
+La lista debe incluir una línea similar a:
+
+```text
+qwen3:14b-q4_K_M    ...    9.3 GB
+```
+
+#### 2. Terminal de Ubuntu/WSL2
+
+Mantenga el repositorio bajo `~/`, no bajo `/mnt/c`, y use Python 3.11:
+
+```bash
+git switch codex/experimental-wsl-t4
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip setuptools wheel
+make install-backend-wsl PYTHON="$PWD/.venv/bin/python"
+
+cd frontend
+npm install
+cd ..
+```
+
+El target WSL instala primero PyTorch CPU para que los modelos de recuperación no
+reserven VRAM ni descarguen el runtime CUDA.
+
+#### 3. PostgreSQL en Docker
+
+Prepare los archivos de entorno. La contraseña debe ser idéntica en `.env`,
+`backend/.env` y `DATABASE_URL`:
+
+```bash
+cp .env.example .env
+cp .env.example backend/.env
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+Edite ambos archivos para establecer `SECRET_KEY` y `POSTGRES_PASSWORD`. Después inicie
+únicamente PostgreSQL y aplique las migraciones:
+
+```bash
+docker compose up -d postgres
+docker compose ps postgres
+make migrate PYTHON="$PWD/.venv/bin/python"
+```
+
+La salida de Docker debe mostrar el contenedor `pdf_rag_postgres` como `healthy`.
+
+#### 4. Diagnóstico y arranque
+
+`doctor-wsl` obtiene la IP del gateway de Windows desde la ruta NAT; no es necesario
+editar `.bashrc` ni configurar el modo mirrored:
+
+```bash
+make doctor-wsl PYTHON="$PWD/.venv/bin/python"
+make dev-wsl PYTHON="$PWD/.venv/bin/python"
+```
+
+Salida esperada del diagnóstico:
+
+```text
+ATLAS WSL/T4 runtime check
+[OK] profile=wsl_t4, llm=qwen3:14b-q4_K_M, CPU threads=28
+[OK] Ollama at http://<gateway-windows>:11434 provides qwen3:14b-q4_K_M
+[OK] PostgreSQL and pgvector extensions are available
+ATLAS is ready to start in WSL/T4 mode.
+```
+
+`LLM_DISABLE_THINKING=True` desactiva el modo interno `thinking` de Ollama en planificación,
+auditoría y redacción para que no consuma el límite de salida antes de producir la respuesta.
+El ciclo verificable del agente (recuperación, ledger, auditoría, reparación y citas) permanece activo.
+
+Después de la primera consulta, `ollama ps` en PowerShell debe mostrar el modelo con
+`PROCESSOR` igual a `100% GPU`. Si `doctor-wsl` no puede alcanzar Ollama, compruebe que
+la aplicación fue reiniciada después de definir `OLLAMA_HOST` y que la regla de firewall
+está asociada al adaptador WSL correcto.
+
+## Modelos grandes y configuración personalizada
+
+Para cambiar libremente todos los modelos utilice `MODEL_PROFILE=custom`. Esto evita que un perfil predeterminado sustituya la selección explícita.
+
+Ejemplo para una máquina con aproximadamente 200 GB de VRAM y 400 GB de RAM:
+
+```bash
+ollama pull qwen3:235b-a22b-instruct-2507-q4_K_M
+```
+
+```dotenv
+MODEL_PROFILE=custom
+DEVICE=cuda
+
+LLM_MODEL=qwen3:235b-a22b-instruct-2507-q4_K_M
+LLM_CONTEXT_WINDOW=32768
+LLM_MAX_NEW_TOKENS=8192
+
+EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B
+EMBEDDING_DIMENSION=1024
+EMBEDDING_INDEX_VERSION=hierarchical-qwen3-1024-v1
+EMBEDDING_DEVICE=cpu
+EMBEDDING_BATCH_SIZE=64
+
+RERANKER_MODEL=Qwen/Qwen3-Reranker-0.6B
+RERANKER_DEVICE=cuda
+CPU_THREADS=0
+```
+
+La cuantización Q4 ocupa aproximadamente 142 GB. Se recomienda comenzar con contexto de 32K o 64K para conservar memoria para KV cache y buffers. Los modelos Q8 o FP16 requieren mucha más memoria y no son la opción inicial recomendada para ese hardware.
+
+Cambiar de modelo de embeddings exige reindexar los documentos. ATLAS registra modelo, dimensión y versión del índice, y puede migrar índices existentes sin borrar archivos, usuarios o conversaciones.
+
+## Procesamiento asíncrono
+
+Para desarrollo, `CELERY_ENABLED=False` procesa documentos en el backend. Para producción configure Redis:
+
+```dotenv
+CELERY_ENABLED=True
 CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_RESULT_BACKEND=redis://localhost:6379/1
+REDIS_URL=redis://localhost:6379/0
 ```
 
-> Get your free HuggingFace token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
-
-#### Email Verification Setup
-
-Password registration requires email verification before users can log in. To send real verification emails, add SMTP settings to `backend/.env`:
-
-```env
-FRONTEND_URL=http://localhost:3000
-EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS=24
-MAIL_USERNAME=your_smtp_username
-MAIL_PASSWORD=your_smtp_or_gmail_app_password
-MAIL_FROM=your_sender_email@example.com
-MAIL_SERVER=smtp.example.com
-MAIL_PORT=587
-MAIL_STARTTLS=True
-MAIL_SSL_TLS=False
-```
-
-For Gmail, enable 2-Step Verification on the sender Google account, create a 16-character App Password from Google Account > Security > App passwords, then use:
-
-```env
-MAIL_USERNAME=yourgmail@gmail.com
-MAIL_PASSWORD=your_16_character_app_password
-MAIL_FROM=yourgmail@gmail.com
-MAIL_SERVER=smtp.gmail.com
-MAIL_PORT=587
-MAIL_STARTTLS=True
-MAIL_SSL_TLS=False
-```
-
-Without SMTP settings in a non-production environment, registration returns a local verification link so contributors can test the flow without private email credentials. With SMTP configured, the same link is sent by email.
-
-### 3. Set up crawl4ai (URL Upload Feature)
-
-The URL upload feature (`POST /api/v1/documents/urlupload`) uses **crawl4ai** with a Playwright browser to crawl web pages. `crawl4ai-setup` handles the Playwright browser installation automatically — run it once after `pip install`:
+Inicie Redis y el worker:
 
 ```bash
-crawl4ai-setup
+docker run -d --name atlas-redis --restart unless-stopped -p 6379:6379 redis:7-alpine
+
+cd backend
+../.venv/bin/celery -A app.celery_app.celery_app worker --loglevel=info
 ```
 
+El worker debe recibir la misma configuración de base de datos, modelos, almacenamiento y perfil que el backend.
 
----
 
-### 3. Run Locally
+## Variables principales
+
+| Variable | Valor local | Valor de investigación | Propósito |
+|---|---|---|---|
+| `MODEL_PROFILE` | `local_balanced` | `ubuntu_t4` | Selecciona el conjunto de modelos y dispositivos. |
+| `LLM_MODEL` | `qwen3:4b-instruct-2507-q4_K_M` | `qwen3:14b-q4_K_M` | Modelo servido por Ollama. |
+| `DATABASE_URL` | `sqlite:///./data/app.db` | `postgresql+psycopg://...` | Base de datos SQLAlchemy. |
+| `CORPUS_STORE_BACKEND` | `local` | `postgres` | Índices locales o pgvector/tsvector. |
+| `EMBEDDING_DEVICE` | `mps` | `cpu` | Dispositivo para embeddings. MPS cae a CPU si no está disponible. |
+| `RERANKER_DEVICE` | `cpu` | `cpu` | Mantiene libre la T4 para Ollama. |
+| `EMBEDDING_BATCH_SIZE` | `4` | `64` | Tamaño de lote de embeddings. |
+| `CPU_THREADS` | `4` | `28` | Paralelismo de PyTorch; puede sobrescribirse según la CPU. |
+| `PDF_EXTRACTION_MODE` | `fast` | `auto` | Usa PyMuPDF, selección adaptativa o Docling con `quality`. |
+| `LLM_REQUEST_TIMEOUT_SECONDS` | `900` | `900` | Límite de una llamada individual al LLM. |
+| `RESEARCH_TIMEOUT_SECONDS` | `1800` | `1800` | Presupuesto total de investigación. |
+| `RESEARCH_SYNTHESIS_RESERVE_SECONDS` | `600` | `600` | Tiempo reservado para redactar y verificar la respuesta final. |
+| `RESEARCH_MAX_ROUNDS` | `2` | `2` | Rondas correctivas máximas. |
+| `CELERY_ENABLED` | `False` | `True` | Ubuntu procesa la ingesta mediante Redis y un worker separado. |
+| `OLLAMA_BASE_URL` | vacío | `http://127.0.0.1:11434` | Ollama se ejecuta en el mismo host Ubuntu. |
+| `OLLAMA_KEEP_ALIVE` | `5m` | `30m` | Evita recargar el modelo entre fases de investigación. |
+
+Consulte [.env.example](.env.example) y [backend/app/config.py](backend/app/config.py) para ver todas las opciones.
+
+## Comandos
+
+| Comando | Acción |
+|---|---|
+| `make install` | Instala backend y frontend. |
+| `make migrate` | Inicializa la base y aplica Alembic. |
+| `make dev` | Inicia FastAPI y Next.js. |
+| `make doctor-ubuntu` | Verifica T4, Ollama, modelo, PostgreSQL, extensiones y Redis. |
+| `make dev-ubuntu` | Ejecuta el diagnóstico e inicia backend, frontend y worker en Ubuntu. |
+| `make dev-backend` | Inicia solo FastAPI en el puerto 7860. |
+| `make dev-frontend` | Inicia solo Next.js en el puerto 3000. |
+| `make test` | Ejecuta las pruebas del backend. |
+| `make lint` | Ejecuta lint de backend y frontend. |
+| `make build` | Compila el frontend. |
+
+Para usar el entorno virtual del proyecto:
 
 ```bash
-# Single terminal — Flask app
-python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-python app.py
-# → App running at http://localhost:5000
+make test PYTHON=.venv/bin/python
+make lint PYTHON=.venv/bin/python
 ```
 
-### 4. Run with Docker
+Pruebas del frontend:
 
 ```bash
-docker compose up --build
-# → App running at http://localhost:7860
+cd frontend
+npm test
+npm run build
 ```
 
-<br/>
+## API
 
-## 🧠 RAG Pipeline
+La especificación OpenAPI completa está disponible en `/docs` durante la ejecución.
 
-```
-                    ┌─────────────────────────────────────────────┐
-                    │              PDF / DOCX Upload               │
-                    └───────────────────┬─────────────────────────┘
-                                        │
-                                        ▼
-                    ┌─────────────────────────────────────────────┐
-                    │         PyMuPDF / python-docx Parser         │
-                    │         (text extraction per page)           │
-                    └───────────────────┬─────────────────────────┘
-                                        │
-                                        ▼
-                    ┌─────────────────────────────────────────────┐
-                    │      Recursive Character Text Splitter       │
-                    │   chunk_size=1000  |  overlap=200            │
-                    └───────────────────┬─────────────────────────┘
-                                        │
-                                        ▼
-                    ┌─────────────────────────────────────────────┐
-                    │    all-MiniLM-L6-v2  (local embeddings)      │
-                    │    384-dim dense vectors                      │
-                    └───────────────────┬─────────────────────────┘
-                                        │
-                                        ▼
-                    ┌─────────────────────────────────────────────┐
-                    │   ChromaDB  — per-user persistent collection │
-                    └─────────────────────────────────────────────┘
+Endpoints principales:
 
-                              ── At Query Time ──
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `POST` | `/api/v1/auth/register` | Registro de usuario. |
+| `POST` | `/api/v1/auth/login` | Inicio de sesión y tokens JWT. |
+| `GET` | `/api/v1/auth/me` | Usuario autenticado. |
+| `POST` | `/api/v1/documents/upload` | Carga e ingesta de documentos. |
+| `GET` | `/api/v1/documents/` | Lista de documentos. |
+| `DELETE` | `/api/v1/documents/{id}` | Elimina un documento y sus índices. |
+| `POST` | `/api/v1/chat/ask/stream` | Respuesta mediante SSE. |
+| `WS` | `/api/v1/chat/ws` | Chat mediante WebSocket. |
+| `GET` | `/api/v1/chat/sessions` | Sesiones persistentes. |
 
-  User Question ──▶ Embed ──▶ Semantic Search (Top-K=10)
-                                        │
-                                        ▼
-                         Cross-Encoder Reranker (Top-K=5)
-                         ms-marco-MiniLM-L-6-v2
-                                        │
-                                        ▼
-                    Prompt Assembly (system + context + question)
-                                        │
-                                        ▼
-                    Qwen2.5-72B-Instruct (HF Inference API)
-                                        │
-                                        ▼
-                    Streamed SSE tokens ──▶ Frontend ChatPanel
-```
+Las solicitudes de chat aceptan `routing_mode: "auto" | "quick" | "research"` y un identificador de documento opcional para restringir el alcance.
 
-<br/>
+Los streams pueden emitir eventos `progress`, `sources`, `token`, `done` y `error`. La cancelación aborta la investigación, recuperación y generación sin guardar respuestas vacías.
 
-## 📡 API Reference
-
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| `POST` | `/api/v1/auth/register` | ❌ | Create a new user account |
-| `POST` | `/api/v1/auth/login` | ❌ | Login and receive JWT token |
-| `GET` | `/api/v1/auth/me` | ✅ | Get current user profile |
-| `POST` | `/api/v1/documents/upload` | ✅ | Upload PDF/DOCX and enqueue background indexing (`202 Accepted`) |
-| `GET` | `/api/v1/documents` | ✅ | List all documents for current user |
-| `GET` | `/api/v1/documents/{id}/status` | ✅ | Poll background document processing status |
-| `DELETE` | `/api/v1/documents/{id}` | ✅ | Delete a document and its vector data |
-| `POST` | `/api/v1/chat/ask/stream` | ✅ | Ask a question (SSE streaming response) |
-| `GET` | `/api/v1/chat/history/{doc_id}` | ✅ | Get chat history for a document |
-| `DELETE` | `/api/v1/chat/history/{doc_id}` | ✅ | Clear chat history for a document |
-| `GET` | `/health` | ❌ | Health check (db + chroma status) |
-
-> Full interactive docs available at `/docs` (Swagger UI) when running locally.
-
-<br/>
-
-## 📦 Environment Variables
-
-| Variable | Required | Default | Description | Where to Get It |
-|---|---|---|---|---|
-| `SECRET_KEY` | ✅ | — | JWT signing & session secret. Use a strong random string. | Generate: `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
-| `HF_TOKEN` | ✅ | — | HuggingFace API token for LLM inference via Inference API. | [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) (free) |
-| `HF_CLIENT_ID` | ❌ | — | HuggingFace OAuth client ID. Required only for Hugging Face sign-in. | [HuggingFace Developer Settings](https://huggingface.co/settings/connected-applications) |
-| `HF_CLIENT_SECRET` | ❌ | — | HuggingFace OAuth client secret. Required only for Hugging Face sign-in. | [HuggingFace Developer Settings](https://huggingface.co/settings/connected-applications) |
-| `HF_REDIRECT_URI` | ❌ | `http://localhost:8000/api/v1/auth/callback/huggingface` | HuggingFace OAuth callback redirect URI. | — |
-| `FRONTEND_URL` | ❌ | `http://localhost:3000` | Public frontend URL used for OAuth redirects and email verification links. | Your deployed frontend URL |
-| `ENVIRONMENT` | ❌ | `development` | Runtime mode. Set to `production` for deployment to lock CORS. | — |
-| `DEBUG` | ❌ | `False` | Enable debug mode with detailed error pages. Never enable in production. | — |
-| `ALLOWED_ORIGINS` | ❌ | `http://localhost:3000,http://localhost:7860` | Comma-separated CORS origins (only enforced in production). | Your deployed domain(s) |
-| `DATABASE_URL` | ❌ | `sqlite:///./data/app.db` | SQLAlchemy database connection string. | SQLite (default), or your Postgres/MySQL connection string |
-| `JWT_ALGORITHM` | ❌ | `HS256` | JWT signing algorithm. | — |
-| `JWT_EXPIRY_HOURS` | ❌ | `72` | JWT token lifetime in hours before re-login is required. | — |
-| `GOOGLE_CLIENT_ID` | ❌ | — | Google OAuth web client ID used by FastAPI to verify ID tokens. | [Google Cloud Console](https://console.cloud.google.com/apis/credentials) |
-| `NEXT_PUBLIC_GOOGLE_CLIENT_ID` | ❌ | — | Google OAuth web client ID exposed to the Next.js Google sign-in button. | [Google Cloud Console](https://console.cloud.google.com/apis/credentials) |
-| `EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS` | ❌ | `24` | Email verification token lifetime in hours. | — |
-| `MAIL_USERNAME` | ❌ | — | SMTP username for account verification emails. | SMTP provider or Gmail App Password setup |
-| `MAIL_PASSWORD` | ❌ | — | SMTP password or Gmail 16-character App Password. | SMTP provider or Gmail App Password setup |
-| `MAIL_FROM` | ❌ | — | Sender email address for verification emails. | Verified sender address |
-| `MAIL_SERVER` | ❌ | — | SMTP server hostname, for example `smtp.gmail.com`. | SMTP provider |
-| `MAIL_PORT` | ❌ | `587` | SMTP server port. | SMTP provider |
-| `MAIL_STARTTLS` | ❌ | `True` | Enable STARTTLS for SMTP. | SMTP provider |
-| `MAIL_SSL_TLS` | ❌ | `False` | Enable SSL/TLS for SMTP. | SMTP provider |
-| `CELERY_BROKER_URL` | ❌ | `redis://localhost:6379/0` | Redis broker URL used by FastAPI to queue document ingestion jobs. | Redis |
-| `CELERY_RESULT_BACKEND` | ❌ | `redis://localhost:6379/1` | Redis backend URL used by Celery to store task state/results. | Redis |
-| `UPLOAD_DIR` | ❌ | `./data/uploads` | Local directory for storing uploaded documents. | — |
-| `MAX_FILE_SIZE_MB` | ❌ | `50` | Maximum allowed upload file size in MB. | — |
-| `ALLOWED_EXTENSIONS` | ❌ | `pdf,docx,txt,md` | Comma-separated list of permitted file extensions. | — |
-| `CHROMA_PERSIST_DIR` | ❌ | `./data/chroma_db` | Directory where ChromaDB persists its vector index. | — |
-| `LLM_MODEL` | ❌ | `Qwen/Qwen2.5-72B-Instruct` | HuggingFace model ID for answer generation. | [huggingface.co/models](https://huggingface.co/models?inference=warm&sort=trending) |
-| `LLM_TEMPERATURE` | ❌ | `0.3` | LLM sampling temperature (0 = deterministic, 1 = creative). | — |
-| `LLM_MAX_NEW_TOKENS` | ❌ | `1024` | Maximum tokens per LLM response. | — |
-| `EMBEDDING_MODEL` | ❌ | `sentence-transformers/all-MiniLM-L6-v2` | SentenceTransformer model for local embeddings (no external API). | [huggingface.co/sentence-transformers](https://huggingface.co/sentence-transformers) |
-| `EMBEDDING_DIMENSION` | ❌ | `384` | Embedding vector dimension (must match the model). | — |
-| `RERANKER_MODEL` | ❌ | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Cross-encoder model for reranking retrieved chunks by relevance. | [huggingface.co/cross-encoder](https://huggingface.co/cross-encoder) |
-| `CHUNK_SIZE` | ❌ | `1000` | Characters per document chunk. Larger = more context, smaller = better precision. | — |
-| `CHUNK_OVERLAP` | ❌ | `200` | Overlap between consecutive chunks to maintain boundary context. | — |
-| `TOP_K_RETRIEVAL` | ❌ | `10` | Candidate chunks retrieved from vector store during semantic search. | — |
-| `TOP_K_RERANK` | ❌ | `5` | Final chunks passed to the LLM after reranking (must be ≤ `TOP_K_RETRIEVAL`). | — |
-
-<br/>
-
-## 📜 Scripts
-
-### Backend (`backend/`)
-
-| Command | Description |
-|---------|-------------|
-| `uvicorn app.main:app --reload` | Start FastAPI with hot reload |
-| `uvicorn app.main:app --port 8000` | Start FastAPI on port 8000 |
-| `python scripts/run_ragas_eval.py --user-id <user-id>` | Run the 50-question RAGAS comparison for vector search vs GraphRAG |
-
-The RAGAS script reads `backend/evaluation/ragas_sample_questions.jsonl`,
-generates answers from standard vector contexts and vector-plus-GraphRAG
-contexts, then writes aggregate scores to `backend/evaluation/ragas_results.json`.
-Pass `--document-id <document-id>` to evaluate one indexed document.
-
-### Frontend (`frontend/`)
-
-| Command | Description |
-|---------|-------------|
-| `npm run dev` | Start **Next.js** dev server |
-| `npm run build` | Production build → `out/` (static export) |
-| `npm run lint` | Run ESLint |
-| `npm run test:e2e` | Run Playwright end-to-end tests |
-
-### Docker
-
-| Command | Description |
-|---------|-------------|
-| `docker compose --profile cpu up --build` | Build and start the full stack (CPU-only, no GPU required) |
-| `docker compose --profile gpu up --build` | Build and start the full stack with NVIDIA GPU acceleration |
-| `docker compose --profile debug up` | Also start pgAdmin at http://localhost:5050 |
-| `docker compose down` | Stop all containers |
-
-> **CPU profile** — works on any machine. Embeddings run on CPU via `all-MiniLM-L6-v2`.  
-> **GPU profile** — requires [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html). Sets `DEVICE=cuda` for accelerated embedding inference.
-
-<br/>
-
-## 🌐 Deployment
-
-This project is deployed on **HuggingFace Spaces** using Docker.
-
-### HuggingFace Spaces
-
-1. Fork this repo and create a new Space at [huggingface.co/new-space](https://huggingface.co/new-space) (SDK: Docker)
-2. Set the following Space secrets:
-   - `HF_TOKEN` — your HuggingFace API token
-   - `SECRET_KEY` — a strong random string
-3. Push to the `hf` remote — the Space will auto-build
+## Verificación de una instalación
 
 ```bash
-git remote add hf https://<username>:<HF_TOKEN>@huggingface.co/spaces/<username>/<space-name>
-git push hf main
+curl http://localhost:7860/api/health
+ollama list
 ```
 
-### Self-Hosted / VPS
+En NVIDIA:
 
 ```bash
-docker compose up -d --build
-# App available at http://your-server:7860
+nvidia-smi
 ```
 
-<br/>
-
-## 🤝 Contributing
-
-This project is participating in **GirlScript Summer of Code**! We welcome contributors of all skill levels.
-
-**Branch Strategy:**
-
-| Branch | Purpose |
-|--------|---------|
-| `main` | Production — HuggingFace deployed (admin only) |
-| `dev` | All contributor PRs target here |
-| `feature/*` / `fix/*` / `docs/*` | Your working branches |
+En PostgreSQL:
 
 ```bash
-# Always branch from dev
-git checkout -b feature/my-feature upstream/dev
+docker exec -it atlas-postgres \
+  psql -U pdf_rag_user -d pdf_rag \
+  -c "SELECT extname FROM pg_extension WHERE extname IN ('vector','unaccent','pg_trgm','uuid-ossp');"
 ```
 
-**Quick links:**
-- 📋 [Good First Issues](https://github.com/param20h/PDF-Assistant-RAG/issues?q=label%3A%22good+first+issue%22)
-- 📖 [Contributing Guide](CONTRIBUTING.md)
-- 💬 [Discussions](https://github.com/param20h/PDF-Assistant-RAG/discussions)
+## Seguridad y operación
 
-<br/>
+- Use una `SECRET_KEY` persistente y aleatoria en producción.
+- Configure `ENVIRONMENT=production` y `ALLOWED_ORIGINS` explícitamente.
+- No publique PostgreSQL, Redis, Ollama o pgAdmin directamente en Internet.
+- Use contraseñas diferentes a los valores de ejemplo.
+- Mantenga copias de seguridad del volumen de PostgreSQL y de los archivos subidos.
+- Limite la concurrencia de investigaciones para modelos grandes.
+- Los proveedores OAuth y SMTP son opcionales y se configuran en `backend/.env`.
 
-## 📄 License
+## Licencia
 
-Distributed under the **MIT License**. See [`LICENSE`](license) for more information.
-
----
-
-<div align="center">
-
-<br/>
-
-**Built with 💙 as a flagship AI engineering project**
-
-*If you found this project helpful, please give it a ⭐ — it helps contributors discover it!*
-
-<br/>
-
-[![Stack](https://skillicons.dev/icons?i=flask,python,mongodb,docker)](https://skillicons.dev)
-
-<br/>
-
-**[⬆ Back to top](#)**
-
-</div>
+Distribuido bajo la licencia MIT. Consulte [license](license).

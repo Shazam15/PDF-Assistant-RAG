@@ -1,7 +1,43 @@
 import json
 
+import app.rag.agent
 from app.models import ChatMessage, ChatSession
-from app.routes.chat import _save_messages
+from app.routes.chat import _document_is_searchable, _save_messages, generate_answer_stream
+
+
+def test_enriching_document_is_searchable_only_after_indexing():
+    from types import SimpleNamespace
+
+    assert _document_is_searchable(SimpleNamespace(status="ready", searchable_at=None))
+    assert _document_is_searchable(SimpleNamespace(status="enriching", searchable_at=object()))
+    assert not _document_is_searchable(SimpleNamespace(status="enriching", searchable_at=None))
+    assert not _document_is_searchable(SimpleNamespace(status="processing", searchable_at=None))
+
+
+def test_stream_wrapper_forwards_cancellation_event(monkeypatch):
+    captured = {}
+    cancellation_event = object()
+
+    def fake_generate_answer_stream(*_args, **kwargs):
+        captured.update(kwargs)
+        yield 'data: {"type": "done"}\n\n'
+
+    monkeypatch.setattr(
+        app.rag.agent,
+        "generate_answer_stream",
+        fake_generate_answer_stream,
+    )
+
+    events = list(
+        generate_answer_stream(
+            question="hola",
+            user_id="user-1",
+            cancellation_event=cancellation_event,
+        )
+    )
+
+    assert events == ['data: {"type": "done"}\n\n']
+    assert captured["cancellation_event"] is cancellation_event
 
 
 def test_chat_ask_success(client, auth_headers, ready_document, monkeypatch):

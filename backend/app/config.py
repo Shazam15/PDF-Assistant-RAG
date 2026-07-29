@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     DATABASE_POOL_SIZE: int = 10
     DATABASE_MAX_OVERFLOW: int = 25
     DATABASE_POOL_PRE_PING: bool = True
+    CORPUS_STORE_BACKEND: str = "auto"
 
     # ── Auth ─────────────────────────────────────────────
     JWT_ALGORITHM: str = "HS256"
@@ -57,6 +58,9 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
     CELERY_TASK_TRACK_STARTED: bool = True
+    REDIS_URL: str = ""
+    CACHE_TTL: int = 3600
+    CACHE_LRU_MAX_SIZE: int = 128
 
     # ── Document Processing ──────────────────────────────
     DOC_PROCESSING_TIMEOUT_MINUTES: int = 30
@@ -108,8 +112,12 @@ class Settings(BaseSettings):
     }
 
     # ── RAG Pipeline ─────────────────────────────────────
-    CHUNK_SIZE: int = 1000
-    CHUNK_OVERLAP: int = 200
+    CHUNK_SIZE: int = 420
+    CHUNK_OVERLAP: int = 80
+    PARENT_CHUNK_SIZE: int = 1600
+    PARENT_CHUNK_OVERLAP: int = 160
+    PDF_USE_DOCLING: bool = True
+    PDF_EXTRACTION_MODE: str = "auto"
     PDF_USE_UNSTRUCTURED: bool = False
     TOP_K_RETRIEVAL: int = 36 # Fetch a broad candidate pool across documents
     TOP_K_RERANK: int = 16 # Final number of chunks to return after reranking
@@ -131,21 +139,40 @@ class Settings(BaseSettings):
     GRAPH_MAX_RELATIONSHIPS: int = 12
 
     # ── Embeddings (local HuggingFace model) ─────────────
-    EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
+    # This experimental branch targets Ubuntu bare metal on a Xeon/Tesla T4 host.
+    # Other machines can still opt into local, local_balanced, wsl_t4, or custom.
+    MODEL_PROFILE: str = "ubuntu_t4"
+    DEVICE: str = "cpu"
+    EMBEDDING_DEVICE: str = "cpu"
+    RERANKER_DEVICE: str = "cpu"
+    EMBEDDING_MODEL: str = "intfloat/multilingual-e5-small"
     EMBEDDING_DIMENSION: int = 384
+    EMBEDDING_INDEX_VERSION: str = "hierarchical-e5-v2"
+    EMBEDDING_BATCH_SIZE: int = 32
+    CPU_THREADS: int = 0  # 0 lets PyTorch choose from the available Xeon cores.
 
     # ── ChromaDB ─────────────────────────────────────────
     CHROMA_PERSIST_DIR: str = "./data/chroma_db"
 
     # ── LLM (HuggingFace Inference API) ──────────────────
     HF_TOKEN: str = os.getenv("HF_TOKEN", "")  # HuggingFace API token (set in .env)
-    LLM_MODEL: str = "mistral"
+    LLM_MODEL: str = "qwen3:4b-instruct-2507-q4_K_M"
     LLM_CONTEXT_WINDOW: int = 8192
     LLM_MAX_NEW_TOKENS: int = 4096
     LLM_TEMPERATURE: float = 0.3
+    LLM_REQUEST_TIMEOUT_SECONDS: int = 900
+    LLM_DISABLE_THINKING: bool = False
+    OLLAMA_BASE_URL: str = ""
+    OLLAMA_KEEP_ALIVE: str = "5m"
     AGENT_PLANNER_MAX_TOKENS: int = 768
     AGENT_SYNTHESIS_MAX_TOKENS: int = 2048
     AGENT_MAX_ITERATIONS: int = 4  # Three research steps plus one mandatory final synthesis
+    RESEARCH_MAX_ROUNDS: int = 2
+    RESEARCH_TIMEOUT_SECONDS: int = 1800
+    RESEARCH_SYNTHESIS_RESERVE_SECONDS: int = 600
+    RESEARCH_MAX_FACETS: int = 6
+    RESEARCH_MIN_EVIDENCE_PER_FACET: int = 1
+    RESEARCH_PIPELINE_VERSION: str = "evidence-agent-v2"
     SUMMARY_MAX_TOKENS: int = 512
 
     # ── LangSmith Tracing (optional) ─────────────────────
@@ -155,7 +182,16 @@ class Settings(BaseSettings):
     LANGSMITH_PROJECT: str = "pdf-assistant-rag"
 
     # ── Reranker ─────────────────────────────────────────
-    RERANKER_MODEL: str = "cross-encoder/ms-marco-MiniLM-L-6v2" # Lightweight 384-dim model fine-tuned for relevance ranking
+    RERANKER_MODEL: str = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
+    RERANK_MAX_LENGTH: int = 2048
+    RERANK_RELEVANCE_THRESHOLD: float = 0.5
+    RERANK_SCORE_MARGIN: float = 0.15
+    RETRIEVAL_PLANNER_MAX_TOKENS: int = 256
+    RETRIEVAL_PLANNER_TIMEOUT_SECONDS: int = 30
+    RETRIEVAL_PLANNER_VERSION: str = "facets-json-mode-v2"
+    NLI_MODEL: str = "MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli"
+    NLI_ENTAILMENT_THRESHOLD: float = 0.65
+    NLI_VERIFIER_VERSION: str = "multilingual-nli-v1"
     # ── Vision / Image captioning ─────────────────────
     VISION_PROVIDER: str | None = None  # e.g. 'openai'
     VISION_MODEL: str | None = None
@@ -176,13 +212,139 @@ class Settings(BaseSettings):
     CODE_REVIEW_MAX_CHARS: int = 12000
 
     @model_validator(mode="after")
-    def validate_secret_key(self):
+    def validate_runtime(self):
         environment = str(self.ENVIRONMENT).lower()
-        if self.SECRET_KEY:
-            return self
-        if environment == "production":
-            raise ValueError("SECRET_KEY must be set when ENVIRONMENT=production")
-        self.SECRET_KEY = secrets.token_urlsafe(32)
+        profile = str(self.MODEL_PROFILE).lower()
+        extraction_mode = str(self.PDF_EXTRACTION_MODE).lower()
+
+        # PDF_USE_DOCLING remains a compatibility switch for existing installs.
+        # New configurations should use PDF_EXTRACTION_MODE directly.
+        if "PDF_EXTRACTION_MODE" not in self.model_fields_set and "PDF_USE_DOCLING" in self.model_fields_set:
+            extraction_mode = "quality" if self.PDF_USE_DOCLING else "fast"
+            self.PDF_EXTRACTION_MODE = extraction_mode
+
+        if profile == "research_gpu":
+            # Keep large, parallel embedding batches on the host CPU/RAM and
+            # reserve NVIDIA memory for reranking and Ollama. Explicit env
+            # overrides remain available for CPU-only deployments.
+            if "DEVICE" not in self.model_fields_set:
+                self.DEVICE = "cuda"
+            if "EMBEDDING_DEVICE" not in self.model_fields_set:
+                self.EMBEDDING_DEVICE = "cpu"
+            if "RERANKER_DEVICE" not in self.model_fields_set:
+                self.RERANKER_DEVICE = "cuda"
+            if "EMBEDDING_BATCH_SIZE" not in self.model_fields_set:
+                self.EMBEDDING_BATCH_SIZE = 64
+            if "EMBEDDING_MODEL" not in self.model_fields_set:
+                self.EMBEDDING_MODEL = "Qwen/Qwen3-Embedding-0.6B"
+            if "EMBEDDING_DIMENSION" not in self.model_fields_set:
+                self.EMBEDDING_DIMENSION = 1024
+            if "EMBEDDING_INDEX_VERSION" not in self.model_fields_set:
+                self.EMBEDDING_INDEX_VERSION = "hierarchical-qwen3-1024-v1"
+            if "RERANKER_MODEL" not in self.model_fields_set:
+                self.RERANKER_MODEL = "Qwen/Qwen3-Reranker-0.6B"
+            if "LLM_MODEL" not in self.model_fields_set:
+                self.LLM_MODEL = "qwen3:30b-a3b"
+            if "LLM_CONTEXT_WINDOW" not in self.model_fields_set:
+                self.LLM_CONTEXT_WINDOW = 32768
+            self.RETRIEVAL_PLANNER_VERSION = "research-brief-qwen3-v1"
+        elif profile == "local_balanced":
+            if "DEVICE" not in self.model_fields_set:
+                self.DEVICE = "mps"
+            if "EMBEDDING_DEVICE" not in self.model_fields_set:
+                self.EMBEDDING_DEVICE = "mps"
+            if "RERANKER_DEVICE" not in self.model_fields_set:
+                self.RERANKER_DEVICE = "cpu"
+            if "EMBEDDING_BATCH_SIZE" not in self.model_fields_set:
+                self.EMBEDDING_BATCH_SIZE = 4
+            if "CPU_THREADS" not in self.model_fields_set:
+                self.CPU_THREADS = 4
+            if "EMBEDDING_MODEL" not in self.model_fields_set:
+                self.EMBEDDING_MODEL = "Qwen/Qwen3-Embedding-0.6B"
+            if "EMBEDDING_DIMENSION" not in self.model_fields_set:
+                self.EMBEDDING_DIMENSION = 1024
+            if "EMBEDDING_INDEX_VERSION" not in self.model_fields_set:
+                self.EMBEDDING_INDEX_VERSION = "hierarchical-qwen3-1024-v1"
+        elif profile in {"wsl_t4", "ubuntu_t4"}:
+            # Keep the 16 GB T4 dedicated to Ollama. Retrieval models use the
+            # high-core-count Xeon in both WSL and native Ubuntu deployments.
+            profile_defaults = {
+                "DEVICE": "cpu",
+                "EMBEDDING_DEVICE": "cpu",
+                "RERANKER_DEVICE": "cpu",
+                "EMBEDDING_BATCH_SIZE": 64,
+                "CPU_THREADS": 28,
+                "EMBEDDING_MODEL": "Qwen/Qwen3-Embedding-0.6B",
+                "EMBEDDING_DIMENSION": 1024,
+                "EMBEDDING_INDEX_VERSION": "hierarchical-qwen3-1024-v1",
+                "RERANKER_MODEL": "Qwen/Qwen3-Reranker-0.6B",
+                "RERANK_MAX_LENGTH": 1024,
+                "LLM_MODEL": "qwen3:14b-q4_K_M",
+                "LLM_CONTEXT_WINDOW": 8192,
+                "LLM_MAX_NEW_TOKENS": 3072,
+                "LLM_REQUEST_TIMEOUT_SECONDS": 900,
+                "LLM_DISABLE_THINKING": True,
+                "OLLAMA_KEEP_ALIVE": "30m",
+                "AGENT_PLANNER_MAX_TOKENS": 384,
+                "AGENT_SYNTHESIS_MAX_TOKENS": 2048,
+                "RESEARCH_MAX_ROUNDS": 2,
+                "RESEARCH_TIMEOUT_SECONDS": 1800,
+                "RESEARCH_SYNTHESIS_RESERVE_SECONDS": 600,
+                "RESEARCH_MAX_FACETS": 5,
+                "TOP_K_RETRIEVAL": 30,
+                "TOP_K_RERANK": 12,
+                "PDF_EXTRACTION_MODE": "auto",
+            }
+            if profile == "ubuntu_t4":
+                profile_defaults["OLLAMA_BASE_URL"] = "http://127.0.0.1:11434"
+            for field_name, value in profile_defaults.items():
+                if field_name not in self.model_fields_set:
+                    setattr(self, field_name, value)
+            extraction_mode = str(self.PDF_EXTRACTION_MODE).lower()
+            self.RETRIEVAL_PLANNER_VERSION = "research-brief-qwen3-v1"
+        elif profile not in {"local", "custom"}:
+            raise ValueError(
+                "MODEL_PROFILE must be local, local_balanced, custom, research_gpu, "
+                "wsl_t4, or ubuntu_t4"
+            )
+
+        if extraction_mode not in {"auto", "fast", "quality"}:
+            raise ValueError("PDF_EXTRACTION_MODE must be auto, fast, or quality")
+
+        if self.CORPUS_STORE_BACKEND == "auto":
+            self.CORPUS_STORE_BACKEND = (
+                "postgres" if self.DATABASE_URL.startswith("postgresql") else "local"
+            )
+        if self.CORPUS_STORE_BACKEND not in {"local", "postgres"}:
+            raise ValueError("CORPUS_STORE_BACKEND must be local, postgres, or auto")
+        if self.CORPUS_STORE_BACKEND == "postgres" and not self.DATABASE_URL.startswith("postgresql"):
+            raise ValueError("The postgres corpus backend requires a PostgreSQL DATABASE_URL")
+        if self.RESEARCH_MAX_ROUNDS < 1 or self.RESEARCH_MAX_ROUNDS > 4:
+            raise ValueError("RESEARCH_MAX_ROUNDS must be between 1 and 4")
+        if self.EMBEDDING_BATCH_SIZE < 1:
+            raise ValueError("EMBEDDING_BATCH_SIZE must be positive")
+        if self.CPU_THREADS < 0:
+            raise ValueError("CPU_THREADS cannot be negative")
+        self.OLLAMA_BASE_URL = self.OLLAMA_BASE_URL.strip().rstrip("/")
+        if self.OLLAMA_BASE_URL and not self.OLLAMA_BASE_URL.startswith(
+            ("http://", "https://")
+        ):
+            raise ValueError("OLLAMA_BASE_URL must use http:// or https://")
+        if not self.OLLAMA_KEEP_ALIVE.strip():
+            raise ValueError("OLLAMA_KEEP_ALIVE cannot be empty")
+        if self.RESEARCH_TIMEOUT_SECONDS < 30 or self.RESEARCH_TIMEOUT_SECONDS > 7200:
+            raise ValueError("RESEARCH_TIMEOUT_SECONDS must be between 30 and 7200")
+        if self.LLM_REQUEST_TIMEOUT_SECONDS < 10 or self.LLM_REQUEST_TIMEOUT_SECONDS > 3600:
+            raise ValueError("LLM_REQUEST_TIMEOUT_SECONDS must be between 10 and 3600")
+        if not 10 <= self.RESEARCH_SYNTHESIS_RESERVE_SECONDS < self.RESEARCH_TIMEOUT_SECONDS:
+            raise ValueError(
+                "RESEARCH_SYNTHESIS_RESERVE_SECONDS must be at least 10 and below RESEARCH_TIMEOUT_SECONDS"
+            )
+
+        if not self.SECRET_KEY:
+            if environment == "production":
+                raise ValueError("SECRET_KEY must be set when ENVIRONMENT=production")
+            self.SECRET_KEY = secrets.token_urlsafe(32)
         return self
 
     @property

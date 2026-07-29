@@ -7,7 +7,7 @@ services:
     container_name: pdf_rag_redis
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -17,20 +17,20 @@ services:
 
   # ── PostgreSQL Database ──────────────────────────────────
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: pdf_rag_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-pdf_rag}
-      POSTGRES_USER: ${POSTGRES_USER:-pdf_rag_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pdf_rag_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-atlas}
+      POSTGRES_USER: ${POSTGRES_USER:-atlasUser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-atlas_dev_password}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./scripts/init_postgres.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pdf_rag_user} -d ${POSTGRES_DB:-pdf_rag}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-atlasUser} -d ${POSTGRES_DB:-atlas}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -48,13 +48,15 @@ services:
     environment:
       - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-me}
       - HF_TOKEN=${HF_TOKEN}
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-pdf_rag_user}:${POSTGRES_PASSWORD:-pdf_rag_pass}@postgres:5432/${POSTGRES_DB:-pdf_rag}
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-atlasUser}:${POSTGRES_PASSWORD:-atlas_dev_password}@postgres:5432/${POSTGRES_DB:-atlas}
       - UPLOAD_DIR=/app/data/uploads
       - CHROMA_PERSIST_DIR=/app/data/chroma_db
       - GRAPH_PERSIST_DIR=/app/data/graphs
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
       - DEVICE=cpu
+      - MODEL_PROFILE=local
+      - CORPUS_STORE_BACKEND=postgres
     depends_on:
       postgres:
         condition: service_healthy
@@ -80,13 +82,38 @@ services:
     environment:
       - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-me}
       - HF_TOKEN=${HF_TOKEN}
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-pdf_rag_user}:${POSTGRES_PASSWORD:-pdf_rag_pass}@postgres:5432/${POSTGRES_DB:-pdf_rag}
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-atlasUser}:${POSTGRES_PASSWORD:-atlas_dev_password}@postgres:5432/${POSTGRES_DB:-atlas}
       - UPLOAD_DIR=/app/data/uploads
       - CHROMA_PERSIST_DIR=/app/data/chroma_db
       - GRAPH_PERSIST_DIR=/app/data/graphs
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
-      - DEVICE=cuda
+      - DEVICE=${DEVICE:-cuda}
+      - LLM_MODEL=${LLM_MODEL:-qwen3:30b-a3b}
+      - LLM_CONTEXT_WINDOW=${LLM_CONTEXT_WINDOW:-32768}
+      - LLM_MAX_NEW_TOKENS=${LLM_MAX_NEW_TOKENS:-4096}
+      - LLM_REQUEST_TIMEOUT_SECONDS=${LLM_REQUEST_TIMEOUT_SECONDS:-900}
+      - LLM_DISABLE_THINKING=${LLM_DISABLE_THINKING:-False}
+      - AGENT_PLANNER_MAX_TOKENS=${AGENT_PLANNER_MAX_TOKENS:-768}
+      - AGENT_SYNTHESIS_MAX_TOKENS=${AGENT_SYNTHESIS_MAX_TOKENS:-2048}
+      - RESEARCH_MAX_ROUNDS=${RESEARCH_MAX_ROUNDS:-2}
+      - RESEARCH_TIMEOUT_SECONDS=${RESEARCH_TIMEOUT_SECONDS:-1800}
+      - RESEARCH_SYNTHESIS_RESERVE_SECONDS=${RESEARCH_SYNTHESIS_RESERVE_SECONDS:-600}
+      - RESEARCH_MAX_FACETS=${RESEARCH_MAX_FACETS:-6}
+      - TOP_K_RETRIEVAL=${TOP_K_RETRIEVAL:-36}
+      - TOP_K_RERANK=${TOP_K_RERANK:-16}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-Qwen/Qwen3-Embedding-0.6B}
+      - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION:-1024}
+      - EMBEDDING_INDEX_VERSION=${EMBEDDING_INDEX_VERSION:-hierarchical-qwen3-1024-v1}
+      - EMBEDDING_DEVICE=${EMBEDDING_DEVICE:-cpu}
+      - RERANKER_DEVICE=${RERANKER_DEVICE:-cuda}
+      - RERANKER_MODEL=${RERANKER_MODEL:-Qwen/Qwen3-Reranker-0.6B}
+      - RERANK_MAX_LENGTH=${RERANK_MAX_LENGTH:-2048}
+      - EMBEDDING_BATCH_SIZE=${EMBEDDING_BATCH_SIZE:-64}
+      - CPU_THREADS=${CPU_THREADS:-0}
+      - CELERY_ENABLED=${CELERY_ENABLED:-False}
+      - MODEL_PROFILE=${MODEL_PROFILE:-research_gpu}
+      - CORPUS_STORE_BACKEND=postgres
     deploy:
       resources:
         reservations:
@@ -120,13 +147,15 @@ services:
     environment:
       - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-me}
       - HF_TOKEN=${HF_TOKEN}
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-pdf_rag_user}:${POSTGRES_PASSWORD:-pdf_rag_pass}@postgres:5432/${POSTGRES_DB:-pdf_rag}
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-atlasUser}:${POSTGRES_PASSWORD:-atlas_dev_password}@postgres:5432/${POSTGRES_DB:-atlas}
       - UPLOAD_DIR=/app/data/uploads
       - CHROMA_PERSIST_DIR=/app/data/chroma_db
       - GRAPH_PERSIST_DIR=/app/data/graphs
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
       - DEVICE=cpu
+      - MODEL_PROFILE=local
+      - CORPUS_STORE_BACKEND=postgres
     depends_on:
       postgres:
         condition: service_healthy
@@ -147,13 +176,38 @@ services:
     environment:
       - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-me}
       - HF_TOKEN=${HF_TOKEN}
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-pdf_rag_user}:${POSTGRES_PASSWORD:-pdf_rag_pass}@postgres:5432/${POSTGRES_DB:-pdf_rag}
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-atlasUser}:${POSTGRES_PASSWORD:-atlas_dev_password}@postgres:5432/${POSTGRES_DB:-atlas}
       - UPLOAD_DIR=/app/data/uploads
       - CHROMA_PERSIST_DIR=/app/data/chroma_db
       - GRAPH_PERSIST_DIR=/app/data/graphs
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
-      - DEVICE=cuda
+      - DEVICE=${DEVICE:-cuda}
+      - LLM_MODEL=${LLM_MODEL:-qwen3:30b-a3b}
+      - LLM_CONTEXT_WINDOW=${LLM_CONTEXT_WINDOW:-32768}
+      - LLM_MAX_NEW_TOKENS=${LLM_MAX_NEW_TOKENS:-4096}
+      - LLM_REQUEST_TIMEOUT_SECONDS=${LLM_REQUEST_TIMEOUT_SECONDS:-900}
+      - LLM_DISABLE_THINKING=${LLM_DISABLE_THINKING:-False}
+      - AGENT_PLANNER_MAX_TOKENS=${AGENT_PLANNER_MAX_TOKENS:-768}
+      - AGENT_SYNTHESIS_MAX_TOKENS=${AGENT_SYNTHESIS_MAX_TOKENS:-2048}
+      - RESEARCH_MAX_ROUNDS=${RESEARCH_MAX_ROUNDS:-2}
+      - RESEARCH_TIMEOUT_SECONDS=${RESEARCH_TIMEOUT_SECONDS:-1800}
+      - RESEARCH_SYNTHESIS_RESERVE_SECONDS=${RESEARCH_SYNTHESIS_RESERVE_SECONDS:-600}
+      - RESEARCH_MAX_FACETS=${RESEARCH_MAX_FACETS:-6}
+      - TOP_K_RETRIEVAL=${TOP_K_RETRIEVAL:-36}
+      - TOP_K_RERANK=${TOP_K_RERANK:-16}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-Qwen/Qwen3-Embedding-0.6B}
+      - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION:-1024}
+      - EMBEDDING_INDEX_VERSION=${EMBEDDING_INDEX_VERSION:-hierarchical-qwen3-1024-v1}
+      - EMBEDDING_DEVICE=${EMBEDDING_DEVICE:-cpu}
+      - RERANKER_DEVICE=${RERANKER_DEVICE:-cuda}
+      - RERANKER_MODEL=${RERANKER_MODEL:-Qwen/Qwen3-Reranker-0.6B}
+      - RERANK_MAX_LENGTH=${RERANK_MAX_LENGTH:-2048}
+      - EMBEDDING_BATCH_SIZE=${EMBEDDING_BATCH_SIZE:-64}
+      - CPU_THREADS=${CPU_THREADS:-0}
+      - CELERY_ENABLED=${CELERY_ENABLED:-False}
+      - MODEL_PROFILE=${MODEL_PROFILE:-research_gpu}
+      - CORPUS_STORE_BACKEND=postgres
     deploy:
       resources:
         reservations:
@@ -184,10 +238,6 @@ services:
       postgres:
         condition: service_healthy
 
-volumes:
-  postgres_data:
-  app_data:
-
   # ── Frontend (Next.js static export served by nginx) ─────
   frontend:
     build:
@@ -206,3 +256,7 @@ volumes:
       timeout: 10s
       retries: 3
       start_period: 20s
+
+volumes:
+  postgres_data:
+  app_data:

@@ -219,6 +219,13 @@ class DocumentResponse(BaseModel):
     summary: Optional[str] = None  # New field for document summary
     task_id: Optional[str] = None
     extracted_urls: Optional[List[str]] = None
+    processing_progress: Optional[int] = None
+    processing_stage: Optional[str] = None
+    processing_current: Optional[int] = None
+    processing_total: Optional[int] = None
+    processing_updated_at: Optional[datetime] = None
+    searchable_at: Optional[datetime] = None
+    processing_warning: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -244,6 +251,11 @@ class DocumentStatusResponse(BaseModel):
     error_message: Optional[str] = None
     processing_progress: Optional[int] = None
     processing_stage: Optional[str] = None
+    processing_current: Optional[int] = None
+    processing_total: Optional[int] = None
+    processing_updated_at: Optional[datetime] = None
+    searchable_at: Optional[datetime] = None
+    processing_warning: Optional[str] = None
     retry_count: Optional[int] = None
     last_error_traceback: Optional[str] = None
     processing_started_at: Optional[datetime] = None
@@ -281,6 +293,45 @@ class AdminStatsResponse(BaseModel):
     users: List[UserResponse]
 
 
+class AdminGraphSummaryResponse(BaseModel):
+    document_id: str
+    document_name: str
+    owner_id: str
+    owner_username: str
+    node_count: int
+    edge_count: int
+
+
+class AdminGraphListResponse(BaseModel):
+    items: List[AdminGraphSummaryResponse]
+    total: int
+
+
+class AdminGraphNodeResponse(BaseModel):
+    id: str
+    name: str
+    label: str
+    mentions: int
+    degree: int
+    pages: List[int]
+
+
+class AdminGraphEdgeResponse(BaseModel):
+    id: str
+    source: str
+    target: str
+    weight: int
+    pages: List[int]
+
+
+class AdminGraphResponse(AdminGraphSummaryResponse):
+    nodes: List[AdminGraphNodeResponse]
+    edges: List[AdminGraphEdgeResponse]
+    returned_node_count: int
+    returned_edge_count: int
+    truncated: bool
+
+
 # ── Chat ─────────────────────────────────────────────
 
 class ChatRequest(BaseModel):
@@ -296,6 +347,8 @@ class SourceChunk(BaseModel):
     text: str
     filename: str
     page: int
+    page_start: Optional[int] = None
+    page_end: Optional[int] = None
     score: float
     confidence: float
     source_type: str = "document"
@@ -306,6 +359,8 @@ class SourceChunk(BaseModel):
     bbox: Optional[str] = None
     citation: Optional[str] = None
     highlightRects: Optional[List[dict]] = None
+    section: Optional[str] = None
+    location: Optional[str] = None
 
 
 class ChatResponse(BaseModel):

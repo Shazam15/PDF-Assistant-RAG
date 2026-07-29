@@ -51,7 +51,7 @@ def test_code_review_tool_run(monkeypatch):
             self.content = content
 
     class MockChatOllama:
-        def __init__(self, model, temperature):
+        def __init__(self, model=None, temperature=0, **_kwargs):
             self.model = model
             self.temperature = temperature
             self.invoked = False
@@ -61,7 +61,7 @@ def test_code_review_tool_run(monkeypatch):
             assert any("Eres un revisor senior de código" in m.content for m in messages)
             return MockResponse("Revisión de código simulada.")
 
-    monkeypatch.setattr(tools, "ChatOllama", MockChatOllama)
+    monkeypatch.setattr(tools, "create_chat_ollama", MockChatOllama)
 
     tool = CodeReviewTool()
     result = tool.run(

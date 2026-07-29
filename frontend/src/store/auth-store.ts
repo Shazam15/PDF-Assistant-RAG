@@ -8,6 +8,7 @@ export interface AuthUser {
   username: string;
   email: string;
   is_admin: boolean;
+  role?: "user" | "admin";
   hf_token?: string;
   created_at: string;
 }
@@ -42,8 +43,10 @@ const clearStoredTokens = () => {
 
 export const useAuthStore = create<AuthStore>((set, get) => ({
   user: null,
-  token: getStoredToken(),
-  loading: !!getStoredToken(),
+  // Keep the server render and the browser's first render identical. The
+  // persisted token is read by initializeAuth() after hydration.
+  token: null,
+  loading: true,
   initialized: false,
 
   async login(email, password) {

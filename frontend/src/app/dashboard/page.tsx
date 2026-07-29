@@ -52,6 +52,13 @@ export interface DocInfo {
   chunk_count: number;
   status: string;
   error_message: string | null;
+  processing_progress?: number | null;
+  processing_stage?: string | null;
+  processing_current?: number | null;
+  processing_total?: number | null;
+  processing_updated_at?: string | null;
+  searchable_at?: string | null;
+  processing_warning?: string | null;
   uploaded_at: string;
 }
 
@@ -126,6 +133,13 @@ export default function DashboardPage() {
         lhs.chunk_count !== rhs.chunk_count ||
         lhs.status !== rhs.status ||
         lhs.error_message !== rhs.error_message ||
+        lhs.processing_progress !== rhs.processing_progress ||
+        lhs.processing_stage !== rhs.processing_stage ||
+        lhs.processing_current !== rhs.processing_current ||
+        lhs.processing_total !== rhs.processing_total ||
+        lhs.processing_updated_at !== rhs.processing_updated_at ||
+        lhs.searchable_at !== rhs.searchable_at ||
+        lhs.processing_warning !== rhs.processing_warning ||
         lhs.uploaded_at !== rhs.uploaded_at ||
         lhs.summary !== rhs.summary ||
         lhs.chunk_size !== rhs.chunk_size ||
@@ -223,7 +237,9 @@ export default function DashboardPage() {
 
       const oldStatus = prev[doc.id];
       if (oldStatus && oldStatus !== doc.status) {
-        if (doc.status === "ready") {
+        if (doc.status === "enriching") {
+          toast.success(`'${doc.original_name}' ya está disponible; ATLAS continúa preparando su resumen.`);
+        } else if (doc.status === "ready") {
           toast.success(`🎉 Ingestion completa: '${doc.original_name}' está listo!`);
         } else if (doc.status === "failed") {
           toast.error(`❌ Ingestion fallida para '${doc.original_name}': ${doc.error_message || "Error desconocido"}`);
@@ -236,7 +252,11 @@ export default function DashboardPage() {
   // Poll for processing status
   useEffect(() => {
     const hasPending = (documents || []).some(
-      (d) => d.status === "pending" || d.status === "processing"
+      (d) =>
+        d.status === "pending" ||
+        d.status === "processing" ||
+        d.status === "enriching" ||
+        (d.processing_progress ?? 100) < 100
     );
     if (!hasPending) return;
 

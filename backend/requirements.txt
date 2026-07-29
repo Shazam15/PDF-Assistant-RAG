@@ -9,6 +9,8 @@ python-multipart
 sqlalchemy
 aiosqlite
 psycopg[binary]
+pgvector
+alembic
 
 # Auth
 pyjwt
@@ -32,6 +34,7 @@ PyMuPDF
 pdfplumber
 python-docx
 unstructured[pdf]
+docling
 pdf2image
 pytesseract
 pillow
@@ -41,14 +44,16 @@ langchain
 langchain-classic
 langchain-community
 langchain-huggingface
+langchain-ollama
 langchain-text-splitters
 langsmith
+langgraph
 rank-bm25
 ragas>=0.3.0
 
 # Embeddings & ML
-sentence-transformers
-transformers
+sentence-transformers>=5.0
+transformers>=4.51
 
 # Vector Database
 chromadb
