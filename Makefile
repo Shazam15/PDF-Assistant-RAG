@@ -30,7 +30,7 @@ dev-backend:
 	cd $(BACKEND_DIR) && $(PYTHON) -m uvicorn app.main:app --host 0.0.0.0 --port $(BACKEND_PORT) --reload
 
 dev-frontend:
-	cd $(FRONTEND_DIR) && npm run dev
+	cd $(FRONTEND_DIR) && NEXT_PUBLIC_API_URL="$${NEXT_PUBLIC_API_URL:-http://localhost:$(BACKEND_PORT)}" npm run dev
 
 dev:
 	@echo "Starting backend (port $(BACKEND_PORT)) and frontend (port 3000)..."
@@ -75,7 +75,7 @@ install-backend:
 	$(PYTHON) -m pip install -r $(BACKEND_DIR)/requirements.txt
 
 install-backend-wsl:
-	$(PYTHON) -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+	$(PYTHON) -m pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
 	$(PYTHON) -m pip install -r $(BACKEND_DIR)/requirements.txt
 
 install-frontend:
