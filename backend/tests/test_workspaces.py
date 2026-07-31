@@ -1,5 +1,15 @@
 from app.auth import create_access_token, hash_password
 from app.models import User, WorkspaceInvitation
+from sqlalchemy.dialects import postgresql
+
+
+def test_workspace_inviter_foreign_key_uses_postgresql_uuid():
+    dialect = postgresql.dialect()
+    inviter_type = WorkspaceInvitation.__table__.c.inviter_id.type
+    user_type = User.__table__.c.id.type
+
+    assert inviter_type.compile(dialect=dialect) == "UUID"
+    assert user_type.compile(dialect=dialect) == "UUID"
 
 
 def test_workspace_invite_requires_admin(client, db_session, user):
