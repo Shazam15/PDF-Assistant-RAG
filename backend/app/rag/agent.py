@@ -26,7 +26,7 @@ from app.rag.graph_retriever import get_entity_context
 from app.rag.prompts import AGENT_SYSTEM_PROMPT, RAG_PROMPT_TEMPLATE
 from app.exceptions import ExternalServiceException
 from app.rag.security import MALFORMED_OUTPUT_MESSAGE, OutputParserError, parse_agent_output
-from app.rag.tools import PDFSearchTool, MathTool, CodeReviewTool, WebSearchTool
+from app.rag.tools import PDFSearchTool, MathTool, CodeReviewTool, WebSearchTool, build_agent_tools
 from app.rag.tracing import trace_function
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ ROUTER_VERSION = "semantic-facets-v1"
 RoutingMode = Literal["auto", "quick", "research"]
 RoutingRoute = Literal["greeting", "scoped_rag", "simple_rag", "research_rag", "tool_agent"]
 GREETING_FALLBACK = "¡Hola! Soy ATLAS. ¿En qué puedo ayudarte hoy?"
-_AGENT_TOOL_NAMES = {"pdf_search", "code_review", "calculator", "web_search"}
+_AGENT_TOOL_NAMES = {"pdf_search", "code_review", "calculator", "web_search", "statistics"}
 MIN_SOURCE_SCORE = settings.RERANK_RELEVANCE_THRESHOLD
 INSUFFICIENT_EVIDENCE_MESSAGE = (
     "No encontré información suficiente en las fuentes recuperadas para responder esta pregunta con citas verificables."
@@ -156,10 +156,9 @@ def get_agent_executor(
     chat_history: Optional[List[Dict[str, str]]] = None,
 ):
     """Initialize the LangChain ReAct agent executor."""
-    pdf_tool = PDFSearchTool(user_id=user_id, document_id=document_id, top_k=top_k)
-    code_review_tool = CodeReviewTool(user_id=user_id, document_id=document_id, top_k=top_k)
-    web_tool = WebSearchTool()
-    tools = [pdf_tool, code_review_tool, MathTool(), web_tool]
+    tools = build_agent_tools(user_id=user_id, document_id=document_id, top_k=top_k)
+    pdf_tool = next((tool for tool in tools if getattr(tool, "name", "") == "pdf_search"), None)
+    web_tool = next((tool for tool in tools if getattr(tool, "name", "") == "web_search"), None)
 
     chat_llm = ChatOllama(
         model=settings.LLM_MODEL,
@@ -247,6 +246,13 @@ def _required_tool(question: str) -> Optional[str]:
             "informacion actualizada", "ultimas noticias", "latest information", "search the web",
             "search online", "external sources", "current regulations", "today's",
         ),
+        "statistics": (
+            "estadistica", "estadisticas", "media", "mediana", "desviacion estandar", "desviación estándar",
+            "varianza", "correlacion", "correlación", "regresion", "regresión", "t-test", "anova",
+            "hypothesis test", "hypothesis testing", "p-value", "sample mean", "linear regression",
+            "calculate the mean", "compute the mean", "calculate the median", "calculate the correlation",
+            "perform a regression", "perform a t-test",
+        ),
         "calculation": (
             "calcula", "calculame", "realiza un calculo", "realiza calculos", "resuelve la ecuacion",
             "haz el calculo", "compute", "calculate", "perform a calculation", "solve the equation",
@@ -316,6 +322,11 @@ def route_query(
         return RoutingDecision(route, "manual_quick_documents_only", score, mode, document_id)
 
     required_tool = _required_tool(routing_question)
+    if required_tool in {"statistics", "web", "code"}:
+        return RoutingDecision(
+            "tool_agent", f"explicit_{required_tool}_tool_required", score, mode, document_id,
+            required_tool=required_tool,
+        )
     if required_tool:
         return RoutingDecision(
             "tool_agent", f"explicit_{required_tool}_tool_required", score, mode, document_id,
@@ -325,6 +336,9 @@ def route_query(
     if document_id:
         reason = "selected_document_deep_retrieval" if mode == "research" else "selected_document"
         return RoutingDecision("scoped_rag", reason, score, mode, document_id)
+
+    if required_tool == "calculation" and mode == "auto":
+        return RoutingDecision("tool_agent", "explicit_calculation_tool_required", score, mode, document_id, required_tool="calculation")
 
     if mode == "research":
         return RoutingDecision("research_rag", "manual_research", score, mode, None)
@@ -357,6 +371,21 @@ def _log_routing_decision(decision: RoutingDecision) -> None:
 def _should_use_agentic_reasoning(question: str) -> bool:
     """Compatibility wrapper; only true when deterministic routing requires tools."""
     return route_query(question).route == "tool_agent"
+
+
+def _truncate_tool_text(text: Any, max_chars: int = 180) -> str:
+    if text is None:
+        return ""
+    summary = str(text).strip()
+    if not summary:
+        return ""
+    if len(summary) <= max_chars:
+        return summary
+    return summary[: max_chars - 3] + "..."
+
+
+def _emit_tool_event(payload: Dict[str, Any]) -> str:
+    return f"data: {json.dumps(payload)}\n\n"
 
 
 def _parse_highlight_rects(bbox: Any) -> List[Dict[str, Any]]:
@@ -1043,18 +1072,20 @@ def _generate_agentic_document_answer(
     hf_token: Optional[str],
     top_k: Optional[int],
     chat_history: Optional[List[Dict[str, str]]],
+    required_tool: Optional[str] = None,
 ) -> Dict[str, Any]:
-    logger.info("RAG route: invoking ReAct agent first for complex request.")
+    logger.info("RAG route: invoking ReAct agent first for complex request (required_tool=%s).", required_tool)
     executor, pdf_tool, web_tool, formatted_history = get_agent_executor(
         user_id, document_id, hf_token, top_k, chat_history
     )
-    initial_search = _run_initial_document_search(pdf_tool, question)
-    agent_question = _agent_question_with_search_state(question, initial_search)
+    should_run_initial_pdf_search = required_tool not in {"code", "calculation", "statistics"}
+    initial_search = _run_initial_document_search(pdf_tool, question) if should_run_initial_pdf_search else ""
+    agent_question = _agent_question_with_search_state(question, initial_search) if initial_search else question
     try:
         result = executor.invoke({"input": agent_question, "chat_history": formatted_history})
     except Exception as exc:
         raw_sources = _collect_agent_sources(pdf_tool, web_tool)
-        if raw_sources:
+        if raw_sources and should_run_initial_pdf_search:
             logger.warning(
                 "Agent invocation failed after recovering %d sources; synthesizing from preserved evidence: %s",
                 len(raw_sources),
@@ -1090,15 +1121,18 @@ def _generate_agentic_document_answer(
     )
     sources = [_source_payload(chunk) for chunk in raw_sources]
     if _is_agent_stop_answer(answer):
-        partial_answer = _generate_partial_answer_from_agent_sources(
-            question=question,
-            raw_sources=raw_sources,
-            sources=sources,
-            hf_token=hf_token,
-            chat_history=chat_history,
-        )
-        return {"answer": partial_answer, "sources": sources}
-    if initial_search and raw_sources:
+        if raw_sources and should_run_initial_pdf_search:
+            partial_answer = _generate_partial_answer_from_agent_sources(
+                question=question,
+                raw_sources=raw_sources,
+                sources=sources,
+                hf_token=hf_token,
+                chat_history=chat_history,
+            )
+            return {"answer": partial_answer, "sources": sources}
+        return {"answer": answer, "sources": sources}
+
+    if initial_search and raw_sources and should_run_initial_pdf_search:
         logger.info(
             "Agent research phase finished; running mandatory grounded final synthesis from %d sources.",
             len(raw_sources),
@@ -1112,14 +1146,16 @@ def _generate_agentic_document_answer(
             notice="",
         )
         return {"answer": answer, "sources": sources}
-    answer = _validate_or_regenerate_agent_answer(
-        question=question,
-        answer=answer,
-        raw_sources=raw_sources,
-        sources=sources,
-        hf_token=hf_token,
-        chat_history=chat_history,
-    )
+
+    if raw_sources and should_run_initial_pdf_search:
+        answer = _validate_or_regenerate_agent_answer(
+            question=question,
+            answer=answer,
+            raw_sources=raw_sources,
+            sources=sources,
+            hf_token=hf_token,
+            chat_history=chat_history,
+        )
 
     return {"answer": answer, "sources": sources}
 
@@ -2046,6 +2082,7 @@ def generate_answer(
                 hf_token=hf_token,
                 top_k=top_k,
                 chat_history=chat_history,
+                required_tool=decision.required_tool,
             )
         except Exception as e:
             logger.error("Tool agent failed; direct document fallback is not equivalent: %s", e)
@@ -2099,9 +2136,12 @@ def generate_answer_stream(
             from langchain_core.messages import HumanMessage
             for chunk in chat_llm.stream([HumanMessage(content=question)]):
                 if cancellation_event is not None and cancellation_event.is_set():
+                    logger.info("Greeting stream cancelled by client.")
+                    yield f"data: {json.dumps({'type': 'done'})}\n\n"
                     return
-                if chunk.content:
-                    yield f"data: {json.dumps({'type': 'token', 'data': chunk.content})}\n\n"
+                token = getattr(chunk, "content", "")
+                if token:
+                    yield f"data: {json.dumps({'type': 'token', 'data': token})}\n\n"
         except Exception as e:
             logger.warning("Greeting generation failed; using local fallback: %s", e)
             yield f"data: {json.dumps({'type': 'token', 'data': GREETING_FALLBACK})}\n\n"
@@ -2167,13 +2207,17 @@ def generate_answer_stream(
     sent_source_keys = set()
 
     try:
-        logger.info("Streaming RAG route: invoking ReAct agent first for complex request.")
+        logger.info(
+            "Streaming RAG route: invoking ReAct agent first for complex request (required_tool=%s).",
+            decision.required_tool,
+        )
         executor, pdf_tool, web_tool, formatted_history = get_agent_executor(
             user_id, document_id, hf_token, top_k, chat_history
         )
-        initial_search = _run_initial_document_search(pdf_tool, question)
-        agent_question = _agent_question_with_search_state(question, initial_search)
-        initial_sources = _collect_agent_sources(pdf_tool, web_tool)
+        should_run_initial_pdf_search = decision.required_tool not in {"code", "calculation", "statistics"}
+        initial_search = _run_initial_document_search(pdf_tool, question) if should_run_initial_pdf_search else ""
+        agent_question = _agent_question_with_search_state(question, initial_search) if initial_search else question
+        initial_sources = _collect_agent_sources(pdf_tool, web_tool) if should_run_initial_pdf_search else []
         if initial_sources:
             sources = [_source_payload(chunk) for chunk in initial_sources]
             sent_source_keys = {_agent_source_key(source) for source in initial_sources}
@@ -2183,9 +2227,12 @@ def generate_answer_stream(
         for step in executor.stream({"input": agent_question, "chat_history": formatted_history}):
             if "actions" in step:
                 for action in step.get("actions") or []:
+                    tool_name = getattr(action, "tool", "unknown")
+                    tool_input = _truncate_tool_text(getattr(action, "tool_input", ""))
+                    yield _emit_tool_event({"type": "tool_start", "name": tool_name, "summary": tool_input})
                     logger.info(
                         "Agent research action: %s input=%s",
-                        getattr(action, "tool", "unknown"),
+                        tool_name,
                         str(getattr(action, "tool_input", ""))[:300],
                     )
                 continue
@@ -2195,9 +2242,14 @@ def generate_answer_stream(
                 accumulated_steps.extend(new_steps)
                 for agent_step in new_steps:
                     action = getattr(agent_step, "action", None)
+                    tool_name = getattr(action, "tool", "unknown")
+                    observation = getattr(agent_step, "observation", None)
+                    summary = _truncate_tool_text(observation)
+                    if summary:
+                        yield _emit_tool_event({"type": "tool_result", "name": tool_name, "summary": summary})
                     logger.info(
                         "Agent research observation received from %s.",
-                        getattr(action, "tool", "unknown"),
+                        tool_name,
                     )
                 tool_sources = _collect_agent_sources(pdf_tool, web_tool, accumulated_steps)
                 current_source_keys = {_agent_source_key(source) for source in tool_sources}
@@ -2230,7 +2282,7 @@ def generate_answer_stream(
                     logger.warning("Streaming agent stopped before a final answer.")
                     break
 
-                if initial_search and tool_sources:
+                if initial_search and tool_sources and should_run_initial_pdf_search:
                     logger.info(
                         "Agent research phase finished; running mandatory grounded final synthesis from %d sources.",
                         len(tool_sources),
@@ -2243,7 +2295,7 @@ def generate_answer_stream(
                         chat_history=chat_history,
                         notice="",
                     )
-                else:
+                elif tool_sources and should_run_initial_pdf_search:
                     clean_answer = _validate_or_regenerate_agent_answer(
                         question=question,
                         answer=clean_answer,
@@ -2270,13 +2322,16 @@ def generate_answer_stream(
                 len(accumulated_steps),
                 len(tool_sources),
             )
-            partial_answer = _generate_partial_answer_from_agent_sources(
-                question=question,
-                raw_sources=tool_sources,
-                sources=sources,
-                hf_token=hf_token,
-                chat_history=chat_history,
-            )
+            if should_run_initial_pdf_search:
+                partial_answer = _generate_partial_answer_from_agent_sources(
+                    question=question,
+                    raw_sources=tool_sources,
+                    sources=sources,
+                    hf_token=hf_token,
+                    chat_history=chat_history,
+                )
+            else:
+                partial_answer = AGENT_INCOMPLETE_MESSAGE
             yield f"data: {json.dumps({'type': 'token', 'data': partial_answer})}\n\n"
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
             return
@@ -2319,6 +2374,7 @@ def generate_answer_stream(
 
     except Exception as e:
         logger.warning("Agentic streaming failed: %s", e)
+        yield _emit_tool_event({"type": "tool_error", "name": "agent", "summary": str(e)})
         if use_agentic_first:
             if pdf_tool is not None and web_tool is not None:
                 tool_sources = _collect_agent_sources(pdf_tool, web_tool, accumulated_steps)

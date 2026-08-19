@@ -2,15 +2,71 @@
 Application configuration via pydantic-settings.
 All config is loaded from environment variables with sensible defaults.
 """
+import json
 import os
 import secrets
 from functools import lru_cache
+from typing import Any
 
 from pydantic import ConfigDict, model_validator
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     model_config = ConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+
+    # ── MCP Tools ────────────────────────────────────────
+    MCP_ENABLED: bool = True
+    MCP_SERVERS_JSON: str = "{}"
+    MCP_TOOL_ALLOWLIST: list[str] = [
+        "read_file",
+        "write_file",
+        "list_directory",
+        "file_exists",
+        "get_file_info",
+        "grep_file",
+        "count_pattern",
+        "extract_log_lines",
+    ]
+    MCP_TOOL_DENYLIST: list[str] = []
+    MCP_TOOL_TIMEOUT_SECONDS: int = 30
+    MCP_MAX_RESULT_CHARS: int = 6000
+    MCP_SERVERS: dict[str, dict[str, Any]] = {}
+
+    @model_validator(mode="before")
+    @classmethod
+    def _parse_mcp_settings(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+
+        raw_servers = data.get("MCP_SERVERS_JSON")
+        if raw_servers is None:
+            raw_servers = data.get("MCP_SERVERS")
+
+        if isinstance(raw_servers, str):
+            if not raw_servers.strip():
+                parsed_servers = {}
+            else:
+                try:
+                    parsed_servers = json.loads(raw_servers)
+                except json.JSONDecodeError as exc:
+                    raise ValueError("MCP_SERVERS_JSON must be valid JSON.") from exc
+            if not isinstance(parsed_servers, dict):
+                raise ValueError("MCP_SERVERS_JSON must decode to a JSON object.")
+            data["MCP_SERVERS"] = parsed_servers
+        elif isinstance(raw_servers, dict):
+            data["MCP_SERVERS"] = raw_servers
+        else:
+            data["MCP_SERVERS"] = {}
+
+        for field_name in ("MCP_TOOL_ALLOWLIST", "MCP_TOOL_DENYLIST"):
+            value = data.get(field_name)
+            if isinstance(value, str):
+                data[field_name] = [item.strip() for item in value.split(",") if item.strip()]
+            elif value is None:
+                data[field_name] = []
+
+        return data
 
     # ── App ──────────────────────────────────────────────
     APP_NAME: str = "ATLAS"

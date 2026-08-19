@@ -1,7 +1,8 @@
 # ── Enterprise Agentic RAG System — Backend Dependencies ──
 
 # Core Framework
-fastapi
+fastapi<0.116
+starlette<1.0
 uvicorn[standard]
 python-multipart
 
@@ -81,3 +82,8 @@ reportlab
 # crawl4ai
 ddgs
 redis>=4.6.0
+scipy
+
+#mcp usage
+mcp[cli]
+langchain-mcp-adapters

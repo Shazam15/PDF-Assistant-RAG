@@ -76,6 +76,47 @@ def test_code_review_tool_run(monkeypatch):
     assert "Revisión de código simulada." in result
 
 
+def test_code_review_tool_run_with_file_path(monkeypatch, tmp_path):
+    class MockResponse:
+        def __init__(self, content):
+            self.content = content
+
+    class MockChatOllama:
+        def __init__(self, model, temperature):
+            pass
+
+        def invoke(self, messages):
+            assert any("def multiply" in m.content for m in messages)
+            return MockResponse("Revisión exitosa de archivo.")
+
+    monkeypatch.setattr(tools, "ChatOllama", MockChatOllama)
+
+    test_file = tmp_path / "sample.py"
+    test_file.write_text("def multiply(x, y):\n    return x * y\n", encoding="utf-8")
+
+    tool = CodeReviewTool()
+    result = tool.run(
+        {
+            "query": "Audita este script",
+            "file_path": str(test_file),
+            "language": "python",
+            "focus": "seguridad",
+        }
+    )
+    assert "Revisión exitosa de archivo." in result
+
+
+def test_code_review_tool_run_file_not_found():
+    tool = CodeReviewTool()
+    result = tool.run(
+        {
+            "query": "Audita este script",
+            "file_path": "non_existent_file_xyz123.py",
+        }
+    )
+    assert "no existe" in result.lower() or "error" in result.lower()
+
+
 def test_execute_tool_dispatches_calculator():
     assert execute_tool("calculator", {"expression": "(1000 - 250) * 0.2"}) == "150"
 

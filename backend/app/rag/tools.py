@@ -3,7 +3,8 @@ Custom tools for the Agentic RAG system.
 Defines PDF Search, Web Research, and Math tools.
 """
 import ast
-#import json
+import asyncio
+import json
 import logging
 import operator as op
 from typing import Any, Dict, List, Optional, Type
@@ -14,6 +15,8 @@ from langchain_core.tools import BaseTool
 from langchain_ollama import ChatOllama
 from pydantic import BaseModel, Field
 
+from scipy import stats
+
 from app.config import get_settings
 from app.rag.graph_retriever import get_entity_context
 from app.rag.retriever import retrieve
@@ -21,8 +24,12 @@ from app.rag.retriever import retrieve
 import sympy as sp
 import numpy as np
 
+import os
+
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+_DANGEROUS_MCP_TOOL_PATTERNS = ("filesystem", "shell", "bash", "exec", "browser", "delete", "write", "edit")
 
 # ── Math Helper ──────────────────────────────────────
 
@@ -151,6 +158,16 @@ def execute_tool(name: str, arguments: dict[str, Any]) -> str:
             raise ValueError("The calculator tool requires a non-empty 'expression' string.")
         return calculate_expression(expression)
 
+    if name == "statistics":
+        return StatisticsTool()._run(
+            data=arguments.get("data", []),
+            operation=arguments.get("operation", ""),
+            other_data=arguments.get("other_data"),
+            sample_mean=arguments.get("sample_mean"),
+            x=arguments.get("x"),
+            y=arguments.get("y"),
+        )
+
     if name == "web_search":
         query = arguments.get("query")
         if not isinstance(query, str) or not query.strip():
@@ -202,11 +219,23 @@ class WebSearchSchema(BaseModel):
     query: str = Field(description="El query que se usará para buscar en la web en vivo.")
 
 class CodeReviewSchema(BaseModel):
-    query: str = Field(description="Solicitud de revisión técnica o instrucciones de revisión.")
-    code: Optional[str] = Field(default=None, description="Código a revisar.")
-    language: Optional[str] = Field(default=None, description="Lenguaje del código.")
-    focus: Optional[str] = Field(default=None, description="Enfoque: bugs, seguridad, complejidad, claridad, etc.")
+    query: str = Field(description="Solicitud o enfoque de la revisión")
+    file_path: Optional[str] = Field(default=None, description="Ruta relativa del archivo a inspeccionar.")
+    code: Optional[str] = Field(default=None, description="Fragmento de código explícito si no se pasa archivo.")
+    language: Optional[str] = Field(default=None, description="Lenguaje del programación.")
+    focus: Optional[str] = Field(default="bugs", description="Enfoque: bugs, seguridad, rendimiento, pruebas")
+    
 
+
+class StatisticsSchema(BaseModel):
+    data: List[float] = Field(description="Lista de datos numéricos para análisis estadístico.")
+    operation: str = Field(
+        description="Operación estadística a realizar (por ejemplo: 'mean', 'median', 'std', 'correlation_pearson', 't_test_one_sample')."
+    )
+    other_data: Optional[List[float]] = Field(default=None, description="Segunda lista numérica para comparaciones y correlaciones.")
+    sample_mean: Optional[float] = Field(default=None, description="Media poblacional para pruebas t de una muestra.")
+    x: Optional[List[float]] = Field(default=None, description="Valores de la variable independiente para regresión.")
+    y: Optional[List[float]] = Field(default=None, description="Valores de la variable dependiente para regresión.")
 
 # ── LangChain Tool Classes ────────────────────────────
 
@@ -345,7 +374,209 @@ class WebSearchTool(BaseTool):
 
 
 
-# WIP: Programming and algorithmic tools can be added here in the future, such as code execution or data analysis tools.
+class StatisticsTool(BaseTool):
+    name: str = "statistics"
+    description: str = (
+        "Useful for performing statistical analysis on numerical data. "
+        "Use this when the user requests statistical summaries, distributions, regressions, correlation or hypothesis testing."
+    )
+    args_schema: Type[BaseModel] = StatisticsSchema
+
+    @staticmethod
+    def _normalize_numeric_series(values: Any, field_name: str) -> List[float]:
+        if not isinstance(values, list):
+            raise ValueError(f"{field_name} must be a JSON list of numbers.")
+        if not values:
+            raise ValueError(f"{field_name} cannot be empty.")
+        normalized: List[float] = []
+        for item in values:
+            if isinstance(item, bool) or not isinstance(item, (int, float)):
+                raise ValueError(f"{field_name} must contain only numeric values.")
+            normalized.append(float(item))
+        return normalized
+
+    @staticmethod
+    def _summarize_warnings(n: int, operation: str) -> List[str]:
+        warnings: List[str] = []
+        if n < 10:
+            warnings.append("sample size is small; interpret the result with caution")
+        if operation in {"correlation_pearson", "correlation_spearman", "t_test_one_sample", "t_test_independent", "t_test_paired", "linear_regression"}:
+            warnings.append("distributional assumptions and outliers are not verified here")
+        return warnings
+
+    def _run(
+        self,
+        data: List[float],
+        operation: str,
+        other_data: Optional[List[float]] = None,
+        sample_mean: Optional[float] = None,
+        x: Optional[List[float]] = None,
+        y: Optional[List[float]] = None,
+    ) -> str:
+        """Perform statistical operations on the provided data."""
+        normalized_data = self._normalize_numeric_series(data, "data")
+        operation = (operation or "").strip()
+        if not operation:
+            raise ValueError("The statistics tool requires a non-empty 'operation'.")
+
+        if operation in {"count", "mean", "median", "std", "variance", "min", "max", "quartiles", "iqr"}:
+            n = len(normalized_data)
+            if operation == "count":
+                result = n
+            elif operation == "mean":
+                result = float(np.mean(normalized_data))
+            elif operation == "median":
+                result = float(np.median(normalized_data))
+            elif operation == "std":
+                result = float(np.std(normalized_data, ddof=0))
+            elif operation == "variance":
+                result = float(np.var(normalized_data, ddof=0))
+            elif operation == "min":
+                result = float(np.min(normalized_data))
+            elif operation == "max":
+                result = float(np.max(normalized_data))
+            elif operation == "quartiles":
+                result = [float(value) for value in np.percentile(normalized_data, [25, 50, 75])]
+            elif operation == "iqr":
+                q1, q3 = np.percentile(normalized_data, [25, 75])
+                result = float(q3 - q1)
+            else:
+                raise ValueError(f"Unsupported operation '{operation}'.")
+
+            warnings = self._summarize_warnings(n, operation)
+            warning_suffix = "\nWarnings: " + "; ".join(warnings) if warnings else ""
+            return f"{operation}: {result}{warning_suffix}"
+
+        if operation in {"correlation_pearson", "correlation_spearman"}:
+            other_series = self._normalize_numeric_series(other_data if other_data is not None else [], "other_data")
+            if len(other_series) != len(normalized_data):
+                raise ValueError("data and other_data must have the same length.")
+            if operation == "correlation_pearson":
+                correlation = float(stats.pearsonr(normalized_data, other_series).statistic)
+            else:
+                correlation = float(stats.spearmanr(normalized_data, other_series).statistic)
+            warnings = self._summarize_warnings(len(normalized_data), operation)
+            warning_suffix = "\nWarnings: " + "; ".join(warnings) if warnings else ""
+            return f"{operation}: {correlation:.6f}{warning_suffix}"
+
+        if operation == "t_test_one_sample":
+            if sample_mean is None:
+                raise ValueError("t_test_one_sample requires sample_mean.")
+            statistic, p_value = stats.ttest_1samp(normalized_data, popmean=float(sample_mean))
+            warnings = self._summarize_warnings(len(normalized_data), operation)
+            warning_suffix = "\nWarnings: " + "; ".join(warnings) if warnings else ""
+            return f"t_test_one_sample: statistic={statistic:.6f}, p_value={p_value:.6f}{warning_suffix}"
+
+        if operation in {"t_test_independent", "t_test_paired"}:
+            other_series = self._normalize_numeric_series(other_data if other_data is not None else [], "other_data")
+            if len(other_series) != len(normalized_data):
+                raise ValueError("data and other_data must have the same length.")
+            if operation == "t_test_independent":
+                statistic, p_value = stats.ttest_ind(normalized_data, other_series)
+            else:
+                statistic, p_value = stats.ttest_rel(normalized_data, other_series)
+            warnings = self._summarize_warnings(len(normalized_data), operation)
+            warning_suffix = "\nWarnings: " + "; ".join(warnings) if warnings else ""
+            return f"{operation}: statistic={statistic:.6f}, p_value={p_value:.6f}{warning_suffix}"
+
+        if operation == "linear_regression":
+            regression_x = self._normalize_numeric_series(x if x is not None else data, "x")
+            regression_y = self._normalize_numeric_series(y if y is not None else (other_data if other_data is not None else []), "y")
+            if len(regression_x) != len(regression_y):
+                raise ValueError("x and y must have the same length.")
+            if len(regression_x) < 2:
+                raise ValueError("linear_regression requires at least two observations.")
+            result = stats.linregress(regression_x, regression_y)
+            warnings = self._summarize_warnings(len(regression_x), operation)
+            warning_suffix = "\nWarnings: " + "; ".join(warnings) if warnings else ""
+            return (
+                f"linear_regression: slope={result.slope:.6f}, intercept={result.intercept:.6f}, "
+                f"r_value={result.rvalue:.6f}, p_value={result.pvalue:.6f}{warning_suffix}"
+            )
+
+        raise ValueError(
+            f"Unsupported operation '{operation}'. Supported operations are: count, mean, median, std, variance, min, max, quartiles, iqr, correlation_pearson, correlation_spearman, t_test_one_sample, t_test_independent, t_test_paired, linear_regression."
+        )
+
+
+def _normalize_tool_list(values: Any) -> List[str]:
+    if isinstance(values, str):
+        return [item.strip() for item in values.split(",") if item.strip()]
+    if isinstance(values, (list, tuple, set)):
+        return [str(item).strip() for item in values if str(item).strip()]
+    return []
+
+
+def _is_tool_allowed(tool_name: str) -> bool:
+    normalized_name = str(tool_name).strip().lower()
+    allowlist = _normalize_tool_list(getattr(settings, "MCP_TOOL_ALLOWLIST", []))
+    denylist = _normalize_tool_list(getattr(settings, "MCP_TOOL_DENYLIST", []))
+    if normalized_name in {item.lower() for item in denylist}:
+        return False
+    if not allowlist:
+        return False
+    if normalized_name in {item.lower() for item in allowlist}:
+        return True
+    if any(pattern.lower() in normalized_name for pattern in _DANGEROUS_MCP_TOOL_PATTERNS):
+        return False
+    return False
+
+
+def load_mcp_tools() -> List[BaseTool]:
+    """Load MCP tools for the agent when the environment is enabled and allowlisted."""
+    if not getattr(settings, "MCP_ENABLED", False):
+        return []
+
+    servers = getattr(settings, "MCP_SERVERS", {}) or {}
+    if not servers:
+        logger.info("MCP is enabled but no servers were configured.")
+        return []
+
+    try:
+        from langchain_mcp_adapters.client import MultiServerMCPClient
+    except ImportError:
+        logger.warning("langchain-mcp-adapters is not available; skipping MCP tool loading.")
+        return []
+
+    try:
+        client = MultiServerMCPClient(connections=servers)
+
+        loop = asyncio.new_event_loop()
+        try:
+            tools = loop.run_until_complete(client.get_tools())
+        finally:
+            loop.close()
+    except Exception as exc:
+        logger.error("MCP tool loading failed: %s", exc)
+        return []
+
+    filtered_tools: List[BaseTool] = []
+    for tool in tools:
+        tool_name = getattr(tool, "name", "") or ""
+        if not _is_tool_allowed(tool_name):
+            logger.warning("Blocked MCP tool due to allowlist/denylist: %s", tool_name)
+            continue
+        filtered_tools.append(tool)
+
+    logger.info("MCP tools loaded=%d allowed=%d", len(tools), len(filtered_tools))
+    return filtered_tools
+
+
+def build_agent_tools(
+    user_id: Optional[str] = None,
+    document_id: Optional[str] = None,
+    top_k: Optional[int] = None,
+) -> List[BaseTool]:
+    """Build the complete tool list for the agent."""
+    tools: List[BaseTool] = [
+        PDFSearchTool(user_id=user_id or "", document_id=document_id, top_k=top_k),
+        CodeReviewTool(),
+        MathTool(),
+        WebSearchTool(),
+        StatisticsTool(),
+    ]
+    tools.extend(load_mcp_tools())
+    return tools
 
 
 class CodeReviewTool(BaseTool):
@@ -360,13 +591,32 @@ class CodeReviewTool(BaseTool):
     def _run(
         self,
         query: str,
+        file_path: Optional[str] = None,
         code: Optional[str] = None,
         language: Optional[str] = None,
         focus: Optional[str] = None,
     ) -> str:
         """Review supplied code with the configured model and a bounded prompt."""
+        # 1. Resolver código desde el archivo si se proporciona file_path
+        if file_path:
+            norm_path = os.path.normpath(file_path)
+            candidate_paths = [
+                norm_path,
+                norm_path.lstrip("/"),
+                os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), norm_path.lstrip("/")),
+            ]
+            resolved_path = next((p for p in candidate_paths if os.path.isfile(p)), None)
+            if not resolved_path:
+                return f"Error: El archivo {file_path} no existe o no se pudo acceder."
+            try:
+                with open(resolved_path, "r", encoding="utf-8", errors="replace") as f:
+                    code = f.read()
+            except Exception as exc:
+                return f"Error al leer el archivo {file_path}: {exc}"
+
         if not code:
-            return "No code was provided for review."
+            return "No se proporcionó código ni archivo válido para revisar."
+
         system = (
             "Eres un revisor senior de código. Identifica defectos verificables, riesgos, regresiones y pruebas "
             "faltantes. No ejecutes el código y no inventes contexto ausente."
@@ -375,8 +625,10 @@ class CodeReviewTool(BaseTool):
             f"Solicitud: {query}\nLenguaje: {language or 'no especificado'}\n"
             f"Enfoque: {focus or 'general'}\n\nCódigo:\n{code}"
         )
+        model_to_use = getattr(settings, "CODE_REVIEW_LLM_MODEL", None) or settings.LLM_MODEL
+        temperature = getattr(settings, "CODE_REVIEW_TEMPERATURE", 0)
         try:
-            response = ChatOllama(model=settings.LLM_MODEL, temperature=0).invoke([
+            response = ChatOllama(model=model_to_use, temperature=temperature).invoke([
                 SystemMessage(content=system),
                 HumanMessage(content=request),
             ])
@@ -384,6 +636,7 @@ class CodeReviewTool(BaseTool):
         except Exception as exc:
             logger.error("CodeReviewTool error: %s", exc)
             return f"Error reviewing code: {exc}"
+
 
 
 class _FunctionDefinition(BaseModel):
