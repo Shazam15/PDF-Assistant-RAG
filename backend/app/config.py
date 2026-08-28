@@ -141,7 +141,7 @@ class Settings(BaseSettings):
     # ── Embeddings (local HuggingFace model) ─────────────
     # This experimental branch targets Ubuntu bare metal on a Xeon/Tesla T4 host.
     # Other machines can still opt into local, local_balanced, wsl_t4, or custom.
-    MODEL_PROFILE: str = "ubuntu_t4"
+    MODEL_PROFILE: str = "wsl_t4"
     DEVICE: str = "cpu"
     EMBEDDING_DEVICE: str = "cpu"
     RERANKER_DEVICE: str = "cpu"
