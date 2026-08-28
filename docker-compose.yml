@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # Redis broker/result backend for Celery document processing
   redis:

@@ -69,7 +69,7 @@ def decode_token(token: str, token_type: str = "access") -> Optional[str]:
 def create_invite_token(inviter_id: str, email: str, workspace_name: str) -> str:
     """Create a time-bound workspace invitation JWT."""
     payload: dict[str, Any] = {
-        "sub": inviter_id,
+        "sub": str(inviter_id),
         "email": email,
         "workspace_name": workspace_name,
         "type": "invite",
