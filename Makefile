@@ -99,11 +99,16 @@ install-backend:
 	$(PYTHON) -m pip install -r $(BACKEND_DIR)/requirements.txt
 
 install-backend-wsl:
-	$(PYTHON) -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+	# torch and torchvision must come from the same index in the same
+	# command so pip resolves a matched pair — docling (in requirements.txt)
+	# pulls torchvision transitively, and installing it separately from
+	# default PyPI produces a torch/torchvision ABI mismatch
+	# ("operator torchvision::nms does not exist").
+	$(PYTHON) -m pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
 	$(PYTHON) -m pip install -r $(BACKEND_DIR)/requirements.txt
 
 install-backend-ubuntu:
-	$(PYTHON) -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+	$(PYTHON) -m pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
 	$(PYTHON) -m pip install -r $(BACKEND_DIR)/requirements.txt
 
 install-frontend:
