@@ -46,29 +46,94 @@ AGENT_INCOMPLETE_MESSAGE = (
     "Intenta reformular la pregunta en subpreguntas más específicas o aumenta el límite de iteraciones del agente."
 )
 class GroundedReActOutputParser(ReActSingleInputOutputParser):
-    """Finish substantive drafts instead of spending every iteration on format retries."""
+    """Finish substantive drafts instead of spending every iteration on format retries.
+
+    `valid_tool_names` must include every tool actually bound to the agent (built-in
+    *and* MCP), or a real, reasoned tool call that happens to be verbose gets silently
+    discarded here and rewritten into a premature final answer instead of executing.
+    Defaults to the built-in tool names for backward compatibility, but
+    `get_agent_executor` always passes the request's real tool list.
+    """
+
+    valid_tool_names: set[str] = Field(default_factory=lambda: set(_AGENT_TOOL_NAMES))
+
+    _ACTION_LINE_RE = re.compile(r"Action\s*\d*\s*:")
+    _ACTION_NAME_RE = re.compile(r"Action\s*\d*\s*:\s*([^\n]+)")
+    _ACTION_INPUT_LINE_RE = re.compile(r"Action\s*\d*\s*Input\s*\d*\s*:")
 
     @staticmethod
     def _is_substantive(text: str) -> bool:
         return len(re.findall(r"\w+", text or "")) >= 35
 
+    def _recover_missing_action_input(self, text: str) -> Optional[AgentAction]:
+        """Treat a real, valid tool call that never attempted an 'Action Input:'
+        line at all as a call with an empty input, instead of letting it fail.
+
+        This is a genuine ReAct single-input format gap for MCP tools that take no
+        arguments (e.g. 'list_allowed_directories'): the format still requires the
+        literal 'Action Input:' text, but a small local model asked for an input to
+        an argument-less tool often just... doesn't write one — and keeps not
+        writing one on every handle_parsing_errors retry, burning the agent's whole
+        iteration budget on the same mistake. Only fires when an 'Action Input:'
+        line was never attempted at all (a genuine format slip, not a case where the
+        input itself looks wrong) and the named tool is one this agent actually has.
+        """
+        if self._ACTION_INPUT_LINE_RE.search(text):
+            return None  # It did attempt an Action Input; let the real error stand.
+        match = self._ACTION_NAME_RE.search(text)
+        if not match:
+            return None
+        tool_name = match.group(1).strip().strip('"').strip("'")
+        if tool_name not in self.valid_tool_names:
+            return None
+        return AgentAction(tool_name, "", text)
+
     def parse(self, text: str) -> AgentAction | AgentFinish:
         try:
             parsed = super().parse(text)
         except OutputParserException:
-            if self._is_substantive(text):
+            recovered = self._recover_missing_action_input(text)
+            if recovered is not None:
+                logger.warning(
+                    "Agent called '%s' without an Action Input line; treating input as empty.",
+                    recovered.tool,
+                )
+                return recovered
+
+            # A recoverable format slip other than the above (e.g. an Action Input
+            # that's malformed rather than missing) must keep propagating so the
+            # executor's handle_parsing_errors sends the LLM a corrective observation
+            # and lets it retry the tool call. Only genuinely tool-free prose (no
+            # "Action:" attempt at all) gets treated as an early final answer here —
+            # otherwise a real, in-progress tool call is silently discarded as a
+            # premature "final answer" any time the model's reasoning happens to be
+            # long.
+            if self._is_substantive(text) and not self._ACTION_LINE_RE.search(text):
                 logger.warning(
                     "Treating substantive plain-text agent output as a draft for grounded final synthesis."
                 )
                 return AgentFinish({"output": text.strip()}, text)
             raise
 
-        if isinstance(parsed, AgentAction) and parsed.tool not in _AGENT_TOOL_NAMES:
+        if isinstance(parsed, AgentAction) and parsed.tool not in self.valid_tool_names:
             if self._is_substantive(text):
                 logger.warning(
-                    "Agent emitted an invalid action name; preserving its substantive text as a draft."
+                    "Agent emitted an invalid action name (%s); preserving its substantive text as a draft.",
+                    parsed.tool,
                 )
                 return AgentFinish({"output": text.strip()}, text)
+
+        if isinstance(parsed, AgentAction) and isinstance(parsed.tool_input, str):
+            # ReActSingleInputOutputParser only strips literal space characters
+            # (`action_input.strip(" ")`), not newlines/tabs — its capture group spans
+            # to the end of the text with DOTALL, so a trailing blank line after
+            # "Action Input: <value>" (routine model output) survives as a literal
+            # "\n" appended to the value. A file path like "uploads " or
+            # "uploads\n" then fails with ENOENT/"access denied" even though the
+            # model wrote the right value, which reads to it (and to us) as if the
+            # path were wrong. A full strip() here fixes that at the source for
+            # every tool, not just file-path-taking MCP tools.
+            parsed.tool_input = parsed.tool_input.strip()
         return parsed
 
 
@@ -171,14 +236,21 @@ def get_agent_executor(
 
     global_style_reference = _load_global_style_reference()
     prompt = PromptTemplate.from_template(AGENT_SYSTEM_PROMPT).partial(style_reference=global_style_reference)
+    # Must include every bound tool name (built-ins + MCP), not just _AGENT_TOOL_NAMES,
+    # or GroundedReActOutputParser discards genuine calls to MCP tools as invalid.
+    valid_tool_names = {getattr(tool, "name", "") for tool in tools} | _AGENT_TOOL_NAMES
     agent = create_react_agent(
         chat_llm,
         tools,
         prompt,
-        output_parser=GroundedReActOutputParser(),
+        output_parser=GroundedReActOutputParser(valid_tool_names=valid_tool_names),
     )
 
-    research_iterations = max(1, min(3, settings.AGENT_MAX_ITERATIONS - 1))
+    # Multi-hop tool use (e.g. discover the allowed MCP root, then list it) can need
+    # more than 3 steps, especially from a small local model prone to mistyping a
+    # long path it just read back — 3 was tight enough to burn the whole budget on
+    # that alone. Costs one extra LLM call in the worst case; still bounded.
+    research_iterations = max(1, min(5, settings.AGENT_MAX_ITERATIONS - 1))
 
     executor = AgentExecutor(
         agent=agent,
@@ -263,6 +335,17 @@ def _required_tool(question: str) -> Optional[str]:
             "code review", "audit the code", "debug the code", "inspect the repository",
         ),
     }
+    # Only route to the MCP-capable tool agent when an MCP server is actually
+    # configured; otherwise these phrases fall through to the normal document routes.
+    if getattr(settings, "MCP_ENABLED", False) and getattr(settings, "MCP_SERVERS", None):
+        tool_signals["files"] = (
+            "lista los archivos", "que archivos", "cuales archivos", "archivos subidos",
+            "archivos disponibles", "verifica si el archivo", "existe el archivo",
+            "informacion del archivo", "lee el archivo", "contenido del archivo",
+            "list the files", "list files", "which files", "uploaded files",
+            "available files", "check if the file", "does the file exist",
+            "file info", "read the file", "file contents",
+        )
     for tool, markers in tool_signals.items():
         if any(marker in normalized for marker in markers):
             return tool
@@ -322,7 +405,7 @@ def route_query(
         return RoutingDecision(route, "manual_quick_documents_only", score, mode, document_id)
 
     required_tool = _required_tool(routing_question)
-    if required_tool in {"statistics", "web", "code"}:
+    if required_tool in {"statistics", "web", "code", "files"}:
         return RoutingDecision(
             "tool_agent", f"explicit_{required_tool}_tool_required", score, mode, document_id,
             required_tool=required_tool,
@@ -642,6 +725,40 @@ def _agent_question_with_search_state(question: str, initial_search: str) -> str
         "Ya se ejecutó una búsqueda documental inicial y sus resultados se conservarán para la síntesis final. "
         "Usa herramientas adicionales solo si necesitas cubrir un aspecto distinto. Cuando termines, responde "
         "con `Final Answer:`. No inventes fuentes ni identificadores."
+    )
+
+
+def _run_initial_files_listing(executor_tools: List[Any], user_id: str) -> str:
+    """Guarantee a "what files exist" agent run starts with a real listing of this
+    user's own uploads, instead of depending on a small local model to reliably
+    rediscover its own MCP root and recurse into a per-user subfolder on its own —
+    list_allowed_directories -> list_directory('.') -> list_directory(<user_id>) is a
+    lot of exploratory hops for it to get exactly right every single time. Uploads
+    are always stored under <UPLOAD_DIR>/<user_id>/... (see
+    services/document_ingestion.py), so listing that subfolder directly is always the
+    right starting point when a filesystem MCP server is configured — not specific to
+    any one deployment's data.
+    """
+    list_directory = next((t for t in executor_tools if getattr(t, "name", "") == "list_directory"), None)
+    if list_directory is None or not user_id:
+        return ""
+    try:
+        logger.info("Agent files action: list_directory (mandatory initial listing).")
+        observation = list_directory.invoke(user_id)
+        return str(observation or "")
+    except Exception as exc:
+        logger.warning("Mandatory initial files listing failed: %s", exc)
+        return ""
+
+
+def _agent_question_with_files_listing(question: str, listing: str) -> str:
+    if not listing:
+        return question
+    return (
+        f"{question}\n\n"
+        f"Resultado de listar los archivos subidos por este usuario:\n{listing}\n\n"
+        "Usa esta evidencia para responder. Llama a otra herramienta de archivos solo si necesitas leer el "
+        "contenido de uno de estos archivos específicamente. Cuando termines, responde con `Final Answer:`."
     )
 
 
@@ -1078,9 +1195,12 @@ def _generate_agentic_document_answer(
     executor, pdf_tool, web_tool, formatted_history = get_agent_executor(
         user_id, document_id, hf_token, top_k, chat_history
     )
-    should_run_initial_pdf_search = required_tool not in {"code", "calculation", "statistics"}
+    should_run_initial_pdf_search = required_tool not in {"code", "calculation", "statistics", "files"}
     initial_search = _run_initial_document_search(pdf_tool, question) if should_run_initial_pdf_search else ""
     agent_question = _agent_question_with_search_state(question, initial_search) if initial_search else question
+    if required_tool == "files":
+        initial_listing = _run_initial_files_listing(executor.tools, user_id)
+        agent_question = _agent_question_with_files_listing(question, initial_listing) if initial_listing else question
     try:
         result = executor.invoke({"input": agent_question, "chat_history": formatted_history})
     except Exception as exc:
@@ -2214,9 +2334,14 @@ def generate_answer_stream(
         executor, pdf_tool, web_tool, formatted_history = get_agent_executor(
             user_id, document_id, hf_token, top_k, chat_history
         )
-        should_run_initial_pdf_search = decision.required_tool not in {"code", "calculation", "statistics"}
+        should_run_initial_pdf_search = decision.required_tool not in {"code", "calculation", "statistics", "files"}
         initial_search = _run_initial_document_search(pdf_tool, question) if should_run_initial_pdf_search else ""
         agent_question = _agent_question_with_search_state(question, initial_search) if initial_search else question
+        if decision.required_tool == "files":
+            initial_listing = _run_initial_files_listing(executor.tools, user_id)
+            agent_question = (
+                _agent_question_with_files_listing(question, initial_listing) if initial_listing else question
+            )
         initial_sources = _collect_agent_sources(pdf_tool, web_tool) if should_run_initial_pdf_search else []
         if initial_sources:
             sources = [_source_payload(chunk) for chunk in initial_sources]

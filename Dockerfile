@@ -60,6 +60,9 @@ RUN useradd -m -u 1000 appuser
 WORKDIR /app
 
 # Runtime-only system packages. Build tools stay in python-builder.
+# nodejs/npm are here so optional stdio MCP servers launched via `npx` (see
+# MCP_SERVERS_JSON, e.g. @modelcontextprotocol/server-filesystem) can run; the RAG
+# agent works fine without them if MCP_SERVERS_JSON is left empty.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     libmagic1 \
@@ -67,8 +70,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     tesseract-ocr-eng \
     tesseract-ocr-spa \
+    nodejs \
+    npm \
     --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
+
+# Pre-install the demo filesystem MCP server so `npx` resolves it from the local
+# npm cache instead of hitting the registry on the first tool call at runtime.
+RUN npm install -g @modelcontextprotocol/server-filesystem && npm cache clean --force
 
 COPY --from=python-builder /opt/venv /opt/venv
 

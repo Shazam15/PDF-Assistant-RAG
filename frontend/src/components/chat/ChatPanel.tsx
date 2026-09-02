@@ -58,6 +58,35 @@ interface Props {
   onCitationClick: (target: CitationTarget) => void;
 }
 
+// Backend tool-usage events (see `_emit_tool_event` in backend/app/rag/agent.py)
+// are flat, not wrapped in a `data` field: {type, name, summary}.
+interface ToolEventPayload {
+  type: "tool_start" | "tool_result" | "tool_error";
+  name?: string;
+  summary?: string;
+}
+
+interface ToolStatus {
+  name: string;
+  summary?: string;
+  phase: "start" | "result" | "error";
+}
+
+// Human-friendly labels for known tool identifiers (built-in + MCP tools).
+// Falls back to the raw tool name (via chat.tool.generic) for anything unmapped,
+// so newly added MCP tools still show up without a frontend change.
+const TOOL_LABEL_KEYS: Record<string, string> = {
+  pdf_search: "chat.tool.pdfSearch",
+  web_search: "chat.tool.webSearch",
+  calculator: "chat.tool.calculator",
+  statistics: "chat.tool.statistics",
+  code_review: "chat.tool.codeReview",
+  read_file: "chat.tool.readFile",
+  list_directory: "chat.tool.listDirectory",
+  file_exists: "chat.tool.fileExists",
+  get_file_info: "chat.tool.fileExists",
+};
+
 const isRecoverableWebSocketAuthError = (message: string) =>
   /invalid or expired token|missing token/i.test(message);
 
@@ -83,7 +112,8 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
   const [isRecording, setIsRecording] = useState(false);
   const [speechError, setSpeechError] = useState<string | null>(null);
   const [researchProgress, setResearchProgress] = useState<string | null>(null);
-  
+  const [toolStatus, setToolStatus] = useState<ToolStatus | null>(null);
+
   // New State for Keyboard Shortcuts Help Modal
   const [showHelpModal, setShowHelpModal] = useState(false);
 
@@ -100,6 +130,31 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
   const activeRequestIdRef = useRef(0);
 
   const showEmptyState = messages.length === 0 && !isTyping && !historyLoading;
+
+  // Renders the current tool-call step (e.g. "Searching documents…", "Using read_file… ✓")
+  // so the user can see which tool (built-in or MCP) the agent is actively using.
+  const describeToolStatus = (status: ToolStatus): string => {
+    const labelKey = TOOL_LABEL_KEYS[status.name];
+    const label = labelKey ? t(labelKey) : t("chat.tool.generic", { name: status.name });
+    if (status.phase === "error") {
+      return t("chat.tool.failed", { label });
+    }
+    if (status.phase === "result") {
+      return t("chat.tool.done", { label });
+    }
+    return t("chat.tool.running", { label });
+  };
+
+  const handleToolEvent = (event: ToolEventPayload) => {
+    const name = event.name || "unknown";
+    if (event.type === "tool_start") {
+      setToolStatus({ name, summary: event.summary, phase: "start" });
+    } else if (event.type === "tool_result") {
+      setToolStatus({ name, summary: event.summary, phase: "result" });
+    } else if (event.type === "tool_error") {
+      setToolStatus({ name, summary: event.summary, phase: "error" });
+    }
+  };
 
   useEffect(() => {
     const savedMode = window.localStorage.getItem("atlas-routing-mode");
@@ -205,6 +260,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
       role: "user",
       content: question,
       sources: [],
+      created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, userMsg]);
 
@@ -217,6 +273,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
       assistantCreated = true;
       setIsTyping(false);
       setResearchProgress(null);
+      setToolStatus(null);
       setMessages((prev) => {
         const content = `Error: ${message}`;
         if (prev.some((item) => item.id === assistantId)) {
@@ -232,6 +289,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
             content,
             sources: pendingSources,
             isStreaming: false,
+            created_at: new Date().toISOString(),
           },
         ];
       });
@@ -240,6 +298,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
     setStreaming(true);
     setIsTyping(true);
     setResearchProgress(null);
+    setToolStatus(null);
 
     try {
       // Try WebSocket first for real-time source and answer streaming.
@@ -292,6 +351,12 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
                 ? ` ${progress.facets_completed ?? 0}/${progress.facets_total}`
                 : "";
               setResearchProgress(`${progress.stage ?? "researching"}${coverage}`);
+            } else if (
+              event.type === "tool_start" ||
+              event.type === "tool_result" ||
+              event.type === "tool_error"
+            ) {
+              handleToolEvent(event as ToolEventPayload);
             } else if (event.type === "token") {
               if (!assistantCreated) {
                 assistantCreated = true;
@@ -303,6 +368,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
                   content: event.data as string,
                   sources: pendingSources,
                   isStreaming: true,
+                  created_at: new Date().toISOString(),
                 };
 
                 setMessages((prev) => [...prev, assistantMsg]);
@@ -328,6 +394,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
             } else if (event.type === "done") {
               completed = true;
               setResearchProgress(null);
+              setToolStatus(null);
               setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, isStreaming: false } : m)));
               ws.close();
               resolve();
@@ -387,6 +454,12 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
               ? ` ${progress.facets_completed ?? 0}/${progress.facets_total}`
               : "";
             setResearchProgress(`${progress.stage ?? "researching"}${coverage}`);
+          } else if (
+            event.type === "tool_start" ||
+            event.type === "tool_result" ||
+            event.type === "tool_error"
+          ) {
+            handleToolEvent(event as unknown as ToolEventPayload);
           } else if (event.type === "token") {
             if (!assistantCreated) {
               assistantCreated = true;
@@ -398,6 +471,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
                   content: event.data as string,
                   sources: pendingSources,
                 isStreaming: true,
+                created_at: new Date().toISOString(),
               };
 
               setMessages((prev) => [...prev, assistantMsg]);
@@ -413,6 +487,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
             showAssistantError(String(event.data));
           } else if (event.type === "done") {
             setResearchProgress(null);
+            setToolStatus(null);
             setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, isStreaming: false } : m)));
           }
         }
@@ -465,6 +540,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
     setStreaming(false);
     setIsTyping(false);
     setResearchProgress(null);
+    setToolStatus(null);
     window.setTimeout(() => textareaRef.current?.focus(), 0);
   };
 
@@ -705,7 +781,23 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
             ))}
             {isTyping && (
               <div className="flex items-center gap-2 ml-10 py-2 text-xs text-muted-foreground">
-                {researchProgress && <span>{researchProgress}</span>}
+                {researchProgress ? (
+                  <span>{researchProgress}</span>
+                ) : (
+                  toolStatus && (
+                    <span
+                      className={cn(
+                        "flex items-center gap-1",
+                        toolStatus.phase === "error" && "text-destructive"
+                      )}
+                    >
+                      {toolStatus.phase === "start" && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" aria-hidden="true" />
+                      )}
+                      {describeToolStatus(toolStatus)}
+                    </span>
+                  )
+                )}
                 <div className="flex items-center gap-1">
                 <span className="w-2 h-2 rounded-full bg-muted-foreground animate-bounce [animation-delay:-0.3s]" />
                 <span className="w-2 h-2 rounded-full bg-muted-foreground animate-bounce [animation-delay:-0.15s]" />

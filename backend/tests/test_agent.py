@@ -28,6 +28,32 @@ def test_adaptive_router_bilingual_table(question, document_id, mode, expected_r
     assert decision.route == expected_route
 
 
+def test_router_ignores_filesystem_phrasing_without_mcp_configured():
+    """No MCP server configured (the default) -> filesystem-style phrasing must not be
+    diverted to the tool agent; it should fall through to the normal document routes."""
+    decision = agent_module.route_query("Lista los archivos subidos.", routing_mode="auto")
+    assert decision.route != "tool_agent"
+
+
+def test_router_dispatches_filesystem_phrasing_to_tool_agent_when_mcp_configured(monkeypatch):
+    """Once an MCP server is configured, filesystem-style questions must actually reach
+    the ReAct/tool_agent route, or the loaded MCP tools are unreachable in practice."""
+    monkeypatch.setattr(agent_module.settings, "MCP_ENABLED", True)
+    monkeypatch.setattr(
+        agent_module.settings,
+        "MCP_SERVERS",
+        {"filesystem": {"transport": "stdio", "command": "npx", "args": ["-y", "fake"]}},
+    )
+
+    decision = agent_module.route_query("Lista los archivos subidos.", routing_mode="auto")
+    assert decision.route == "tool_agent"
+    assert decision.required_tool == "files"
+
+    decision_en = agent_module.route_query("List the uploaded files.", routing_mode="auto")
+    assert decision_en.route == "tool_agent"
+    assert decision_en.required_tool == "files"
+
+
 def test_ambiguous_synthesis_promotes_only_with_three_relevant_documents():
     initial = agent_module.route_query("Sintetiza los hallazgos disponibles.")
     assert initial.route == "simple_rag"
@@ -683,6 +709,64 @@ def test_grounded_react_parser_finishes_substantive_plain_text():
     parsed = agent_module.GroundedReActOutputParser().parse(draft)
 
     assert parsed.return_values["output"] == draft
+
+
+def _verbose_action_text(tool_name: str) -> str:
+    # >=35 words in the Thought, matching GroundedReActOutputParser._is_substantive's
+    # threshold, so a real ReAct-formatted reasoning step doesn't get short-circuited.
+    long_thought = " ".join(["palabra"] * 40)
+    return f"Thought: {long_thought}\nAction: {tool_name}\nAction Input: report.pdf"
+
+
+def test_grounded_react_parser_executes_tool_when_name_is_in_valid_set():
+    """A verbose (>=35 word) Thought followed by a call to a non-built-in tool (e.g. an
+    MCP tool like `read_file`) must still execute as a real tool call when that name is
+    passed via valid_tool_names — not get silently rewritten into a premature final
+    answer just because the reasoning happened to be long."""
+    text = _verbose_action_text("read_file")
+
+    parser = agent_module.GroundedReActOutputParser(
+        valid_tool_names=agent_module._AGENT_TOOL_NAMES | {"read_file"}
+    )
+    parsed = parser.parse(text)
+
+    assert isinstance(parsed, agent_module.AgentAction)
+    assert parsed.tool == "read_file"
+
+
+def test_grounded_react_parser_defaults_still_guard_unknown_tool_names():
+    """Without an explicit valid_tool_names override, a call to a tool name that truly
+    isn't bound to the agent should still be treated as a draft, preserving the
+    original hallucination guard."""
+    text = _verbose_action_text("delete_everything")
+
+    parsed = agent_module.GroundedReActOutputParser().parse(text)
+
+    assert isinstance(parsed, agent_module.AgentFinish)
+
+
+def test_get_agent_executor_output_parser_accepts_every_bound_tool_name(monkeypatch):
+    """get_agent_executor must widen the output parser's valid tool names to match the
+    tools it actually binds (built-ins + any loaded MCP tools), or a real call to an
+    MCP tool gets discarded by GroundedReActOutputParser."""
+    from langchain_core.tools import StructuredTool
+
+    fake_mcp_tool = StructuredTool.from_function(
+        func=lambda path: "contents", name="read_file", description="Read a file (fake MCP tool)."
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "build_agent_tools",
+        lambda **kwargs: [
+            agent_module.PDFSearchTool(user_id="u1"),
+            agent_module.WebSearchTool(),
+            fake_mcp_tool,
+        ],
+    )
+
+    executor, _pdf_tool, _web_tool, _history = agent_module.get_agent_executor("u1")
+
+    assert "read_file" in executor.agent.runnable.steps[-1].valid_tool_names
 
 
 def test_final_synthesis_does_not_force_irrelevant_document_quota(monkeypatch):

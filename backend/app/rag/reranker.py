@@ -28,6 +28,40 @@ class Reranker:
         self.device = device
         self._model: Optional[CrossEncoder] = None
 
+    @staticmethod
+    def _safe_max_length(model_name: str, configured_max_length: int) -> int:
+        """Clamp RERANK_MAX_LENGTH to what the model's position embeddings actually
+        support. CrossEncoder's `max_length` only controls tokenizer truncation — it
+        is never validated against the model's own `max_position_embeddings`, so a
+        too-large value (e.g. the 2048 default, sized for Qwen3-Reranker) silently
+        tokenizes sequences the model itself cannot index, crashing deep inside the
+        forward pass with `IndexError: index N is out of bounds for dimension 1 with
+        size N` instead of a clear error at load time.
+        """
+        try:
+            from transformers import AutoConfig
+
+            model_config = AutoConfig.from_pretrained(model_name)
+            max_position_embeddings = getattr(model_config, "max_position_embeddings", None)
+            if isinstance(max_position_embeddings, int) and max_position_embeddings > 0:
+                # A small safety margin covers architectures (e.g. XLM-RoBERTa) that
+                # reserve a couple of leading position ids for padding/offset, so the
+                # true usable length is a few tokens below max_position_embeddings.
+                safe_limit = max(16, max_position_embeddings - 8)
+                if configured_max_length > safe_limit:
+                    logger.warning(
+                        "RERANK_MAX_LENGTH=%d exceeds what %s supports (max_position_embeddings=%d); "
+                        "clamping to %d.",
+                        configured_max_length,
+                        model_name,
+                        max_position_embeddings,
+                        safe_limit,
+                    )
+                    return safe_limit
+        except Exception as exc:
+            logger.warning("Could not introspect max_position_embeddings for %s: %s", model_name, exc)
+        return configured_max_length
+
     # Lazy-load the model when needed to avoid long startup times
     def _load_model(self) -> CrossEncoder:
         """Lazy-load the cross-encoder model."""
@@ -41,7 +75,7 @@ class Reranker:
                     "CUDA was requested for the reranker but is unavailable; falling back to CPU."
                 )
             kwargs = {
-                "max_length": get_settings().RERANK_MAX_LENGTH,
+                "max_length": self._safe_max_length(self.model_name, get_settings().RERANK_MAX_LENGTH),
                 "device": device,
             }
             if "qwen3-reranker" in self.model_name.lower():

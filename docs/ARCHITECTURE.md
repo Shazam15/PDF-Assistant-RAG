@@ -244,6 +244,16 @@ flowchart TD
 
 Los requisitos estilísticos, como “actúa como investigador”, abstract, keywords, secciones o citas, no activan por sí solos la ruta de investigación.
 
+### Herramientas MCP
+
+Además de sus herramientas internas (`pdf_search`, `web_search`, `calculator`, `statistics`, `code_review`), el agente ReAct puede usar herramientas [MCP](https://modelcontextprotocol.io/) (Model Context Protocol) declaradas en `MCP_SERVERS_JSON` (`backend/app/config.py`, `backend/app/rag/tools.py`).
+
+- **Solo lectura por defecto**: `MCP_TOOL_ALLOWLIST` requiere coincidencia exacta de nombre de herramienta; sin entrada allowlisteada, la herramienta se descarta. Ninguna herramienta que pueda escribir/borrar/mover archivos está en el allowlist por defecto — ver `.env.example`.
+- **Descubrimiento cacheado**: `load_mcp_tools()` cachea la lista de herramientas descubiertas por proceso (spawnear el subproceso del servidor MCP en cada turno de chat sería demasiado lento); cada *llamada* a una herramienta sigue abriendo su propia sesión MCP.
+- **Enrutamiento**: `_required_tool()` reconoce frases de tipo "lista los archivos" / "list the files" solo cuando hay al menos un servidor MCP configurado, y las despacha a la ruta `tool_agent` con `required_tool="files"` (igual que web/cálculo/código, sin pasar por la síntesis con citas [D#]/[W#] pensada para PDFs).
+- **Nombres de herramienta válidos**: `GroundedReActOutputParser` solo ejecuta una `Action` cuyo nombre esté en `valid_tool_names`, que `get_agent_executor()` construye a partir de la lista real de herramientas vinculadas (internas + MCP) — no de una lista fija — para no descartar llamadas genuinas a herramientas MCP.
+- **Visibilidad en el chat**: cada llamada a herramienta emite eventos `tool_start` / `tool_result` / `tool_error` por SSE y WebSocket (`_emit_tool_event` en `agent.py`); el frontend (`ChatPanel.tsx`) los traduce a una línea de estado tipo “Usando *tool*…” junto al indicador de escritura.
+
 ## Recuperación híbrida
 
 La recuperación profunda opera primero sobre perfiles documentales y luego sobre evidencia.

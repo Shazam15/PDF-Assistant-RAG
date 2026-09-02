@@ -7,13 +7,14 @@ import asyncio
 import json
 import logging
 import operator as op
+import threading
 from typing import Any, Dict, List, Optional, Type
 
 from ddgs import DDGS
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool
 from langchain_ollama import ChatOllama
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, create_model
 
 from scipy import stats
 
@@ -522,44 +523,185 @@ def _is_tool_allowed(tool_name: str) -> bool:
     return False
 
 
+# Discovering MCP tools spawns a subprocess and performs a protocol handshake for
+# every configured server, which is far too slow to redo on every chat turn (agent
+# tools are rebuilt per-request in build_agent_tools). The server list is static for
+# the lifetime of the process (it comes from the settings singleton), so the
+# discovered tool list is cached after the first successful load. Actually invoking a
+# tool still opens its own fresh MCP session per call (langchain-mcp-adapters'
+# stateless pattern), so caching the *list* here does not affect tool-call freshness.
+_mcp_tools_lock = threading.Lock()
+_mcp_tools_cache: Optional[List[BaseTool]] = None
+_mcp_tools_cache_key: Optional[str] = None
+
+
+def _mcp_settings_cache_key() -> str:
+    servers = getattr(settings, "MCP_SERVERS", {}) or {}
+    allowlist = _normalize_tool_list(getattr(settings, "MCP_TOOL_ALLOWLIST", []))
+    denylist = _normalize_tool_list(getattr(settings, "MCP_TOOL_DENYLIST", []))
+    return json.dumps({"servers": servers, "allow": allowlist, "deny": denylist}, sort_keys=True, default=str)
+
+
+def _adapt_mcp_tool_for_single_input_agent(tool: BaseTool) -> None:
+    """Make an MCP tool callable through this app's single-input ReAct agent, in place.
+
+    langchain-mcp-adapters builds every MCP tool with two properties that break the
+    ReAct single-input contract (create_react_agent's `Action Input:` is always a
+    bare string):
+
+    1. `args_schema` is a raw JSON-schema dict, not a Pydantic BaseModel. LangChain's
+       BaseTool._parse_input only auto-coerces a bare string into a structured call
+       when args_schema is a Pydantic model with exactly one field; for a dict schema
+       it raises outright ("String tool inputs are not allowed when using tools with
+       JSON schema args_schema."), discarding the agent's tool choice entirely.
+    2. The tool only exposes an async `coroutine` (MCP itself is async); `func` is
+       unset, so this app's synchronous AgentExecutor path (`tool.run(...)`, used by
+       `executor.stream(...)` in generate_answer_stream) raises "StructuredTool does
+       not support sync invocation."
+
+    Both are fixed here without touching the agent format, the prompt, or the tool's
+    own behavior: for any tool whose JSON schema has zero or one *required* property
+    (the common case — no input, or a single 'path'-like argument, possibly alongside
+    optional ones the tool itself defaults), rebuild args_schema as an equivalent
+    Pydantic model, and give it a sync `func` that drives the existing coroutine to
+    completion via asyncio.run(); a bare string with nothing required is simply
+    discarded, and optional fields are omitted so the tool's own defaults apply. A
+    tool needing more than one *required* argument genuinely can't be filled in from
+    one bare string — left untouched (logged, not silently broken) rather than
+    guessing which field the string should go to.
+    """
+    schema = getattr(tool, "args_schema", None)
+    if not isinstance(schema, dict) or schema.get("type") != "object":
+        return  # Already a Pydantic model (built-in tools) or has no input at all.
+
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        return
+    required = schema.get("required") or []
+    if not isinstance(required, list) or len(required) > 1:
+        logger.warning(
+            "MCP tool '%s' requires %d input field(s) (%s); the single-input ReAct "
+            "agent can only supply one bare string for the sole required field, so "
+            "it won't be callable from chat.",
+            getattr(tool, "name", "?"),
+            len(required) if isinstance(required, list) else len(properties),
+            ", ".join(required) if isinstance(required, list) else ", ".join(properties),
+        )
+        return
+
+    if getattr(tool, "func", None) is not None:
+        return  # Already has a sync entry point; nothing to bridge.
+
+    coroutine = getattr(tool, "coroutine", None)
+    if coroutine is None:
+        return
+
+    # BaseTool._parse_input's string-coercion path always stuffs the bare Action
+    # Input string into "the sole field" of args_schema — it never leaves a
+    # zero-field model as a bare string, so a genuinely argument-less tool still
+    # needs one (unused) field to satisfy that path; _sync_bridge below never reads
+    # it, so what the model writes as Action Input is simply discarded for these.
+    takes_no_input = not required
+    field_name = required[0] if required else "_unused"
+
+    def _sync_bridge(*args: Any, **kwargs: Any) -> Any:
+        # BaseTool._parse_input passes a single-field structured call positionally
+        # for tools whose args_schema has exactly one field; route it to that field
+        # by name so the underlying MCP call receives it under the right key.
+        if args and not takes_no_input:
+            kwargs = {field_name: args[0], **kwargs}
+        kwargs.pop("_unused", None)
+        return asyncio.run(coroutine(**kwargs))
+
+    try:
+        tool.args_schema = create_model(f"{tool.name}_SingleInput", **{field_name: (str, ...)})
+        tool.func = _sync_bridge
+    except Exception as exc:
+        logger.warning("Could not adapt MCP tool '%s' for single-input use: %s", getattr(tool, "name", "?"), exc)
+
+
 def load_mcp_tools() -> List[BaseTool]:
-    """Load MCP tools for the agent when the environment is enabled and allowlisted."""
+    """Load MCP tools for the agent when the environment is enabled and allowlisted.
+
+    The discovered (and allowlist-filtered) tool list is cached per-process; call
+    `clear_mcp_tools_cache()` after changing MCP settings at runtime (e.g. in tests).
+    """
     if not getattr(settings, "MCP_ENABLED", False):
         return []
 
     servers = getattr(settings, "MCP_SERVERS", {}) or {}
     if not servers:
-        logger.info("MCP is enabled but no servers were configured.")
+        logger.info("MCP is enabled but no servers were configured (MCP_SERVERS_JSON is empty).")
         return []
 
-    try:
-        from langchain_mcp_adapters.client import MultiServerMCPClient
-    except ImportError:
-        logger.warning("langchain-mcp-adapters is not available; skipping MCP tool loading.")
-        return []
+    cache_key = _mcp_settings_cache_key()
+    with _mcp_tools_lock:
+        global _mcp_tools_cache, _mcp_tools_cache_key
+        if _mcp_tools_cache is not None and _mcp_tools_cache_key == cache_key:
+            return _mcp_tools_cache
 
-    try:
-        client = MultiServerMCPClient(connections=servers)
-
-        loop = asyncio.new_event_loop()
         try:
-            tools = loop.run_until_complete(client.get_tools())
-        finally:
-            loop.close()
-    except Exception as exc:
-        logger.error("MCP tool loading failed: %s", exc)
-        return []
+            from langchain_mcp_adapters.client import MultiServerMCPClient
+        except ImportError:
+            logger.warning("langchain-mcp-adapters is not available; skipping MCP tool loading.")
+            return []
 
-    filtered_tools: List[BaseTool] = []
-    for tool in tools:
-        tool_name = getattr(tool, "name", "") or ""
-        if not _is_tool_allowed(tool_name):
-            logger.warning("Blocked MCP tool due to allowlist/denylist: %s", tool_name)
-            continue
-        filtered_tools.append(tool)
+        timeout_seconds = float(getattr(settings, "MCP_TOOL_TIMEOUT_SECONDS", 30) or 30)
+        try:
+            client = MultiServerMCPClient(connections=servers)
 
-    logger.info("MCP tools loaded=%d allowed=%d", len(tools), len(filtered_tools))
-    return filtered_tools
+            loop = asyncio.new_event_loop()
+            try:
+                tools = loop.run_until_complete(
+                    asyncio.wait_for(client.get_tools(), timeout=timeout_seconds)
+                )
+            finally:
+                loop.close()
+        except asyncio.TimeoutError:
+            logger.error(
+                "MCP tool discovery timed out after %.0fs for servers=%s",
+                timeout_seconds,
+                list(servers.keys()),
+            )
+            return []
+        except Exception as exc:
+            logger.error("MCP tool loading failed for servers=%s: %s", list(servers.keys()), exc)
+            return []
+
+        filtered_tools: List[BaseTool] = []
+        blocked_names: List[str] = []
+        for tool in tools:
+            tool_name = getattr(tool, "name", "") or ""
+            if not _is_tool_allowed(tool_name):
+                blocked_names.append(tool_name)
+                continue
+            filtered_tools.append(tool)
+
+        if blocked_names:
+            logger.warning("Blocked MCP tools due to allowlist/denylist: %s", blocked_names)
+
+        for tool in filtered_tools:
+            _adapt_mcp_tool_for_single_input_agent(tool)
+
+        logger.info(
+            "MCP tools discovered=%d allowed=%d servers=%s allowed_names=%s",
+            len(tools),
+            len(filtered_tools),
+            list(servers.keys()),
+            [getattr(t, "name", "?") for t in filtered_tools],
+        )
+
+        _mcp_tools_cache = filtered_tools
+        _mcp_tools_cache_key = cache_key
+        return filtered_tools
+
+
+def clear_mcp_tools_cache() -> None:
+    """Drop the cached MCP tool list so the next load_mcp_tools() call re-discovers it."""
+    global _mcp_tools_cache, _mcp_tools_cache_key
+    with _mcp_tools_lock:
+        _mcp_tools_cache = None
+        _mcp_tools_cache_key = None
 
 
 def build_agent_tools(

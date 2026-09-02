@@ -130,7 +130,7 @@ PDF-Assistant-RAG/
 
 ## Requisitos
 
-- Python 3.11. Python 3.9 no es compatible con varias dependencias actuales.
+- Python 3.11 (versión probada) o 3.12 (instala limpio en macOS arm64, incluido `torch` con soporte MPS; no verificado con la misma profundidad que 3.11). Python 3.9 no es compatible con varias dependencias actuales.
 - Node.js 20 o superior.
 - npm.
 - Make.
@@ -182,6 +182,7 @@ python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip setuptools wheel
 python -m pip install -r backend/requirements.txt
+python -m spacy download en_core_web_sm  # requerido por GraphRAG (extracción de entidades)
 
 cd frontend
 npm install

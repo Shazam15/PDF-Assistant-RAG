@@ -35,6 +35,11 @@ export interface ChatMsg {
   sources: SourceChunk[];
   feedback?: "up" | "down" | null;
   isStreaming?: boolean;
+  /** ISO timestamp. Backend history rows carry this natively; locally-created
+   * messages (not yet persisted) set it at creation time. `message.id` is NOT a
+   * reliable timestamp source — history rows use a DB-generated UUID for `id`,
+   * not the `role-<Date.now()>` shape locally-created messages use. */
+  created_at?: string;
 }
 
 export interface ChatSession {

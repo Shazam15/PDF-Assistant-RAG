@@ -57,6 +57,10 @@ services:
       - DEVICE=cpu
       - MODEL_PROFILE=local
       - CORPUS_STORE_BACKEND=postgres
+      - MCP_ENABLED=${MCP_ENABLED:-True}
+      - 'MCP_SERVERS_JSON=${MCP_SERVERS_JSON:-{"filesystem":{"transport":"stdio","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","/app/data/uploads"]}}}'
+      - MCP_TOOL_ALLOWLIST=${MCP_TOOL_ALLOWLIST:-read_file,list_directory,list_allowed_directories,file_exists,get_file_info}
+      - MCP_TOOL_DENYLIST=${MCP_TOOL_DENYLIST:-write_file,edit_file,delete_file,move_file,create_directory}
     depends_on:
       postgres:
         condition: service_healthy
@@ -114,6 +118,10 @@ services:
       - CELERY_ENABLED=${CELERY_ENABLED:-False}
       - MODEL_PROFILE=${MODEL_PROFILE:-research_gpu}
       - CORPUS_STORE_BACKEND=postgres
+      - MCP_ENABLED=${MCP_ENABLED:-True}
+      - 'MCP_SERVERS_JSON=${MCP_SERVERS_JSON:-{"filesystem":{"transport":"stdio","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","/app/data/uploads"]}}}'
+      - MCP_TOOL_ALLOWLIST=${MCP_TOOL_ALLOWLIST:-read_file,list_directory,list_allowed_directories,file_exists,get_file_info}
+      - MCP_TOOL_DENYLIST=${MCP_TOOL_DENYLIST:-write_file,edit_file,delete_file,move_file,create_directory}
     deploy:
       resources:
         reservations:

@@ -6,10 +6,10 @@ import json
 import os
 import secrets
 from functools import lru_cache
-from typing import Any
+from typing import Annotated, Any
 
 from pydantic import ConfigDict, model_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, NoDecode
 
 class Settings(BaseSettings):
     model_config = ConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -18,17 +18,26 @@ class Settings(BaseSettings):
     # ── MCP Tools ────────────────────────────────────────
     MCP_ENABLED: bool = True
     MCP_SERVERS_JSON: str = "{}"
-    MCP_TOOL_ALLOWLIST: list[str] = [
+    # Read-only by default: no MCP tool that can mutate the filesystem (write_file,
+    # edit_file, delete_file, move_file, create_directory, ...) is allowlisted here.
+    # To grant one, add its exact tool name explicitly — see .env.example.
+    #
+    # NoDecode is required: pydantic-settings otherwise tries to JSON-decode any
+    # env/.env value for a list[str] field before _parse_mcp_settings ever runs, and
+    # crashes with SettingsError on the plain comma-separated string documented in
+    # .env.example (e.g. MCP_TOOL_ALLOWLIST=read_file,list_directory). NoDecode passes
+    # the raw string through so the model_validator below can split it instead.
+    MCP_TOOL_ALLOWLIST: Annotated[list[str], NoDecode] = [
         "read_file",
-        "write_file",
         "list_directory",
+        "list_allowed_directories",
         "file_exists",
         "get_file_info",
         "grep_file",
         "count_pattern",
         "extract_log_lines",
     ]
-    MCP_TOOL_DENYLIST: list[str] = []
+    MCP_TOOL_DENYLIST: Annotated[list[str], NoDecode] = []
     MCP_TOOL_TIMEOUT_SECONDS: int = 30
     MCP_MAX_RESULT_CHARS: int = 6000
     MCP_SERVERS: dict[str, dict[str, Any]] = {}
@@ -60,7 +69,12 @@ class Settings(BaseSettings):
             data["MCP_SERVERS"] = {}
 
         for field_name in ("MCP_TOOL_ALLOWLIST", "MCP_TOOL_DENYLIST"):
-            value = data.get(field_name)
+            # Only touch the field when a source actually provided a value. Forcing it
+            # to [] whenever the key is merely absent would silently discard the
+            # class-level default allowlist for anyone who doesn't set this env var.
+            if field_name not in data:
+                continue
+            value = data[field_name]
             if isinstance(value, str):
                 data[field_name] = [item.strip() for item in value.split(",") if item.strip()]
             elif value is None:
@@ -215,7 +229,7 @@ class Settings(BaseSettings):
     LLM_DISABLE_THINKING: bool = False
     AGENT_PLANNER_MAX_TOKENS: int = 768
     AGENT_SYNTHESIS_MAX_TOKENS: int = 2048
-    AGENT_MAX_ITERATIONS: int = 4  # Three research steps plus one mandatory final synthesis
+    AGENT_MAX_ITERATIONS: int = 6  # Five tool-use steps plus one mandatory final synthesis
     RESEARCH_MAX_ROUNDS: int = 2
     RESEARCH_TIMEOUT_SECONDS: int = 1800
     RESEARCH_SYNTHESIS_RESERVE_SECONDS: int = 600
@@ -351,9 +365,16 @@ class Settings(BaseSettings):
 
     @property
     def cors_origins(self) -> list[str]:
-        if self.ENVIRONMENT == "production":
-            return [o.strip() for o in self.ALLOWED_ORIGINS.split(",")]
-        return ["*"]
+        # Always honor the explicit allowlist, in development too. Starlette's
+        # CORSMiddleware only reflects the real Origin (instead of a literal "*")
+        # when the request already carries a Cookie header — see
+        # CORSMiddleware.send(). This app's plain email/password login never sets
+        # a cookie, so on a fresh browser session "*" + allow_credentials=True made
+        # the browser reject the response outright (fetch() throws a bare
+        # TypeError, surfaced by the frontend as "Could not connect to the
+        # server."). Returning the configured origins here instead makes
+        # Starlette reflect the exact origin unconditionally.
+        return [o.strip() for o in self.ALLOWED_ORIGINS.split(",") if o.strip()]
 
 
 @lru_cache()

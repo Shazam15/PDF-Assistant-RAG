@@ -61,6 +61,16 @@ const markdownComponents: Components = {
 
 export default function MessageBubble({ message }: Props) {
   const isUser = message.role === "user";
+  // message.id is NOT a timestamp for history rows loaded from the backend (a
+  // DB-generated UUID) — only locally-created, not-yet-persisted messages use the
+  // `role-<Date.now()>` id shape. Use the real created_at instead; guard against a
+  // missing/malformed value producing an invalid Date (formatDistanceToNow throws
+  // RangeError on an invalid Date rather than returning an empty string).
+  const messageDate = (() => {
+    if (!message.created_at) return null;
+    const parsed = new Date(message.created_at);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  })();
   const [copied, setCopied] = useState(false);
   const [shared, setShared] = useState(false);
   const [shareFailed, setShareFailed] = useState(false);
@@ -346,16 +356,9 @@ export default function MessageBubble({ message }: Props) {
           className={`text-xs text-muted-foreground mt-2 ${
             isUser ? "text-right" : "text-left"
           }`}
-          title={(() => {
-            const ts = Number(message.id.split("-")[1]);
-            return isNaN(ts) ? "" : new Date(ts).toLocaleString();
-          })()}
+          title={messageDate ? messageDate.toLocaleString() : ""}
           >
-            {(() => {
-              const ts = Number(message.id.split("-")[1]);
-              if (isNaN(ts)) return "";
-              return formatDistanceToNow(new Date(ts), { addSuffix: true });
-            })()}
+            {messageDate ? formatDistanceToNow(messageDate, { addSuffix: true }) : ""}
         </div>
       </div>
        {isUser && (

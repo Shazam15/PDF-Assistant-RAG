@@ -85,5 +85,9 @@ redis>=4.6.0
 scipy
 
 #mcp usage
-mcp[cli]
+# langchain-mcp-adapters declares mcp>=1.24.0 with no upper bound, but only
+# targets the mcp 1.x API — mcp 2.x (mcp.shared.context.RequestContext was
+# removed/restructured there) breaks `from langchain_mcp_adapters.client import
+# MultiServerMCPClient` with ImportError. Pin below 2.0 until adapters catches up.
+mcp[cli]<2.0.0
 langchain-mcp-adapters
