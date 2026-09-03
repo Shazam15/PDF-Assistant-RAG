@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--prefix", "frontend"],
       "port": 3000
+    },
+    {
+      "name": "backend",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd backend && ../.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 7860 --reload"],
+      "port": 7860
     }
   ]
 }

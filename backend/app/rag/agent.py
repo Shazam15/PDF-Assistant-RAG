@@ -728,6 +728,36 @@ def _agent_question_with_search_state(question: str, initial_search: str) -> str
     )
 
 
+def _uploads_dir_in_mcp_scope() -> bool:
+    """Whether UPLOAD_DIR is actually one of the MCP filesystem server's configured
+    allowed roots right now. _run_initial_files_listing's shortcut only makes sense
+    when the server can resolve a per-user upload subfolder at all — if UPLOAD_DIR
+    was removed from MCP_SERVERS_JSON's args (e.g. to scope the agent to other
+    personal folders instead), attempting it anyway doesn't raise a Python exception:
+    the MCP tool just returns its own "ENOENT: no such file or directory" text as a
+    normal observation, which then gets fed to the agent as if it were real evidence
+    that no files exist — worse than not pre-fetching at all. This checks the actual
+    configured scope rather than guessing from the question, so it stays correct
+    whatever directories are configured.
+    """
+    try:
+        upload_dir = os.path.abspath(getattr(settings, "UPLOAD_DIR", "") or "")
+    except Exception:
+        return False
+    if not upload_dir:
+        return False
+    for server_config in (getattr(settings, "MCP_SERVERS", {}) or {}).values():
+        if not isinstance(server_config, dict):
+            continue
+        for arg in server_config.get("args") or []:
+            try:
+                if os.path.abspath(str(arg)) == upload_dir:
+                    return True
+            except Exception:
+                continue
+    return False
+
+
 def _run_initial_files_listing(executor_tools: List[Any], user_id: str) -> str:
     """Guarantee a "what files exist" agent run starts with a real listing of this
     user's own uploads, instead of depending on a small local model to reliably
@@ -736,9 +766,14 @@ def _run_initial_files_listing(executor_tools: List[Any], user_id: str) -> str:
     lot of exploratory hops for it to get exactly right every single time. Uploads
     are always stored under <UPLOAD_DIR>/<user_id>/... (see
     services/document_ingestion.py), so listing that subfolder directly is always the
-    right starting point when a filesystem MCP server is configured — not specific to
-    any one deployment's data.
+    right starting point WHEN the filesystem MCP server is actually scoped to
+    UPLOAD_DIR. If it isn't (see _uploads_dir_in_mcp_scope), skip this shortcut
+    entirely and let normal ReAct exploration find whatever root actually matches the
+    question — attempting it anyway would only hand the agent a spurious "file not
+    found" error to treat as ground truth.
     """
+    if not _uploads_dir_in_mcp_scope():
+        return ""
     list_directory = next((t for t in executor_tools if getattr(t, "name", "") == "list_directory"), None)
     if list_directory is None or not user_id:
         return ""
@@ -1280,6 +1315,45 @@ def _generate_agentic_document_answer(
     return {"answer": answer, "sources": sources}
 
 
+def _fallback_tool_agent_answer(
+    question: str,
+    user_id: str,
+    document_id: Optional[str],
+    hf_token: Optional[str],
+    top_k: Optional[int],
+    chat_history: Optional[List[Dict[str, str]]],
+) -> Optional[Dict[str, Any]]:
+    """Give the ReAct/MCP-capable agent one more chance when direct document
+    retrieval finds nothing relevant, instead of giving up outright.
+
+    Deliberately NOT keyword-based: `route_query`'s heuristics only recognize a
+    fixed set of phrases (web/stats/calc/code/files — see `_required_tool`), so a
+    naturally-phrased question that doesn't match any of them (e.g. "qué documentos
+    hay en mi carpeta de Desktop" — "documentos" instead of "archivos") falls
+    through to simple_rag/scoped_rag, which only ever searches PDF content and never
+    touches MCP tools, no matter how good the prompt or the tools themselves are.
+    Rather than trying to enumerate every possible phrasing up front, this escalates
+    based on the OUTCOME — no relevant document evidence found — whenever any tool
+    beyond plain PDF search is actually configured, so the agent still gets a shot
+    at answering with whatever tools (MCP filesystem, calculator, web, ...) apply.
+    """
+    if not (getattr(settings, "MCP_ENABLED", False) and getattr(settings, "MCP_SERVERS", None)):
+        return None
+    try:
+        return _generate_agentic_document_answer(
+            question=question,
+            user_id=user_id,
+            document_id=document_id,
+            hf_token=hf_token,
+            top_k=top_k,
+            chat_history=chat_history,
+            required_tool="files",
+        )
+    except Exception as exc:
+        logger.warning("Tool-agent fallback after empty document retrieval failed: %s", exc)
+        return None
+
+
 def _is_agent_stop_answer(answer: str) -> bool:
     text = (answer or "").lower()
     stop_phrases = [
@@ -1387,6 +1461,20 @@ def _build_direct_rag_prompt(
     chat_history: Optional[List[Dict[str, str]]] = None,
     style_reference: Optional[str] = None,
 ) -> str:
+    # Unlike the research/audit prompt builders, this path never bounded `context`
+    # against the model's context window — a broad/unscoped query that matches
+    # several documents' expanded parent chunks can assemble tens of thousands of
+    # characters of context, which Ollama then hard-rejects with a raw 400
+    # "exceeds the available context size" error instead of a normal answer.
+    budget = _llm_prompt_char_budget(settings.AGENT_SYNTHESIS_MAX_TOKENS)
+    if len(context) > budget:
+        logger.warning(
+            "Direct RAG context (%d chars) exceeds the prompt budget (%d chars); truncating.",
+            len(context),
+            budget,
+        )
+        context = context[:budget] + "\n...[contexto truncado por límite de tokens]"
+
     history = _format_chat_history(chat_history) if chat_history else ""
     prompt = RAG_PROMPT_TEMPLATE.format(
         context=context,
@@ -1790,6 +1878,9 @@ def _generate_direct_document_answer(
     else:
         context, sources, raw_sources = evidence
     if not context:
+        fallback = _fallback_tool_agent_answer(question, user_id, document_id, hf_token, top_k, chat_history)
+        if fallback is not None:
+            return fallback
         return {
             "answer": "No encontré información suficiente en los documentos cargados para responder esta pregunta.",
             "sources": [],
@@ -1849,8 +1940,16 @@ def _generate_direct_document_answer(
         answer = _prune_unsupported_claims(
             best_answer, sources, raw_sources, verify_entailment=verify_entailment
         ) or best_answer
-    else:
-        answer = "No fue posible generar una respuesta con citas verificables a partir de la evidencia recuperada."
+        return {"answer": answer, "sources": sources}
+
+    # Retrieved chunks scored just high enough to count as "context" but never
+    # produced a citable answer across both attempts — e.g. a filesystem question
+    # can still lexically match unrelated PDF snippets. Give the tool-capable agent
+    # a shot before answering "no evidence", same as the empty-context case above.
+    fallback = _fallback_tool_agent_answer(question, user_id, document_id, hf_token, top_k, chat_history)
+    if fallback is not None:
+        return fallback
+    answer = "No fue posible generar una respuesta con citas verificables a partir de la evidencia recuperada."
     return {"answer": answer, "sources": sources}
 
 
@@ -2139,6 +2238,9 @@ def _execute_document_route(
             )
 
     if not context:
+        fallback = _fallback_tool_agent_answer(question, user_id, document_id, hf_token, retrieval_top_k, chat_history)
+        if fallback is not None:
+            return fallback
         return {
             "answer": "No encontré información suficiente en los documentos cargados para responder esta pregunta.",
             "sources": [],
@@ -2463,6 +2565,12 @@ def generate_answer_stream(
 
         context, sources = _retrieve_document_context(question, user_id, document_id, top_k)
         if not context:
+            fallback = _fallback_tool_agent_answer(question, user_id, document_id, hf_token, top_k, chat_history)
+            if fallback is not None:
+                yield f"data: {json.dumps({'type': 'sources', 'data': fallback['sources']})}\n\n"
+                yield f"data: {json.dumps({'type': 'token', 'data': fallback['answer']})}\n\n"
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                return
             fallback_answer = "No encontré información suficiente en los documentos cargados para responder esta pregunta."
             yield f"data: {json.dumps({'type': 'sources', 'data': []})}\n\n"
             yield f"data: {json.dumps({'type': 'token', 'data': fallback_answer})}\n\n"
@@ -2491,6 +2599,18 @@ def generate_answer_stream(
             answer = "No pude generar una respuesta final estable."
 
         answer = _validate_answer_citations(answer, sources)
+        if answer == INSUFFICIENT_EVIDENCE_MESSAGE:
+            # The retrieved chunks scored just high enough to count as "context" but
+            # didn't actually support a citable answer — e.g. a filesystem question
+            # like "what's in my Desktop folder" can still lexically match snippets
+            # of unrelated PDF text. Give the tool-capable agent a shot before
+            # answering "no evidence", same as the empty-context case above.
+            fallback = _fallback_tool_agent_answer(question, user_id, document_id, hf_token, top_k, chat_history)
+            if fallback is not None:
+                yield f"data: {json.dumps({'type': 'sources', 'data': fallback['sources']})}\n\n"
+                yield f"data: {json.dumps({'type': 'token', 'data': fallback['answer']})}\n\n"
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                return
         yield f"data: {json.dumps({'type': 'sources', 'data': sources})}\n\n"
         if not answer_sent:
             yield f"data: {json.dumps({'type': 'token', 'data': answer})}\n\n"
@@ -2527,8 +2647,13 @@ def generate_answer_stream(
         try:
             context, sources = _retrieve_document_context(question, user_id, document_id, top_k)
             if not context:
-                yield f"data: {json.dumps({'type': 'sources', 'data': []})}\n\n"
-                yield f"data: {json.dumps({'type': 'token', 'data': 'No encontré información suficiente en los documentos cargados para responder esta pregunta.'})}\n\n"
+                fallback = _fallback_tool_agent_answer(question, user_id, document_id, hf_token, top_k, chat_history)
+                if fallback is not None:
+                    yield f"data: {json.dumps({'type': 'sources', 'data': fallback['sources']})}\n\n"
+                    yield f"data: {json.dumps({'type': 'token', 'data': fallback['answer']})}\n\n"
+                else:
+                    yield f"data: {json.dumps({'type': 'sources', 'data': []})}\n\n"
+                    yield f"data: {json.dumps({'type': 'token', 'data': 'No encontré información suficiente en los documentos cargados para responder esta pregunta.'})}\n\n"
             else:
                 from langchain_core.messages import HumanMessage
 

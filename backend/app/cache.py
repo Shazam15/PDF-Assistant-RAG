@@ -28,6 +28,32 @@ REDIS_URL: Optional[str] = os.getenv("REDIS_URL", None)
 LRU_MAX_SIZE: int = int(os.getenv("CACHE_LRU_MAX_SIZE", "128"))
 ROUTER_CACHE_VERSION = "evidence-agent-v2"
 _settings = get_settings()
+
+
+def _agent_prompt_fingerprint() -> str:
+    """Short hash of everything that changes what the ReAct/tool agent can do or how
+    it's instructed to do it: the system prompt text itself, plus MCP server/tool
+    config. Included in PIPELINE_CACHE_FINGERPRINT so editing prompts.py or
+    MCP_SERVERS_JSON/MCP_TOOL_ALLOWLIST/MCP_TOOL_DENYLIST automatically invalidates
+    every previously cached answer instead of silently keeping stale ones (e.g. an
+    answer cached from a broken prompt, or from before a directory was added to the
+    MCP filesystem server's scope, being served forever until TTL/LRU eviction).
+    """
+    try:
+        from app.rag.prompts import AGENT_SYSTEM_PROMPT
+    except Exception:  # pragma: no cover - prompts module should always import
+        AGENT_SYSTEM_PROMPT = ""
+    raw = "|".join(
+        (
+            AGENT_SYSTEM_PROMPT,
+            getattr(_settings, "MCP_SERVERS_JSON", "") or "",
+            ",".join(getattr(_settings, "MCP_TOOL_ALLOWLIST", []) or []),
+            ",".join(getattr(_settings, "MCP_TOOL_DENYLIST", []) or []),
+        )
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+
+
 PIPELINE_CACHE_FINGERPRINT = ":".join(
     (
         _settings.EMBEDDING_INDEX_VERSION,
@@ -36,6 +62,7 @@ PIPELINE_CACHE_FINGERPRINT = ":".join(
         _settings.NLI_VERIFIER_VERSION,
         _settings.RESEARCH_PIPELINE_VERSION,
         _settings.MODEL_PROFILE,
+        _agent_prompt_fingerprint(),
     )
 )
 
