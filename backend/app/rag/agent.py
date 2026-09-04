@@ -2452,6 +2452,10 @@ def generate_answer_stream(
             yield f"data: {json.dumps({'type': 'sources', 'data': sources})}\n\n"
 
         for step in executor.stream({"input": agent_question, "chat_history": formatted_history}):
+            if cancellation_event is not None and cancellation_event.is_set():
+                logger.info("Streaming RAG agent cancelled by client mid-reasoning; stopping tool loop.")
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                return
             if "actions" in step:
                 for action in step.get("actions") or []:
                     tool_name = getattr(action, "tool", "unknown")
@@ -2538,6 +2542,11 @@ def generate_answer_stream(
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
             return
 
+        if cancellation_event is not None and cancellation_event.is_set():
+            logger.info("Streaming RAG agent cancelled by client before partial-answer synthesis.")
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            return
+
         if use_agentic_first:
             tool_sources = _collect_agent_sources(pdf_tool, web_tool, accumulated_steps)
             sources = [_source_payload(chunk) for chunk in tool_sources]
@@ -2587,6 +2596,10 @@ def generate_answer_stream(
             if hasattr(chat_llm, "stream"):
                 collected_chunks = []
                 for chunk in chat_llm.stream([HumanMessage(content=prompt)]):
+                    if cancellation_event is not None and cancellation_event.is_set():
+                        logger.info("Direct RAG synthesis cancelled by client mid-stream.")
+                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                        return
                     content = getattr(chunk, "content", "")
                     if content:
                         collected_chunks.append(str(content))
@@ -2597,6 +2610,11 @@ def generate_answer_stream(
         except Exception as stream_error:
             logger.error(f"Direct RAG streaming fallback error: {stream_error}")
             answer = "No pude generar una respuesta final estable."
+
+        if cancellation_event is not None and cancellation_event.is_set():
+            logger.info("Streaming RAG cancelled by client before final validation.")
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            return
 
         answer = _validate_answer_citations(answer, sources)
         if answer == INSUFFICIENT_EVIDENCE_MESSAGE:
@@ -2619,6 +2637,10 @@ def generate_answer_stream(
 
     except Exception as e:
         logger.warning("Agentic streaming failed: %s", e)
+        if cancellation_event is not None and cancellation_event.is_set():
+            logger.info("Streaming RAG agent cancelled by client; skipping error-recovery synthesis.")
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            return
         yield _emit_tool_event({"type": "tool_error", "name": "agent", "summary": str(e)})
         if use_agentic_first:
             if pdf_tool is not None and web_tool is not None:
@@ -2644,6 +2666,10 @@ def generate_answer_stream(
             yield f"data: {json.dumps({'type': 'token', 'data': AGENT_INCOMPLETE_MESSAGE})}\n\n"
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
             return
+        if cancellation_event is not None and cancellation_event.is_set():
+            logger.info("Streaming RAG cancelled by client during error-recovery fallback.")
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            return
         try:
             context, sources = _retrieve_document_context(question, user_id, document_id, top_k)
             if not context:
@@ -2663,6 +2689,10 @@ def generate_answer_stream(
                 if hasattr(chat_llm, "stream"):
                     collected_chunks = []
                     for chunk in chat_llm.stream([HumanMessage(content=prompt)]):
+                        if cancellation_event is not None and cancellation_event.is_set():
+                            logger.info("Error-recovery RAG synthesis cancelled by client mid-stream.")
+                            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                            return
                         content = getattr(chunk, "content", "")
                         if content:
                             collected_chunks.append(str(content))

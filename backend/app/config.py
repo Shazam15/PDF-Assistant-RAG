@@ -42,6 +42,30 @@ class Settings(BaseSettings):
     MCP_MAX_RESULT_CHARS: int = 6000
     MCP_SERVERS: dict[str, dict[str, Any]] = {}
 
+    @staticmethod
+    def _expand_mcp_server_paths(servers: dict[str, Any]) -> dict[str, Any]:
+        """Expand ``~`` and env vars in each server's ``args`` so MCP_SERVERS_JSON
+        stays portable across machines/users instead of baking in one developer's
+        absolute home directory (e.g. "~/Documents" resolves to whoever actually
+        runs the app, on any OS, rather than a hardcoded "/Users/<name>/Documents").
+        Args that aren't path-like (flags, package names, etc.) pass through
+        expanduser/expandvars unchanged, since neither touches ordinary strings.
+        """
+        expanded: dict[str, Any] = {}
+        for server_name, server_cfg in servers.items():
+            if not isinstance(server_cfg, dict):
+                expanded[server_name] = server_cfg
+                continue
+            new_cfg = dict(server_cfg)
+            args = new_cfg.get("args")
+            if isinstance(args, list):
+                new_cfg["args"] = [
+                    os.path.expanduser(os.path.expandvars(arg)) if isinstance(arg, str) else arg
+                    for arg in args
+                ]
+            expanded[server_name] = new_cfg
+        return expanded
+
     @model_validator(mode="before")
     @classmethod
     def _parse_mcp_settings(cls, data: Any) -> Any:
@@ -62,9 +86,9 @@ class Settings(BaseSettings):
                     raise ValueError("MCP_SERVERS_JSON must be valid JSON.") from exc
             if not isinstance(parsed_servers, dict):
                 raise ValueError("MCP_SERVERS_JSON must decode to a JSON object.")
-            data["MCP_SERVERS"] = parsed_servers
+            data["MCP_SERVERS"] = cls._expand_mcp_server_paths(parsed_servers)
         elif isinstance(raw_servers, dict):
-            data["MCP_SERVERS"] = raw_servers
+            data["MCP_SERVERS"] = cls._expand_mcp_server_paths(raw_servers)
         else:
             data["MCP_SERVERS"] = {}
 

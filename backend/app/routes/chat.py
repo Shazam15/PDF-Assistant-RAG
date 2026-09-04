@@ -2,6 +2,7 @@
 Chat routes — ask questions with RAG, stream responses via SSE, manage history.
 """
 
+import contextlib
 import html
 import json
 import math
@@ -58,6 +59,34 @@ def _next_stream_chunk(generator):
         return True, next(generator)
     except StopIteration:
         return False, None
+
+
+async def _watch_for_ws_disconnect(websocket: WebSocket, cancellation_event: Event) -> None:
+    """Background task run alongside the generator-pulling loop below.
+
+    Without this, `cancellation_event` was only ever set from the *main* loop's
+    own except/finally clauses — which only run once the in-flight
+    `_next_stream_chunk` call returns. A client-initiated close (the frontend's
+    Cancel button) isn't noticed until whatever the agent is doing at that
+    moment finishes (a full ReAct step, an LLM call, ...), so the agent kept
+    "reasoning" for one extra step past the click. This task races the real
+    ASGI connection state concurrently and flips the event the instant the
+    close actually arrives, so the checks added throughout
+    `generate_answer_stream` can cut the loop short right away instead of one
+    step late.
+    """
+    try:
+        while True:
+            message = await websocket.receive()
+            if message.get("type") == "websocket.disconnect":
+                cancellation_event.set()
+                return
+    except WebSocketDisconnect:
+        cancellation_event.set()
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        cancellation_event.set()
 
 
 def _json_safe_value(value):
@@ -226,6 +255,12 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
             full_answer = ""
             sources = []
             cancellation_event = Event()
+            # Detects a client-initiated close (Cancel button) the instant it
+            # arrives, concurrently with the blocking generator-pull loop below —
+            # see _watch_for_ws_disconnect for why this matters.
+            disconnect_watcher = asyncio.create_task(
+                _watch_for_ws_disconnect(websocket, cancellation_event)
+            )
             answer_generator = generate_answer_stream(
                 question=question,
                 user_id=user.id,
@@ -238,6 +273,12 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
             while True:
                 has_chunk, chunk = await asyncio.to_thread(_next_stream_chunk, answer_generator)
                 if not has_chunk:
+                    break
+                if cancellation_event.is_set():
+                    # The client closed mid-step; the generator will wind down on
+                    # its own next iteration (checks added throughout
+                    # generate_answer_stream). Don't bother sending to a socket
+                    # that's already gone.
                     break
                 # chunk is SSE-style string like 'data: {json}\n\n' or similar
                 try:
@@ -279,6 +320,9 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
             await websocket.send_json({"type": "error", "data": str(e)})
         finally:
             cancellation_event.set()
+            disconnect_watcher.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await disconnect_watcher
             try:
                 answer_generator.close()
             except Exception:

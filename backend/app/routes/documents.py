@@ -8,7 +8,6 @@ import uuid
 import logging
 import asyncio
 import concurrent.futures
-from datetime import datetime, timezone
 from typing import Optional
 from pathlib import Path
 import shutil
@@ -639,11 +638,10 @@ def delete_document(
     db: Session = Depends(get_db),
 ):
     """
-    Soft-delete a document so it disappears from normal document APIs.
-
-    The underlying file, vectors, graph, and chat history are retained for a
-    future recycle-bin/restore flow. Normal read/list endpoints filter deleted
-    documents so accidental deletion is reversible at the database level.
+    Permanently delete a document: the uploaded file, its vector/BM25 index
+    entries, its knowledge graph, its derived relational memory (chunks,
+    sections, profile, evidence), and the `Document` row itself. Nothing is
+    left behind for a document deleted this way — there is no recycle bin.
 
     Args:
         document_id: The unique identifier of the document to delete.
@@ -657,9 +655,10 @@ def delete_document(
         HTTPException: With status code 404 if the document is not found or does not belong to the authenticated user.
 
     Note:
-        ChromaDB deletion errors are caught and logged only; they do not
-        raise an HTTP exception because the main document record is already
-        removed from the database.
+        Cleanup of the vector store, BM25 index, and knowledge graph is
+        best-effort: failures there are caught and logged only, and do not
+        stop the file or database row from being removed, since the whole
+        point of this endpoint is to leave nothing behind.
     """
     doc = db.query(Document).filter(
         Document.id == document_id,
@@ -670,11 +669,13 @@ def delete_document(
     if not doc:
         raise NotFoundException("Document")
 
-    doc.is_deleted = True
-    doc.deleted_at = datetime.now(timezone.utc)
+    from app.services.cleanup import purge_document
+
+    original_name = doc.original_name
+    purge_document(doc, db)
     db.commit()
 
-    return {"message": f"Document '{doc.original_name}' deleted successfully"}
+    return {"message": f"Document '{original_name}' deleted successfully"}
 
 
 @router.post("/{document_id}/chunk_settings", response_model=DocumentResponse)
