@@ -12,17 +12,31 @@ El repositorio todavía no contiene tags de release. Por ello, las entradas ante
 - Diagnóstico `make doctor-ubuntu` para GPU, Ollama, modelo, PostgreSQL, extensiones y Redis.
 - Arranque de desarrollo `make dev-ubuntu` e instalación CPU `install-backend-ubuntu`.
 - Plantillas `systemd` para FastAPI y Celery, y Caddy para frontend, SSE y WebSocket.
+- `make doctor-wsl`/`make doctor-ubuntu` valida además que `LLM_MODEL`, `LLM_CONTEXT_WINDOW`, `LLM_MAX_NEW_TOKENS` y `LLM_DISABLE_THINKING` coincidan con los valores esperados del perfil activo (`804490d`).
+- Panel de administración con visualización del grafo de conocimiento persistido por documento: entidades, relaciones, páginas y conteos, sin exponer texto de chunks ni rutas de almacenamiento (`1076e13`).
+- Renderizado de fórmulas LaTeX (KaTeX) en las respuestas Markdown del chat y en las conversaciones compartidas (`f279ed0`).
+- Alternativa de toolchain de frontend para CPUs sin AVX2 (p. ej. Sandy Bridge/Ivy Bridge): Tailwind CSS v4→v3.4 sin binario nativo, Next.js forzado a Babel/Webpack en vez de SWC/Turbopack, fuentes servidas vía `<link>` en vez de `next/font`; ver [`frontend/README-avx2-fallback.md`](frontend/README-avx2-fallback.md) para el detalle y el trade-off cosmético conocido (`d6c08f1`).
+- Backend de embeddings vía Ollama remoto (`EMBEDDING_BACKEND=ollama`, `EMBEDDING_OLLAMA_MODEL`) para que un host sin AVX2 ni GPU delegue el cálculo de embeddings a un servidor Ollama de la LAN, reutilizando el mismo host que ya sirve el LLM; `make doctor-*` verifica que el modelo de embeddings esté descargado en ese host remoto (`3268cf7`).
 
 ### Cambiado
 
-- Esta rama usa `ubuntu_t4` como perfil predeterminado y `127.0.0.1:11434` como Ollama.
+- El perfil predeterminado de esta rama es `wsl_t4` (Ollama en Windows, accesible desde WSL2 vía el gateway NAT); `ubuntu_t4` sigue disponible para bare metal con `OLLAMA_BASE_URL=http://127.0.0.1:11434` (`a52b629`, `804490d`).
 - PostgreSQL y Redis se publican solo en localhost; `make docker-up` inicia ambos.
 - La caché obtiene `REDIS_URL` y sus límites desde la configuración Pydantic cargada desde `.env`.
+- `docker-compose.yml` elimina el campo `version` obsoleto (Compose v2 ya no lo requiere) y `WorkspaceInvitation` usa el tipo `GUID` nativo en vez de `String` para sus identificadores (`ac74c8e`).
+- `Makefile` invoca `python3` genérico en vez de fijar `python3.11`, para tolerar instalaciones sin esa versión exacta (`a52b629`).
+
+### Corregido
+
+- Instalación de backend en Ubuntu/WSL: `torch` y `torchvision` se instalan en el mismo comando `pip` desde el índice de ruedas CPU de PyTorch, evitando un `RuntimeError: operator torchvision::nms does not exist` por incompatibilidad ABI entre versiones (se manifestaba como un `ImportError` genérico de `sentence-transformers` al cargar Docling) (`1f6cc55`).
+- La contraseña por defecto de PostgreSQL en `docker-compose.yml` quedó como un marcador de posición explícito (`change-me-in-prod`) después de que un commit anterior introdujera temporalmente una contraseña real como valor por defecto (`c54550f`, `01ded4e`).
 
 ### Documentación
 
 - Arquitectura sincronizada con la ingesta adaptable, disponibilidad temprana, timeouts vigentes y despliegues Ubuntu/T4 y Windows/WSL2/T4.
 - Incorporado este historial como fuente única para futuras notas de versión.
+- Corregida la referencia al perfil predeterminado de esta rama (`wsl_t4`, no `ubuntu_t4`) en `docs/ARCHITECTURE.md`.
+- Añadidas guías dedicadas a los mecanismos internos: [`docs/AGENT_LOOPS.md`](docs/AGENT_LOOPS.md) (bucle del agente de investigación, enrutador y agente de herramientas) y [`docs/RETRIEVAL_MATH.md`](docs/RETRIEVAL_MATH.md) (fórmulas de fragmentación, embeddings, fusión híbrida, reranking, verificación NLI y construcción del grafo de conocimiento).
 
 ## [2.0.0] - 2026-07-22
 

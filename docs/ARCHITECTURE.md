@@ -4,7 +4,7 @@ Este documento describe la arquitectura vigente de ATLAS, un sistema RAG orienta
 
 La fuente de verdad para valores configurables es `backend/app/config.py`. Las versiones de modelos e índices forman parte de las claves de caché y de los metadatos del corpus.
 
-La versión pública actual de la API es `2.0.0`. Los cambios por versión y los hitos anteriores se registran en [`CHANGELOG.md`](../CHANGELOG.md).
+La versión pública actual de la API es `2.0.0`. Los cambios por versión y los hitos anteriores se registran en [`CHANGELOG.md`](../CHANGELOG.md). El detalle algorítmico —fórmulas, umbrales y constantes exactas— vive en dos documentos dedicados para no sobrecargar este mapa de alto nivel: [`RETRIEVAL_MATH.md`](RETRIEVAL_MATH.md) (fragmentación, embeddings, fusión híbrida, reranking, verificación y grafo de conocimiento) y [`AGENT_LOOPS.md`](AGENT_LOOPS.md) (enrutador, bucle ReAct de herramientas y grafo de investigación).
 
 ## Objetivos arquitectónicos
 
@@ -111,7 +111,7 @@ El embedding se mantiene en CPU y el reranker en CUDA. Antes de invocar el redac
 
 ### Ubuntu bare metal y Tesla T4
 
-El perfil predeterminado de esta rama es `ubuntu_t4`. Reserva la Tesla T4 de 16 GB
+`ubuntu_t4` es una variante bare-metal de `wsl_t4` (el perfil predeterminado, ver la sección siguiente) para cuando ATLAS corre directamente sobre Ubuntu en vez de WSL2. Reserva la Tesla T4 de 16 GB
 para Ollama y distribuye la recuperación sobre el Xeon:
 
 | Componente | Ubicación y configuración |
@@ -131,7 +131,7 @@ activo. `make dev-ubuntu` solo arranca la aplicación cuando ese diagnóstico pa
 
 ### Windows, WSL2 y Tesla T4
 
-El perfil `wsl_t4` separa la inferencia generativa del resto del pipeline:
+`wsl_t4` es el perfil predeterminado de esta rama (`MODEL_PROFILE` en `backend/app/config.py`). Separa la inferencia generativa del resto del pipeline:
 
 | Componente | Ubicación y configuración |
 | --- | --- |
@@ -139,11 +139,15 @@ El perfil `wsl_t4` separa la inferencia generativa del resto del pipeline:
 | PostgreSQL 16 + pgvector | Único servicio obligatorio en Docker |
 | Ollama | Windows, accesible desde WSL mediante el gateway NAT |
 | LLM | `qwen3:14b-q4_K_M`, contexto 8192, Tesla T4 dedicada |
-| Embeddings | Qwen3-Embedding-0.6B, CPU, lote 64 |
+| Embeddings | Qwen3-Embedding-0.6B, CPU, lote 64 (o remoto vía Ollama, ver abajo) |
 | Reranker y NLI | CPU Intel |
 | Paralelismo PyTorch | 28 hilos por defecto, configurable |
 
-`backend/app/rag/llm_client.py` centraliza `base_url`, timeout y `keep_alive` para todas las etapas que usan Ollama. `make doctor-wsl` valida el perfil, el modelo remoto, PostgreSQL y sus extensiones; `make dev-wsl` resuelve la dirección de Windows y ejecuta el diagnóstico antes de iniciar ATLAS.
+`backend/app/rag/llm_client.py` centraliza `base_url`, timeout y `keep_alive` para todas las etapas que usan Ollama, tanto para el LLM (`create_chat_ollama`) como para los embeddings (`create_ollama_embeddings`). `make doctor-wsl` valida el perfil, el modelo remoto, PostgreSQL y sus extensiones; `make dev-wsl` resuelve la dirección de Windows y ejecuta el diagnóstico antes de iniciar ATLAS.
+
+#### Embeddings en un host sin AVX2 ni GPU
+
+Cuando el equipo que ejecuta ATLAS es demasiado antiguo o débil para calcular embeddings localmente (por ejemplo, una CPU anterior a Haswell sin AVX2, sin GPU), `EMBEDDING_BACKEND=ollama` delega ese cálculo al mismo servidor Ollama que ya sirve el LLM (`EMBEDDING_OLLAMA_MODEL`, por defecto `qwen3-embedding:0.6b`). Requiere `ollama pull qwen3-embedding:0.6b` en el host remoto; `make doctor-*` verifica que el modelo esté disponible ahí antes de arrancar. El backend por defecto sigue siendo `local` (sentence-transformers en proceso); cambiar de backend cambia el motor de inferencia del mismo modelo, así que conviene bumpear `EMBEDDING_INDEX_VERSION` para forzar una reindexación en vez de mezclar vectores calculados por dos motores distintos.
 
 ## Modelo de datos
 
@@ -487,6 +491,9 @@ La migración es idempotente y puede continuar después de una interrupción.
 - Los grafos de conocimiento persistidos se visualizan únicamente desde la consola
   administrativa. La API entrega una proyección acotada de entidades, relaciones,
   páginas y conteos; no expone rutas de almacenamiento ni el texto de los chunks.
+  Ver [`RETRIEVAL_MATH.md` §8](RETRIEVAL_MATH.md#8-grafo-de-conocimiento-graphrag)
+  para el algoritmo de extracción y el límite `GRAPH_MAX_RELATIONSHIPS`, que se
+  aplica en lectura, no en la construcción del grafo.
 - Los archivos originales permanecen fuera de las respuestas y se sirven únicamente tras validar propiedad.
 - La cancelación o un error de generación no crea mensajes de asistente vacíos.
 
@@ -616,14 +623,18 @@ La verificación automatizada cubre:
 | Índices | `backend/app/rag/vectorstore.py` |
 | Recuperación y RRF | `backend/app/rag/retriever.py` |
 | Reranker | `backend/app/rag/reranker.py` |
-| Router y síntesis | `backend/app/rag/agent.py` |
-| Grafo de investigación | `backend/app/rag/research_agent.py` |
-| Cliente Ollama compartido | `backend/app/rag/llm_client.py` |
+| Router, agente de herramientas y verificación | `backend/app/rag/agent.py` |
+| Grafo de investigación (`research_rag`) | `backend/app/rag/research_agent.py` |
+| Construcción del grafo de conocimiento (GraphRAG) | `backend/app/rag/graph_builder.py` |
+| Lectura del grafo de conocimiento | `backend/app/rag/graph_retriever.py` |
+| Cliente Ollama compartido (LLM y embeddings) | `backend/app/rag/llm_client.py` |
 | Diagnóstico WSL/T4 | `backend/app/runtime_doctor.py` |
 | API de chat | `backend/app/routes/chat.py` |
 | UI de chat | `frontend/src/components/chat/ChatPanel.tsx` |
 | Benchmark | `backend/app/rag/benchmark.py` |
 | Historial de versiones | `CHANGELOG.md` |
+| Fórmulas y algoritmos de recuperación | `docs/RETRIEVAL_MATH.md` |
+| Bucles del agente y herramientas | `docs/AGENT_LOOPS.md` |
 
 ## Invariantes de mantenimiento
 
