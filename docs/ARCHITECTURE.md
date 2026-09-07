@@ -4,6 +4,8 @@ Este documento describe la arquitectura vigente de ATLAS, un sistema RAG orienta
 
 La fuente de verdad para valores configurables es `backend/app/config.py`. Las versiones de modelos e índices forman parte de las claves de caché y de los metadatos del corpus.
 
+El historial de cambios está en [`CHANGELOG.md`](../CHANGELOG.md). El detalle algorítmico —fórmulas, umbrales y constantes exactas— vive en tres documentos dedicados para no sobrecargar este mapa de alto nivel: [`RETRIEVAL_MATH.md`](RETRIEVAL_MATH.md) (fragmentación, embeddings, fusión híbrida, reranking, verificación y grafo de conocimiento), [`AGENT_LOOPS.md`](AGENT_LOOPS.md) (enrutador, bucle ReAct de herramientas y grafo de investigación) y [`MCP_TOOLS.md`](MCP_TOOLS.md) (herramientas MCP, exclusivas de esta rama).
+
 ## Objetivos arquitectónicos
 
 - Responder exclusivamente desde evidencia recuperada de los documentos seleccionados o cargados.
@@ -172,7 +174,7 @@ sequenceDiagram
     API->>DB: Create Document(status=pending)
     API->>Queue: Schedule ingestion
     Queue->>Extractor: Read original file
-    Extractor->>Extractor: Docling -> PyMuPDF/pdfplumber -> OCR fallback
+    Extractor->>Extractor: PyMuPDF inspection -> Docling when needed -> OCR fallback
     Extractor->>Extractor: Create child and parent chunks
     Queue->>Store: Persist embeddings and lexical index
     Queue->>Memory: Build profile, section summaries and evidence records
@@ -183,10 +185,11 @@ sequenceDiagram
 
 ### Extracción
 
-1. Docling es el extractor principal de PDF y conserva elementos de layout, páginas y coordenadas.
-2. `pdfplumber` y PyMuPDF actúan como fallbacks para texto y tablas.
-3. OCR se ejecuta en páginas sin suficiente texto utilizable.
-4. DOCX, texto, Markdown y archivos de código usan extractores específicos.
+1. `PDF_EXTRACTION_MODE=fast` usa PyMuPDF y aplica OCR únicamente a páginas con texto insuficiente.
+2. `PDF_EXTRACTION_MODE=quality` usa Docling para preservar layout, tablas, páginas y coordenadas.
+3. En modo `auto` (por defecto), PyMuPDF inspecciona primero el documento; Docling solo se activa ante páginas vacías o tablas detectadas.
+4. Si Docling falla, el pipeline intenta `unstructured` cuando está habilitado, `pdfplumber`, PyMuPDF y finalmente OCR completo.
+5. DOCX, texto, Markdown y archivos de código usan extractores específicos.
 
 ### Fragmentación jerárquica
 
@@ -246,7 +249,7 @@ Los requisitos estilísticos, como “actúa como investigador”, abstract, key
 
 ### Herramientas MCP
 
-Además de sus herramientas internas (`pdf_search`, `web_search`, `calculator`, `statistics`, `code_review`), el agente ReAct puede usar herramientas [MCP](https://modelcontextprotocol.io/) (Model Context Protocol) declaradas en `MCP_SERVERS_JSON` (`backend/app/config.py`, `backend/app/rag/tools.py`).
+Además de sus herramientas internas (`pdf_search`, `web_search`, `calculator`, `statistics`, `code_review`), el agente ReAct puede usar herramientas [MCP](https://modelcontextprotocol.io/) (Model Context Protocol) declaradas en `MCP_SERVERS_JSON` (`backend/app/config.py`, `backend/app/rag/tools.py`). Ver [`MCP_TOOLS.md`](MCP_TOOLS.md) para el mecanismo completo de descubrimiento, aislamiento y despacho.
 
 - **Solo lectura por defecto**: `MCP_TOOL_ALLOWLIST` requiere coincidencia exacta de nombre de herramienta; sin entrada allowlisteada, la herramienta se descarta. Ninguna herramienta que pueda escribir/borrar/mover archivos está en el allowlist por defecto — ver `.env.example`.
 - **Descubrimiento cacheado**: `load_mcp_tools()` cachea la lista de herramientas descubiertas por proceso (spawnear el subproceso del servidor MCP en cada turno de chat sería demasiado lento); cada *llamada* a una herramienta sigue abriendo su propia sesión MCP.
@@ -347,7 +350,7 @@ El estado contiene, entre otros campos:
 9. Verificar citas, números e inferencias.
 10. Reparar una vez las afirmaciones problemáticas.
 
-El grafo tiene un presupuesto de 180 segundos. Las llamadas HTTP al LLM tienen un timeout de 90 segundos y la segunda mitad del presupuesto se reserva para síntesis. Si el límite vence después de recuperar evidencia, el sistema redacta la mejor respuesta verificable a partir del estado acumulado; no reemplaza el informe por una lista de chunks o facetas.
+El grafo tiene un presupuesto de 1800 segundos (`RESEARCH_TIMEOUT_SECONDS`). Las llamadas HTTP al LLM tienen un timeout de 900 segundos (`LLM_REQUEST_TIMEOUT_SECONDS`, independiente del presupuesto del grafo) y los últimos 600 segundos (`RESEARCH_SYNTHESIS_RESERVE_SECONDS`) se reservan para síntesis, verificación y reparación. Si el límite vence después de recuperar evidencia, el sistema redacta la mejor respuesta verificable a partir del estado acumulado; no reemplaza el informe por una lista de chunks o facetas. Ver [`AGENT_LOOPS.md`](AGENT_LOOPS.md) §3 para el detalle nodo por nodo.
 
 ## Fidelidad y citas
 
@@ -496,11 +499,18 @@ La verificación automatizada cubre:
 | Índices | `backend/app/rag/vectorstore.py` |
 | Recuperación y RRF | `backend/app/rag/retriever.py` |
 | Reranker | `backend/app/rag/reranker.py` |
-| Router y síntesis | `backend/app/rag/agent.py` |
-| Grafo de investigación | `backend/app/rag/research_agent.py` |
+| Router, agente de herramientas y verificación | `backend/app/rag/agent.py` |
+| Grafo de investigación (`research_rag`) | `backend/app/rag/research_agent.py` |
+| Construcción del grafo de conocimiento (GraphRAG) | `backend/app/rag/graph_builder.py` |
+| Lectura del grafo de conocimiento | `backend/app/rag/graph_retriever.py` |
+| Herramientas internas y MCP | `backend/app/rag/tools.py` |
 | API de chat | `backend/app/routes/chat.py` |
 | UI de chat | `frontend/src/components/chat/ChatPanel.tsx` |
 | Benchmark | `backend/app/rag/benchmark.py` |
+| Historial de versiones | `CHANGELOG.md` |
+| Fórmulas y algoritmos de recuperación | `docs/RETRIEVAL_MATH.md` |
+| Bucles del agente y herramientas | `docs/AGENT_LOOPS.md` |
+| Herramientas MCP en detalle | `docs/MCP_TOOLS.md` |
 
 ## Invariantes de mantenimiento
 
