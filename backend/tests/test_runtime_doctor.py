@@ -18,6 +18,8 @@ def _settings(**overrides):
         "LLM_DISABLE_THINKING": True,
         "CPU_THREADS": 28,
         "OLLAMA_BASE_URL": "http://127.0.0.1:11434",
+        "EMBEDDING_BACKEND": "local",
+        "EMBEDDING_OLLAMA_MODEL": "qwen3-embedding:0.6b",
         "DATABASE_URL": "postgresql+psycopg://atlas@localhost/atlas",
         "CELERY_ENABLED": True,
         "CELERY_BROKER_URL": "redis://localhost:6379/0",
@@ -57,6 +59,34 @@ def test_doctor_requires_configured_ollama_model(monkeypatch):
     monkeypatch.setattr(runtime_doctor.httpx, "get", MagicMock(return_value=response))
 
     assert runtime_doctor._check_ollama() is False
+
+
+def test_doctor_requires_configured_ollama_embedding_model(monkeypatch):
+    response = MagicMock()
+    response.json.return_value = {"models": [{"name": "qwen3:14b-q4_K_M"}]}
+    monkeypatch.setattr(
+        runtime_doctor,
+        "get_settings",
+        lambda: _settings(EMBEDDING_BACKEND="ollama"),
+    )
+    monkeypatch.setattr(runtime_doctor.httpx, "get", MagicMock(return_value=response))
+
+    assert runtime_doctor._check_ollama() is False
+
+
+def test_doctor_accepts_ollama_embedding_model_when_installed(monkeypatch):
+    response = MagicMock()
+    response.json.return_value = {
+        "models": [{"name": "qwen3:14b-q4_K_M"}, {"name": "qwen3-embedding:0.6b"}]
+    }
+    monkeypatch.setattr(
+        runtime_doctor,
+        "get_settings",
+        lambda: _settings(EMBEDDING_BACKEND="ollama"),
+    )
+    monkeypatch.setattr(runtime_doctor.httpx, "get", MagicMock(return_value=response))
+
+    assert runtime_doctor._check_ollama() is True
 
 
 def test_doctor_checks_postgres_extensions(monkeypatch):

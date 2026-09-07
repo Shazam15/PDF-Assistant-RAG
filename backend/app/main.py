@@ -122,9 +122,14 @@ async def lifespan(app: FastAPI):
         settings.LLM_MODEL,
         settings.RESEARCH_PIPELINE_VERSION,
     )
+    embedding_location = (
+        f"ollama:{settings.EMBEDDING_OLLAMA_MODEL}"
+        if settings.EMBEDDING_BACKEND == "ollama"
+        else settings.EMBEDDING_DEVICE
+    )
     logger.info(
         "RAG devices embedding=%s reranker=%s ollama=%s keep_alive=%s",
-        settings.EMBEDDING_DEVICE,
+        embedding_location,
         settings.RERANKER_DEVICE,
         settings.OLLAMA_BASE_URL or os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434"),
         settings.OLLAMA_KEEP_ALIVE,

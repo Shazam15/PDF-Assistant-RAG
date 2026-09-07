@@ -143,6 +143,15 @@ def _check_ollama(profile: str | None = None) -> bool:
                 f"(available: {available})"
             ),
         )
+    if settings.EMBEDDING_BACKEND == "ollama" and settings.EMBEDDING_OLLAMA_MODEL not in names:
+        available = ", ".join(sorted(name for name in names if name)) or "none"
+        return _report(
+            False,
+            (
+                f"Ollama responded, but embedding model {settings.EMBEDDING_OLLAMA_MODEL!r} "
+                f"is not installed (available: {available})"
+            ),
+        )
     return _report(True, f"Ollama at {base_url} provides {settings.LLM_MODEL}")
 
 

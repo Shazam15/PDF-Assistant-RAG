@@ -138,7 +138,7 @@ class Settings(BaseSettings):
     }
     GRAPH_MAX_RELATIONSHIPS: int = 12
 
-    # ── Embeddings (local HuggingFace model) ─────────────
+    # ── Embeddings ─────────────────────────────────────────
     # This experimental branch targets Ubuntu bare metal on a Xeon/Tesla T4 host.
     # Other machines can still opt into local, local_balanced, wsl_t4, or custom.
     MODEL_PROFILE: str = "wsl_t4"
@@ -150,6 +150,15 @@ class Settings(BaseSettings):
     EMBEDDING_INDEX_VERSION: str = "hierarchical-e5-v2"
     EMBEDDING_BATCH_SIZE: int = 32
     CPU_THREADS: int = 0  # 0 lets PyTorch choose from the available Xeon cores.
+    # "local" runs EMBEDDING_MODEL in-process via sentence-transformers (needs a
+    # capable CPU/GPU on this machine). "ollama" delegates embedding calls to a
+    # remote Ollama server instead — useful when this host is too weak/old for
+    # local inference (e.g. no AVX2) but a beefier box on the LAN already runs
+    # Ollama for the chat LLM. EMBEDDING_MODEL still picks the model family (it
+    # drives the E5/Qwen3 query-passage prefixing below); EMBEDDING_OLLAMA_MODEL
+    # is the actual tag requested from Ollama, which uses its own naming scheme.
+    EMBEDDING_BACKEND: str = "local"
+    EMBEDDING_OLLAMA_MODEL: str = "qwen3-embedding:0.6b"
 
     # ── ChromaDB ─────────────────────────────────────────
     CHROMA_PERSIST_DIR: str = "./data/chroma_db"
@@ -325,6 +334,11 @@ class Settings(BaseSettings):
             raise ValueError("EMBEDDING_BATCH_SIZE must be positive")
         if self.CPU_THREADS < 0:
             raise ValueError("CPU_THREADS cannot be negative")
+        self.EMBEDDING_BACKEND = str(self.EMBEDDING_BACKEND).strip().lower()
+        if self.EMBEDDING_BACKEND not in {"local", "ollama"}:
+            raise ValueError("EMBEDDING_BACKEND must be local or ollama")
+        if self.EMBEDDING_BACKEND == "ollama" and not self.EMBEDDING_OLLAMA_MODEL.strip():
+            raise ValueError("EMBEDDING_OLLAMA_MODEL cannot be empty when EMBEDDING_BACKEND=ollama")
         self.OLLAMA_BASE_URL = self.OLLAMA_BASE_URL.strip().rstrip("/")
         if self.OLLAMA_BASE_URL and not self.OLLAMA_BASE_URL.startswith(
             ("http://", "https://")
