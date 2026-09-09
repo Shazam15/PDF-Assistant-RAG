@@ -3,7 +3,7 @@
 BACKEND_DIR = backend
 FRONTEND_DIR = frontend
 BACKEND_PORT ?= 7860
-PYTHON ?= python3.11
+PYTHON ?= python3
 
 help:
 	@echo "Usage:"

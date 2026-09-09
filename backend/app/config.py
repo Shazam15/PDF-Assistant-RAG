@@ -295,9 +295,7 @@ class Settings(BaseSettings):
 
     @property
     def cors_origins(self) -> list[str]:
-        if self.ENVIRONMENT == "production":
-            return [o.strip() for o in self.ALLOWED_ORIGINS.split(",")]
-        return ["*"]
+        return [o.strip() for o in self.ALLOWED_ORIGINS.split(",")]
 
 
 @lru_cache()
