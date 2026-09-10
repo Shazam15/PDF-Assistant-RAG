@@ -4,7 +4,7 @@ import types
 import pytest
 from app.config import Settings, get_settings
 from app.rag.agent import route_query
-from app.rag.tools import StatisticsTool, execute_tool, _is_tool_allowed
+from app.rag.tools import SkillTool, StatisticsTool, execute_tool, _is_tool_allowed
 
 
 def test_statistics_tool_calculates_mean_and_correlation():
@@ -35,6 +35,31 @@ def test_execute_tool_dispatches_statistics():
     result = execute_tool("statistics", {"data": [1, 2, 3], "operation": "mean"})
     assert "mean" in result.lower()
     assert "2.0" in result
+
+
+def test_skill_tool_lists_bundled_skills_when_called_empty():
+    result = SkillTool()._run(skill="")
+    assert "code-review" in result
+    assert "statistical-analysis" in result
+
+
+def test_skill_tool_loads_code_review_instructions():
+    result = SkillTool()._run(skill="code-review")
+    assert "code_review" in result
+
+
+def test_skill_tool_tier2_response_includes_apply_directive():
+    """The anti-restate directive must reach the model through the tool-call path too, not
+    just the deterministic-injection path, since both share load_skill()."""
+    result = SkillTool()._run(skill="code-review")
+    assert "No repitas, resumas ni parafrasees" in result
+
+
+def test_skill_tool_description_advertises_bundled_skills():
+    """Tier-1 metadata must be visible in the description itself, without a tool call."""
+    description = SkillTool().description
+    assert "code-review" in description
+    assert "statistical-analysis" in description
 
 
 def test_settings_parse_mcp_json_and_allowlist():

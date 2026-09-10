@@ -21,6 +21,7 @@ from scipy import stats
 from app.config import get_settings
 from app.rag.graph_retriever import get_entity_context
 from app.rag.retriever import retrieve
+from app.rag.skills import load_skill, skills_catalog_text
 
 import sympy as sp
 import numpy as np
@@ -226,6 +227,16 @@ class CodeReviewSchema(BaseModel):
     language: Optional[str] = Field(default=None, description="Lenguaje del programación.")
     focus: Optional[str] = Field(default="bugs", description="Enfoque: bugs, seguridad, rendimiento, pruebas")
     
+
+
+class SkillSchema(BaseModel):
+    skill: str = Field(
+        default="",
+        description=(
+            "Nombre exacto de la skill a cargar, o vacío para listar las disponibles. "
+            "Usa '<skill>/<ruta>' para leer un recurso (script, referencia o asset) de esa skill."
+        ),
+    )
 
 
 class StatisticsSchema(BaseModel):
@@ -716,6 +727,7 @@ def build_agent_tools(
         MathTool(),
         WebSearchTool(),
         StatisticsTool(),
+        SkillTool(),
     ]
     tools.extend(load_mcp_tools())
     return tools
@@ -779,6 +791,30 @@ class CodeReviewTool(BaseTool):
             logger.error("CodeReviewTool error: %s", exc)
             return f"Error reviewing code: {exc}"
 
+
+
+class SkillTool(BaseTool):
+    """Loads reusable, filesystem-based agent Skills (see app/rag/skills.py).
+
+    Tier-1 metadata (every skill's name + description) is embedded directly in this
+    tool's own `description` below, so the agent already knows what's available
+    without spending a call on it — the same progressive-disclosure pattern used for
+    Claude Code's own Agent Skills. Calling the tool loads Tier 2 (a skill's full
+    instructions) or Tier 3 (one of its resource files) on demand.
+    """
+
+    name: str = "use_skill"
+    description: str = (
+        "Consulta y carga procedimientos reutilizables predefinidos (skills) para tareas recurrentes, "
+        "como revisión de código o análisis estadístico. Llama con 'skill' vacío para listar las skills "
+        "disponibles, o con el nombre exacto de una para cargar sus instrucciones completas antes de usar "
+        "la herramienta correspondiente.\n"
+        "Skills disponibles:\n" + skills_catalog_text()
+    )
+    args_schema: Type[BaseModel] = SkillSchema
+
+    def _run(self, skill: str = "") -> str:
+        return load_skill(skill)
 
 
 class _FunctionDefinition(BaseModel):

@@ -26,16 +26,36 @@ from app.rag.graph_retriever import get_entity_context
 from app.rag.prompts import AGENT_SYSTEM_PROMPT, RAG_PROMPT_TEMPLATE
 from app.exceptions import ExternalServiceException
 from app.rag.security import MALFORMED_OUTPUT_MESSAGE, OutputParserError, parse_agent_output
+from app.rag.skills import load_skill
 from app.rag.tools import PDFSearchTool, MathTool, CodeReviewTool, WebSearchTool, build_agent_tools
 from app.rag.tracing import trace_function
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 ROUTER_VERSION = "semantic-facets-v1"
-RoutingMode = Literal["auto", "quick", "research"]
-RoutingRoute = Literal["greeting", "scoped_rag", "simple_rag", "research_rag", "tool_agent"]
+RoutingMode = Literal["auto", "quick", "research", "code_review"]
+RoutingRoute = Literal["greeting", "scoped_rag", "simple_rag", "research_rag", "tool_agent", "code_review_agent"]
 GREETING_FALLBACK = "¡Hola! Soy ATLAS. ¿En qué puedo ayudarte hoy?"
-_AGENT_TOOL_NAMES = {"pdf_search", "code_review", "calculator", "web_search", "statistics"}
+_AGENT_TOOL_NAMES = {"pdf_search", "code_review", "calculator", "web_search", "statistics", "use_skill"}
+
+# Maps a route_query() `required_tool` category to the skill whose procedure must back it.
+# For these categories the skill is loaded deterministically in Python before the ReAct loop
+# starts (see _run_initial_skill_instructions) instead of depending on the model to remember to
+# call `use_skill` itself — that costs a real extra iteration and is only ever a soft prompt
+# instruction (rule 3.b), not a guarantee. Any category NOT in this map (e.g. the explicit
+# "skill" category for an unmapped/future skill, or "code" — see below) still goes through the
+# voluntary `use_skill` tool call.
+#
+# "code" is deliberately NOT mapped here: in the generic "auto"-mode tool_agent loop, code-review
+# skill usage is intentionally non-deterministic — the model decides for itself whether to call
+# `use_skill('code-review')`, guided by rule 3.b, rather than having it force-injected by a
+# keyword match. The dedicated "Code Review" mode (routing_mode="code_review", see
+# app/rag/code_review_agent.py) is a separate, deliberate, explicit user choice where the skill
+# IS still deterministically front-loaded — that determinism there is intentional, not the
+# keyword-forcing pattern being removed here.
+REQUIRED_TOOL_SKILL_MAP: Dict[str, str] = {
+    "statistics": "statistical-analysis",
+}
 MIN_SOURCE_SCORE = settings.RERANK_RELEVANCE_THRESHOLD
 INSUFFICIENT_EVIDENCE_MESSAGE = (
     "No encontré información suficiente en las fuentes recuperadas para responder esta pregunta con citas verificables."
@@ -219,6 +239,7 @@ def get_agent_executor(
     hf_token: Optional[str] = None,
     top_k: Optional[int] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
+    required_tool: Optional[str] = None,
 ):
     """Initialize the LangChain ReAct agent executor."""
     tools = build_agent_tools(user_id=user_id, document_id=document_id, top_k=top_k)
@@ -251,6 +272,13 @@ def get_agent_executor(
     # long path it just read back — 3 was tight enough to burn the whole budget on
     # that alone. Costs one extra LLM call in the worst case; still bounded.
     research_iterations = max(1, min(5, settings.AGENT_MAX_ITERATIONS - 1))
+    if required_tool == "skill":
+        # Only the explicit "skill" category still pays for a genuine extra ReAct round-trip
+        # (Action: use_skill / Observation: <instructions>) before the model can call the real
+        # tool — "code"/"statistics" get their skill pre-injected deterministically instead (see
+        # REQUIRED_TOOL_SKILL_MAP) and never pay this cost. Lift the cap itself, not just the
+        # pre-capped value, or this is silently absorbed by the min(5, ...) above.
+        research_iterations = min(research_iterations + 1, settings.AGENT_MAX_ITERATIONS)
 
     executor = AgentExecutor(
         agent=agent,
@@ -292,7 +320,7 @@ class RoutingDecision:
 
 
 def _normalize_routing_mode(mode: str) -> RoutingMode:
-    return mode if mode in {"auto", "quick", "research"} else "auto"
+    return mode if mode in {"auto", "quick", "research", "code_review"} else "auto"
 
 
 def _routing_question(question: str, chat_history: Optional[List[Dict[str, str]]]) -> str:
@@ -333,6 +361,11 @@ def _required_tool(question: str) -> Optional[str]:
         "code": (
             "revisa el codigo", "audita el codigo", "depura el codigo", "error en el codigo",
             "code review", "audit the code", "debug the code", "inspect the repository",
+        ),
+        "skill": (
+            "usa el skill", "usa la skill", "sigue el skill", "aplica el skill",
+            "usa el procedimiento", "sigue el procedimiento", "usa el playbook",
+            "use the skill", "follow the skill", "apply the skill", "use the playbook",
         ),
     }
     # Only route to the MCP-capable tool agent when an MCP server is actually
@@ -403,6 +436,12 @@ def route_query(
     if mode == "quick":
         route: RoutingRoute = "scoped_rag" if document_id else "simple_rag"
         return RoutingDecision(route, "manual_quick_documents_only", score, mode, document_id)
+
+    if mode == "code_review":
+        # Explicit, deliberate user choice: always forces the dedicated Perceive-Reason-Act
+        # loop (app/rag/code_review_agent.py), regardless of question content — same
+        # "manual mode always wins" precedent already set by "quick"/"research" above.
+        return RoutingDecision("code_review_agent", "manual_code_review", score, mode, document_id)
 
     required_tool = _required_tool(routing_question)
     if required_tool in {"statistics", "web", "code", "files"}:
@@ -794,6 +833,41 @@ def _agent_question_with_files_listing(question: str, listing: str) -> str:
         f"Resultado de listar los archivos subidos por este usuario:\n{listing}\n\n"
         "Usa esta evidencia para responder. Llama a otra herramienta de archivos solo si necesitas leer el "
         "contenido de uno de estos archivos específicamente. Cuando termines, responde con `Final Answer:`."
+    )
+
+
+def _run_initial_skill_instructions(required_tool: Optional[str]) -> str:
+    """Guarantee a code-review/statistics agent run starts with the matching skill's procedure
+    already loaded, instead of depending on the model to remember to call `use_skill` first
+    (prompt rule 3.b is a suggestion, not an enforcement, and costs a real extra ReAct iteration
+    when it does fire). Mirrors _run_initial_files_listing: a direct Python call to load_skill(),
+    no LLM/tool-call round-trip involved.
+    """
+    skill_name = REQUIRED_TOOL_SKILL_MAP.get(required_tool or "")
+    if not skill_name:
+        return ""
+    try:
+        logger.info("Agent skill action: use_skill(%s) (mandatory initial procedure load).", skill_name)
+        body = load_skill(skill_name)
+        if not body or body.startswith(f"Skill '{skill_name}' no encontrada"):
+            logger.warning("Mandatory initial skill load for '%s' returned no usable body.", skill_name)
+            return ""
+        return body
+    except Exception as exc:
+        logger.warning("Mandatory initial skill load for '%s' failed: %s", skill_name, exc)
+        return ""
+
+
+def _agent_question_with_skill_instructions(question: str, skill_name: str, skill_body: str) -> str:
+    if not skill_body:
+        return question
+    return (
+        f"{question}\n\n"
+        f"Procedimiento obligatorio de la skill '{skill_name}' ya cargado (no lo repitas ni lo "
+        f"parafrasees en tu Thought):\n{skill_body}\n\n"
+        "Aplica este procedimiento directamente: en tu próxima Action llama ya a la herramienta "
+        "correspondiente ('code_review' o 'statistics' según aplique) con los parámetros que este "
+        "procedimiento indica. Cuando termines, responde con `Final Answer:`."
     )
 
 
@@ -1228,14 +1302,20 @@ def _generate_agentic_document_answer(
 ) -> Dict[str, Any]:
     logger.info("RAG route: invoking ReAct agent first for complex request (required_tool=%s).", required_tool)
     executor, pdf_tool, web_tool, formatted_history = get_agent_executor(
-        user_id, document_id, hf_token, top_k, chat_history
+        user_id, document_id, hf_token, top_k, chat_history, required_tool=required_tool
     )
-    should_run_initial_pdf_search = required_tool not in {"code", "calculation", "statistics", "files"}
+    should_run_initial_pdf_search = required_tool not in {"code", "calculation", "statistics", "files", "skill"}
     initial_search = _run_initial_document_search(pdf_tool, question) if should_run_initial_pdf_search else ""
     agent_question = _agent_question_with_search_state(question, initial_search) if initial_search else question
     if required_tool == "files":
         initial_listing = _run_initial_files_listing(executor.tools, user_id)
         agent_question = _agent_question_with_files_listing(question, initial_listing) if initial_listing else question
+    elif required_tool in REQUIRED_TOOL_SKILL_MAP:
+        initial_skill_body = _run_initial_skill_instructions(required_tool)
+        agent_question = (
+            _agent_question_with_skill_instructions(question, REQUIRED_TOOL_SKILL_MAP[required_tool], initial_skill_body)
+            if initial_skill_body else question
+        )
     try:
         result = executor.invoke({"input": agent_question, "chat_history": formatted_history})
     except Exception as exc:
@@ -2310,6 +2390,22 @@ def generate_answer(
             logger.error("Tool agent failed; direct document fallback is not equivalent: %s", e)
             return {"answer": AGENT_INCOMPLETE_MESSAGE, "sources": []}
 
+    if decision.route == "code_review_agent":
+        from app.rag.code_review_agent import run_code_review_agent
+
+        try:
+            return run_code_review_agent(
+                question=question,
+                user_id=user_id,
+                document_id=document_id,
+                hf_token=hf_token,
+                top_k=top_k,
+                chat_history=chat_history,
+            )
+        except Exception as e:
+            logger.error("Code review agent failed: %s", e)
+            return {"answer": AGENT_INCOMPLETE_MESSAGE, "sources": []}
+
     try:
         return _execute_document_route(
             decision=decision,
@@ -2400,6 +2496,32 @@ def generate_answer_stream(
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
         return
 
+    if decision.route == "code_review_agent":
+        from app.rag.code_review_agent import stream_code_review_agent
+
+        try:
+            for event in stream_code_review_agent(
+                question=question,
+                user_id=user_id,
+                document_id=document_id,
+                hf_token=hf_token,
+                top_k=top_k,
+                chat_history=chat_history,
+                cancellation_event=cancellation_event,
+            ):
+                if event["type"] in ("progress", "tool_event"):
+                    yield f"data: {json.dumps(event)}\n\n"
+                    continue
+                result = event["data"]
+                yield f"data: {json.dumps({'type': 'sources', 'data': result.get('sources', [])})}\n\n"
+                yield f"data: {json.dumps({'type': 'token', 'data': result.get('answer', '')})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        except Exception as exc:
+            logger.error("Streaming code review agent failed: %s", exc)
+            yield f"data: {json.dumps({'type': 'error', 'data': str(exc)})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        return
+
     if not use_agentic_first:
         try:
             result = _execute_document_route(
@@ -2434,15 +2556,23 @@ def generate_answer_stream(
             decision.required_tool,
         )
         executor, pdf_tool, web_tool, formatted_history = get_agent_executor(
-            user_id, document_id, hf_token, top_k, chat_history
+            user_id, document_id, hf_token, top_k, chat_history, required_tool=decision.required_tool
         )
-        should_run_initial_pdf_search = decision.required_tool not in {"code", "calculation", "statistics", "files"}
+        should_run_initial_pdf_search = decision.required_tool not in {"code", "calculation", "statistics", "files", "skill"}
         initial_search = _run_initial_document_search(pdf_tool, question) if should_run_initial_pdf_search else ""
         agent_question = _agent_question_with_search_state(question, initial_search) if initial_search else question
         if decision.required_tool == "files":
             initial_listing = _run_initial_files_listing(executor.tools, user_id)
             agent_question = (
                 _agent_question_with_files_listing(question, initial_listing) if initial_listing else question
+            )
+        elif decision.required_tool in REQUIRED_TOOL_SKILL_MAP:
+            initial_skill_body = _run_initial_skill_instructions(decision.required_tool)
+            agent_question = (
+                _agent_question_with_skill_instructions(
+                    question, REQUIRED_TOOL_SKILL_MAP[decision.required_tool], initial_skill_body
+                )
+                if initial_skill_body else question
             )
         initial_sources = _collect_agent_sources(pdf_tool, web_tool) if should_run_initial_pdf_search else []
         if initial_sources:

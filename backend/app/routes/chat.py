@@ -191,7 +191,7 @@ async def chat_ws(websocket: WebSocket, token: Optional[str] = Query(None)):
         document_id = payload.get("document_id")
         session_id = payload.get("session_id")
         routing_mode = payload.get("routing_mode", "auto")
-        if routing_mode not in {"auto", "quick", "research"}:
+        if routing_mode not in {"auto", "quick", "research", "code_review"}:
             routing_mode = "auto"
 
         from app.rag.security import validate_user_input, UnsafePromptError

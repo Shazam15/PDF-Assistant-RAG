@@ -28,6 +28,7 @@ vi.mock("react-i18next", () => ({
         "chat.modeAuto": "Auto",
         "chat.modeQuick": "Quick",
         "chat.modeResearch": "Research",
+        "chat.modeCodeReview": "Code Review",
       };
       return translations[key] || options?.defaultValue || key;
     },
@@ -97,6 +98,14 @@ describe("chat routing preference", () => {
 
     expect(useChatStore.getState().routingMode).toBe("research");
     expect(window.localStorage.getItem("atlas-routing-mode")).toBe("research");
+  });
+
+  it("persists the code_review mode and keeps it when chat state resets", () => {
+    useChatStore.getState().setRoutingMode("code_review");
+    useChatStore.getState().resetChat();
+
+    expect(useChatStore.getState().routingMode).toBe("code_review");
+    expect(window.localStorage.getItem("atlas-routing-mode")).toBe("code_review");
   });
 });
 

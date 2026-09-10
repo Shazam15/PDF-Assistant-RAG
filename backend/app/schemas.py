@@ -340,7 +340,7 @@ class ChatRequest(BaseModel):
     document_ids: Optional[List[str]] = None
     session_id: Optional[str] = None
     top_k: Optional[int] = Field(default=None, ge=1, le=64)
-    routing_mode: Literal["auto", "quick", "research"] = "auto"
+    routing_mode: Literal["auto", "quick", "research", "code_review"] = "auto"
 
 
 class SourceChunk(BaseModel):

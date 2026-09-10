@@ -9,10 +9,29 @@ import { useChatStore, type ChatMsg, type RoutingMode, type SourceBoundingBox, t
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import MessageBubble from "./MessageBubble";
 import SourceCard from "./SourceCard";
-import { Send, Square, Trash2, MessageSquare, Download, Mic, MicOff, HelpCircle } from "lucide-react";
+import { Send, Square, Trash2, MessageSquare, Download, Mic, MicOff, HelpCircle, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+// Explicit lookup instead of deriving the i18n key from the mode string
+// (`` `chat.mode${mode[0].toUpperCase()}${mode.slice(1)}` ``) — that transform only
+// capitalizes the first character, so it silently breaks on a snake_case value like
+// "code_review" (-> "chat.modeCode_review...", not a real key). A map is also the
+// correct fix regardless, now that there are 4+ modes to label explicitly.
+const ROUTING_MODE_LABEL_KEYS: Record<RoutingMode, { label: string; title: string }> = {
+  auto: { label: "chat.modeAuto", title: "chat.modeAutoTitle" },
+  quick: { label: "chat.modeQuick", title: "chat.modeQuickTitle" },
+  research: { label: "chat.modeResearch", title: "chat.modeResearchTitle" },
+  code_review: { label: "chat.modeCodeReview", title: "chat.modeCodeReviewTitle" },
+};
 
 interface ISpeechRecognitionEvent {
   resultIndex: number;
@@ -158,7 +177,7 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
 
   useEffect(() => {
     const savedMode = window.localStorage.getItem("atlas-routing-mode");
-    if (savedMode === "auto" || savedMode === "quick" || savedMode === "research") {
+    if (savedMode === "auto" || savedMode === "quick" || savedMode === "research" || savedMode === "code_review") {
       setRoutingMode(savedMode);
     }
   }, [setRoutingMode]);
@@ -848,30 +867,33 @@ export default function ChatPanel({ activeDoc, onCitationClick }: Props) {
             </div>
           )}
 
-          <div
-            className="mb-2 inline-flex h-8 items-center rounded-md border border-border/60 bg-background/60 p-0.5"
-            role="group"
-            aria-label={t("chat.routingMode", { defaultValue: "Response mode" })}
-          >
-            {(["auto", "quick", "research"] as RoutingMode[]).map((mode) => (
-              <button
-                key={mode}
-                type="button"
-                disabled={streaming}
-                onClick={() => setRoutingMode(mode)}
-                aria-pressed={routingMode === mode}
-                title={t(`chat.mode${mode[0].toUpperCase()}${mode.slice(1)}Title`)}
-                className={cn(
-                  "h-6 px-2.5 text-xs font-medium rounded-[4px] transition-colors disabled:cursor-not-allowed disabled:opacity-50",
-                  routingMode === mode
-                    ? "bg-primary text-primary-foreground shadow-sm"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                )}
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              disabled={streaming}
+              className="mb-2 flex h-8 items-center gap-1.5 rounded-md border border-border/60 bg-background/60 px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              aria-label={t("chat.routingMode", { defaultValue: "Response mode" })}
+            >
+              {t(ROUTING_MODE_LABEL_KEYS[routingMode].label)}
+              <ChevronDown className="w-3 h-3" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-48">
+              <DropdownMenuRadioGroup
+                value={routingMode}
+                onValueChange={(value) => setRoutingMode(value as RoutingMode)}
               >
-                {t(`chat.mode${mode[0].toUpperCase()}${mode.slice(1)}`)}
-              </button>
-            ))}
-          </div>
+                {(["auto", "quick", "research", "code_review"] as RoutingMode[]).map((mode) => (
+                  <DropdownMenuRadioItem
+                    key={mode}
+                    value={mode}
+                    title={t(ROUTING_MODE_LABEL_KEYS[mode].title)}
+                    className="cursor-pointer"
+                  >
+                    {t(ROUTING_MODE_LABEL_KEYS[mode].label)}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
 
           <div className="flex gap-2 items-end">
             <div className="relative flex-1 flex items-center">

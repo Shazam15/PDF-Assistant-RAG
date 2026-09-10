@@ -21,11 +21,33 @@ from app.rag.agent import generate_answer, generate_answer_stream
         ("Busca en la web información actualizada.", None, "quick", "simple_rag"),
         ("Resume los hallazgos.", None, "research", "research_rag"),
         ("Compara todos los estudios.", "doc-1", "research", "scoped_rag"),
+        ("Cualquier pregunta sin relación con código.", None, "code_review", "code_review_agent"),
+        ("Audita el código de este repositorio.", "doc-1", "code_review", "code_review_agent"),
     ],
 )
 def test_adaptive_router_bilingual_table(question, document_id, mode, expected_route):
     decision = agent_module.route_query(question, document_id=document_id, routing_mode=mode)
     assert decision.route == expected_route
+
+
+def test_code_review_mode_always_wins_regardless_of_question_or_document_scope():
+    """Explicit 'code_review' mode is a deliberate user choice — like 'quick'/'research', it
+    must override every heuristic (multidocument score, required_tool keywords, document scope)."""
+    decision = agent_module.route_query(
+        "Compara las metodologías de varios estudios.", document_id="doc-1", routing_mode="code_review"
+    )
+    assert decision.route == "code_review_agent"
+    assert decision.mode == "code_review"
+
+
+def test_router_dispatches_explicit_skill_phrasing_to_tool_agent():
+    decision = agent_module.route_query("Usa el skill de revisión de código.", routing_mode="auto")
+    assert decision.route == "tool_agent"
+    assert decision.required_tool == "skill"
+
+    decision_en = agent_module.route_query("Follow the skill for this task.", routing_mode="auto")
+    assert decision_en.route == "tool_agent"
+    assert decision_en.required_tool == "skill"
 
 
 def test_router_ignores_filesystem_phrasing_without_mcp_configured():
@@ -695,6 +717,128 @@ def test_plain_agent_draft_after_initial_search_gets_grounded_final_synthesis(mo
     invoked_input = executor.invoke.call_args.args[0]["input"]
     assert "Ya se ejecutó una búsqueda documental inicial" in invoked_input
     mock_retriever.assert_not_called()
+
+
+def test_required_tool_code_no_longer_injects_skill_deterministically(monkeypatch, mock_retriever):
+    """Auto-mode 'code' requests must let the model decide use_skill/code_review itself now
+    (non-deterministic skill selection) — 'code' was deliberately removed from
+    REQUIRED_TOOL_SKILL_MAP, since the dedicated 'code_review' mode is the deterministic path."""
+    executor = MagicMock()
+    executor.invoke.return_value = {"output": "Revisión completa.", "intermediate_steps": []}
+    pdf_tool = MagicMock(all_sources=[], last_sources=[])
+    web_tool = MagicMock(all_sources=[], last_sources=[])
+    monkeypatch.setattr(
+        agent_module,
+        "get_agent_executor",
+        MagicMock(return_value=(executor, pdf_tool, web_tool, "")),
+    )
+
+    question = "Audita el código de este repositorio."
+    agent_module._generate_agentic_document_answer(
+        question=question,
+        user_id="user123",
+        document_id=None,
+        hf_token=None,
+        top_k=None,
+        chat_history=None,
+        required_tool="code",
+    )
+
+    invoked_input = executor.invoke.call_args.args[0]["input"]
+    assert invoked_input == question
+    assert "Procedimiento obligatorio de la skill" not in invoked_input
+    mock_retriever.assert_not_called()
+
+
+def test_required_tool_statistics_injects_statistical_analysis_skill(monkeypatch, mock_retriever):
+    executor = MagicMock()
+    executor.invoke.return_value = {"output": "mean: 2.5", "intermediate_steps": []}
+    pdf_tool = MagicMock(all_sources=[], last_sources=[])
+    web_tool = MagicMock(all_sources=[], last_sources=[])
+    monkeypatch.setattr(
+        agent_module,
+        "get_agent_executor",
+        MagicMock(return_value=(executor, pdf_tool, web_tool, "")),
+    )
+
+    agent_module._generate_agentic_document_answer(
+        question="Calcula la media de estos valores.",
+        user_id="user123",
+        document_id=None,
+        hf_token=None,
+        top_k=None,
+        chat_history=None,
+        required_tool="statistics",
+    )
+
+    invoked_input = executor.invoke.call_args.args[0]["input"]
+    assert "Identifica los datos" in invoked_input
+    assert "Procedimiento obligatorio de la skill 'statistical-analysis'" in invoked_input
+    mock_retriever.assert_not_called()
+
+
+def test_required_tool_statistics_falls_back_to_plain_question_when_skill_load_fails(monkeypatch, mock_retriever):
+    """A missing/rejected skill must degrade to the plain question, never crash the run.
+    ('statistics' is the only remaining REQUIRED_TOOL_SKILL_MAP category — 'code' no longer
+    reaches _run_initial_skill_instructions at all, see the test above.)"""
+    executor = MagicMock()
+    executor.invoke.return_value = {"output": "mean: 2.5", "intermediate_steps": []}
+    pdf_tool = MagicMock(all_sources=[], last_sources=[])
+    web_tool = MagicMock(all_sources=[], last_sources=[])
+    monkeypatch.setattr(
+        agent_module,
+        "get_agent_executor",
+        MagicMock(return_value=(executor, pdf_tool, web_tool, "")),
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "load_skill",
+        MagicMock(return_value="Skill 'statistical-analysis' no encontrada. Skills disponibles: ninguna."),
+    )
+
+    question = "Calcula la media de estos valores."
+    agent_module._generate_agentic_document_answer(
+        question=question,
+        user_id="user123",
+        document_id=None,
+        hf_token=None,
+        top_k=None,
+        chat_history=None,
+        required_tool="statistics",
+    )
+
+    assert executor.invoke.call_args.args[0]["input"] == question
+    mock_retriever.assert_not_called()
+
+
+def test_streaming_required_tool_statistics_injects_skill_instructions(monkeypatch, mock_retriever):
+    """The streaming path must inject the same deterministic skill procedure as the sync path."""
+    executor = MagicMock()
+    executor.stream.return_value = [{"output": "mean: 2.5"}]
+    pdf_tool = MagicMock(all_sources=[], last_sources=[])
+    web_tool = MagicMock(all_sources=[], last_sources=[])
+    monkeypatch.setattr(
+        agent_module,
+        "get_agent_executor",
+        MagicMock(return_value=(executor, pdf_tool, web_tool, "")),
+    )
+
+    list(generate_answer_stream("Calcula la media de estos valores: 1, 2, 3, 4.", "user123"))
+
+    invoked_input = executor.stream.call_args.args[0]["input"]
+    assert "Identifica los datos" in invoked_input
+    assert "Procedimiento obligatorio de la skill 'statistical-analysis'" in invoked_input
+    mock_retriever.assert_not_called()
+
+
+def test_get_agent_executor_grants_extra_iteration_only_for_skill_category():
+    """Only the explicit 'skill' category still needs a real use_skill tool round-trip; give
+    it one bounded extra iteration instead of eating into the tight default budget."""
+    default_executor, *_ = agent_module.get_agent_executor("u1", required_tool="code")
+    skill_executor, *_ = agent_module.get_agent_executor("u1", required_tool="skill")
+
+    assert skill_executor.max_iterations == default_executor.max_iterations + 1
+    assert skill_executor.max_iterations <= agent_module.settings.AGENT_MAX_ITERATIONS
 
 
 def test_grounded_react_parser_finishes_substantive_plain_text():

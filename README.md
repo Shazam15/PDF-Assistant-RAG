@@ -46,7 +46,7 @@ La arquitectura detallada está documentada en [docs/ARCHITECTURE.md](docs/ARCHI
 - Streaming mediante SSE y WebSocket.
 - Cancelación de respuestas en curso.
 - Selección de alcance por documento.
-- Modos `Auto`, `Rápido` e `Investigación`.
+- Modos `Auto`, `Rápido`, `Investigación` y `Revisión de Código`.
 - Autenticación JWT, aislamiento de datos por usuario y caché sensible al modo de consulta.
 
 ATLAS no muestra cadena de pensamiento. Durante una investigación transmite estados verificables, como planificación, búsqueda de evidencia, revisión de vacíos y número de fuentes examinadas.
@@ -509,7 +509,7 @@ Endpoints principales:
 | `WS` | `/api/v1/chat/ws` | Chat mediante WebSocket. |
 | `GET` | `/api/v1/chat/sessions` | Sesiones persistentes. |
 
-Las solicitudes de chat aceptan `routing_mode: "auto" | "quick" | "research"` y un identificador de documento opcional para restringir el alcance.
+Las solicitudes de chat aceptan `routing_mode: "auto" | "quick" | "research" | "code_review"` y un identificador de documento opcional para restringir el alcance. El modo `code_review` fuerza el bucle Percibe-Razona-Actúa dedicado (ver `app/rag/code_review_agent.py`), con verificación automática de sintaxis Python entre rondas.
 
 Los streams pueden emitir eventos `progress`, `sources`, `token`, `done` y `error`. La cancelación aborta la investigación, recuperación y generación sin guardar respuestas vacías.
 

@@ -159,6 +159,11 @@ class Settings(BaseSettings):
     DOC_PROCESSING_RETRY_DELAY_SECONDS: int = 30
     DOC_CLEANUP_MAX_AGE_DAYS: int = 90
 
+    # ── Agent Skills ───────────────────────────────────────
+    # Directory scanned for `<skill-name>/SKILL.md` files the ReAct agent can load
+    # on demand via the `use_skill` tool (see app/rag/skills.py).
+    SKILLS_DIR: str = "./app/rag/skills"
+
     # ── File Upload ──────────────────────────────────────
     UPLOAD_DIR: str = "./data/uploads"
     MAX_UPLOAD_SIZE_MB: int = 50
@@ -261,6 +266,12 @@ class Settings(BaseSettings):
     RESEARCH_MIN_EVIDENCE_PER_FACET: int = 1
     RESEARCH_PIPELINE_VERSION: str = "evidence-agent-v2"
     SUMMARY_MAX_TOKENS: int = 512
+    # Code Review mode: an outer Perceive-Reason-Act round loop wrapping its own ReAct
+    # executor (see app/rag/code_review_agent.py). Decoupled from AGENT_MAX_ITERATIONS on
+    # purpose, so tuning one loop's budget can never silently change the other's.
+    CODE_REVIEW_MAX_ROUNDS: int = 3
+    CODE_REVIEW_TIMEOUT_SECONDS: int = 900
+    CODE_REVIEW_MAX_ITERATIONS_PER_ROUND: int = 5
 
     # ── LangSmith Tracing (optional) ─────────────────────
     LANGSMITH_TRACING: bool = False
@@ -380,6 +391,12 @@ class Settings(BaseSettings):
             raise ValueError(
                 "RESEARCH_SYNTHESIS_RESERVE_SECONDS must be at least 10 and below RESEARCH_TIMEOUT_SECONDS"
             )
+        if self.CODE_REVIEW_MAX_ROUNDS < 1 or self.CODE_REVIEW_MAX_ROUNDS > 5:
+            raise ValueError("CODE_REVIEW_MAX_ROUNDS must be between 1 and 5")
+        if self.CODE_REVIEW_TIMEOUT_SECONDS < 30 or self.CODE_REVIEW_TIMEOUT_SECONDS > 7200:
+            raise ValueError("CODE_REVIEW_TIMEOUT_SECONDS must be between 30 and 7200")
+        if self.CODE_REVIEW_MAX_ITERATIONS_PER_ROUND < 1 or self.CODE_REVIEW_MAX_ITERATIONS_PER_ROUND > 10:
+            raise ValueError("CODE_REVIEW_MAX_ITERATIONS_PER_ROUND must be between 1 and 10")
 
         if not self.SECRET_KEY:
             if environment == "production":

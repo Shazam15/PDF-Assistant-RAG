@@ -3,7 +3,7 @@
 import { create } from "zustand";
 import { api } from "@/lib/api";
 
-export type RoutingMode = "auto" | "quick" | "research";
+export type RoutingMode = "auto" | "quick" | "research" | "code_review";
 
 export interface SourceBoundingBox {
   left: number;
