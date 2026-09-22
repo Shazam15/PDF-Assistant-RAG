@@ -355,6 +355,8 @@ class SourceChunk(BaseModel):
     source_id: Optional[str] = None
     title: Optional[str] = None
     url: Optional[str] = None
+    doi: Optional[str] = None
+    doi_url: Optional[str] = None
     snippet: Optional[str] = None
     bbox: Optional[str] = None
     citation: Optional[str] = None

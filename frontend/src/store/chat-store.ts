@@ -21,6 +21,8 @@ export interface SourceChunk {
   source_id?: string;
   title?: string;
   url?: string;
+  doi?: string;
+  doi_url?: string;
   snippet?: string;
   citation?: string;
   score?: number;

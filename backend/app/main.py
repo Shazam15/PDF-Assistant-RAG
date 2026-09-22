@@ -2,6 +2,7 @@
 FastAPI application entry point.
 Mounts all routes, configures CORS, and serves the Next.js frontend build.
 """
+import asyncio
 import os
 import uuid
 import logging
@@ -24,6 +25,7 @@ from app.exceptions import AppException
 from app.rate_limit import limiter
 from app.database import init_db, get_db
 from app.observability import setup_prometheus_metrics
+from app.rag.tracing import LANGFUSE_ENABLED, disable_langfuse, verify_langfuse_connection
 from app.rag.vectorstore import get_chroma_client
 from app.scheduler import start_scheduler, stop_scheduler
 from app.routes.profile import router as profile_router
@@ -134,8 +136,16 @@ async def lifespan(app: FastAPI):
     # Defer embedding model loading until the first retrieval request so startup stays lightweight.
     logger.info("Startup completed; embedding model will load on demand")
 
+    # Probe the trace backend once here rather than on import, so an unreachable
+    # self-hosted instance surfaces as one explicit warning instead of a stream of
+    # background exporter errors during the first research run.
+    if LANGFUSE_ENABLED:
+        if await asyncio.to_thread(verify_langfuse_connection):
+            logger.info("Langfuse tracing active host=%s", settings.LANGFUSE_HOST)
+        else:
+            disable_langfuse(f"{settings.LANGFUSE_HOST} did not answer the credential check at startup")
+
     # Start background cleanup task
-    import asyncio
     cleanup_task = asyncio.create_task(document_cleanup_job())
     migration_task = asyncio.create_task(embedding_migration_job())
 

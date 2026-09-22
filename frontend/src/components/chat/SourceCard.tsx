@@ -207,6 +207,18 @@ export default function SourceCard({ sources = [], onPageClick }: Props) {
                   )}
                   <MetricBadge label="Score" value={src.score} />
                   <MetricBadge label="Confianza" value={src.confidence} />
+                  {src.doi && (
+                    <a
+                      href={src.doi_url || `https://doi.org/${src.doi}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="truncate text-[9px] font-medium text-primary underline underline-offset-2 hover:opacity-80"
+                      title={`DOI: ${src.doi}`}
+                    >
+                      DOI: {src.doi}
+                    </a>
+                  )}
                 </div>
                 <Button
                   variant="ghost"

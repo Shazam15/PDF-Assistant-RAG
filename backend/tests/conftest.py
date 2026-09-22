@@ -23,6 +23,12 @@ os.environ["DEBUG"] = "false"
 os.environ["HF_TOKEN"] = "test-hf-token"
 os.environ["UPLOAD_DIR"] = str(ROOT / "backend" / "test_uploads")
 os.environ["CHROMA_PERSIST_DIR"] = str(ROOT / "backend" / "test_chroma")
+# Pin tracing off regardless of the developer's .env. A local Langfuse setup would
+# otherwise attach real callbacks and export spans from the test run, which changes
+# what assertions see and makes the suite depend on a reachable trace backend.
+os.environ["LANGFUSE_ENABLED"] = "False"
+os.environ["LANGFUSE_PUBLIC_KEY"] = ""
+os.environ["LANGFUSE_SECRET_KEY"] = ""
 
 
 @pytest.fixture

@@ -42,7 +42,8 @@ def test_generate_answer_appends_graph_context_without_changing_sources(monkeypa
         {
             "input": "Search the web and explain how OpenAI and Microsoft are related?",
             "chat_history": "",
-        }
+        },
+        config={"callbacks": []},
     )
 
 

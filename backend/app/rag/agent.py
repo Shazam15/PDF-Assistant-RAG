@@ -28,7 +28,7 @@ from app.exceptions import ExternalServiceException
 from app.rag.security import MALFORMED_OUTPUT_MESSAGE, OutputParserError, parse_agent_output
 from app.rag.skills import load_skill
 from app.rag.tools import PDFSearchTool, MathTool, CodeReviewTool, WebSearchTool, build_agent_tools
-from app.rag.tracing import trace_function
+from app.rag.tracing import langfuse_callbacks, trace_function
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -166,6 +166,7 @@ def get_llm_client(hf_token: Optional[str] = None, max_tokens: Optional[int] = N
         num_ctx=settings.LLM_CONTEXT_WINDOW,
         num_predict=max_tokens or settings.LLM_MAX_NEW_TOKENS,
         client_kwargs={"timeout": settings.LLM_REQUEST_TIMEOUT_SECONDS},
+        callbacks=langfuse_callbacks(),
     )
 
 
@@ -253,6 +254,7 @@ def get_agent_executor(
         num_ctx=settings.LLM_CONTEXT_WINDOW,
         num_predict=min(settings.LLM_MAX_NEW_TOKENS, settings.AGENT_PLANNER_MAX_TOKENS),
         client_kwargs={"timeout": settings.LLM_REQUEST_TIMEOUT_SECONDS},
+        callbacks=langfuse_callbacks(),
     )
 
     global_style_reference = _load_global_style_reference()
@@ -1317,7 +1319,10 @@ def _generate_agentic_document_answer(
             if initial_skill_body else question
         )
     try:
-        result = executor.invoke({"input": agent_question, "chat_history": formatted_history})
+        result = executor.invoke(
+            {"input": agent_question, "chat_history": formatted_history},
+            config={"callbacks": langfuse_callbacks()},
+        )
     except Exception as exc:
         raw_sources = _collect_agent_sources(pdf_tool, web_tool)
         if raw_sources and should_run_initial_pdf_search:

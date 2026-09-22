@@ -8,7 +8,7 @@ import secrets
 from functools import lru_cache
 from typing import Annotated, Any
 
-from pydantic import ConfigDict, model_validator
+from pydantic import AliasChoices, ConfigDict, Field, model_validator
 from pydantic_settings import BaseSettings, NoDecode
 
 class Settings(BaseSettings):
@@ -279,6 +279,32 @@ class Settings(BaseSettings):
     LANGSMITH_ENDPOINT: str = "https://api.smith.langchain.com"
     LANGSMITH_PROJECT: str = "pdf-assistant-rag"
 
+    # ── Langfuse Tracing (optional, self-hosted) ─────────
+    # Reasoning-tree tracing for the research graph and the ReAct loop. Defaults
+    # to the self-hosted stack in docker-compose.langfuse.yml, which is published
+    # on 3001 because the Next.js frontend already owns 3000 in local development.
+    LANGFUSE_ENABLED: bool = False
+    LANGFUSE_PUBLIC_KEY: str = ""
+    LANGFUSE_SECRET_KEY: str = ""
+    # LANGFUSE_BASE_URL is accepted too: that is the name Langfuse's own onboarding
+    # page emits, so a copy-pasted setup would otherwise be ignored in silence and
+    # fall back to the default host.
+    LANGFUSE_HOST: str = Field(
+        "http://localhost:3001",
+        validation_alias=AliasChoices("LANGFUSE_HOST", "LANGFUSE_BASE_URL"),
+    )
+    LANGFUSE_SAMPLE_RATE: float = 1.0
+    LANGFUSE_DEBUG: bool = False
+
+    # ── Scholarly identifiers (DOI) for web citations ────
+    # DOIs found literally in a URL or snippet are always used; this switch only
+    # controls the Crossref lookup, which costs a network round trip and is tried
+    # only for known scholarly hosts that stated no DOI themselves.
+    # Crossref always answers with its best guess, so a returned DOI is only
+    # trusted when its title matches the source title (see app/rag/scholarly.py).
+    DOI_CROSSREF_LOOKUP: bool = True
+    DOI_CROSSREF_TIMEOUT_SECONDS: int = 5
+
     # ── Reranker ─────────────────────────────────────────
     RERANKER_MODEL: str = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
     RERANK_MAX_LENGTH: int = 2048
@@ -397,6 +423,8 @@ class Settings(BaseSettings):
             raise ValueError("CODE_REVIEW_TIMEOUT_SECONDS must be between 30 and 7200")
         if self.CODE_REVIEW_MAX_ITERATIONS_PER_ROUND < 1 or self.CODE_REVIEW_MAX_ITERATIONS_PER_ROUND > 10:
             raise ValueError("CODE_REVIEW_MAX_ITERATIONS_PER_ROUND must be between 1 and 10")
+        if not 0.0 <= self.LANGFUSE_SAMPLE_RATE <= 1.0:
+            raise ValueError("LANGFUSE_SAMPLE_RATE must be between 0.0 and 1.0")
 
         if not self.SECRET_KEY:
             if environment == "production":

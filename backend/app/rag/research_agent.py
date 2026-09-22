@@ -13,6 +13,7 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, TypedDict
 
 from app.config import get_settings
 from app.rag.retriever import ResearchBrief
+from app.rag.tracing import flush_traces, new_trace_id, trace_stage
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -24,6 +25,7 @@ class ResearchCancelled(RuntimeError):
 
 class ResearchState(TypedDict, total=False):
     run_id: Optional[str]
+    trace_id: Optional[str]
     question: str
     user_id: str
     document_id: Optional[str]
@@ -195,6 +197,60 @@ def _fallback_audit(brief: ResearchBrief, evidence: List[Dict[str, Any]]) -> Dic
     return {"supported": supported, "missing": missing, "conflicts": []}
 
 
+def _trace_output(result: Dict[str, Any]) -> Dict[str, Any]:
+    """Summarize a node's result for tracing.
+
+    Only counts, stage labels and facet names are exported. Evidence text, source
+    excerpts and the drafted answer are deliberately excluded: the trace backend
+    must not become a second copy of private document content, and it must never
+    carry chain-of-thought.
+    """
+    summary: Dict[str, Any] = {}
+    for key in ("stage", "round", "repairs", "new_evidence_count"):
+        if key in result:
+            summary[key] = result[key]
+    for key in ("evidence", "sources", "claim_ledger", "argument_outline", "issues"):
+        if key in result:
+            summary[f"{key}_count"] = len(result[key] or [])
+    for key in ("supported_facets", "missing_facets", "conflicts"):
+        if key in result:
+            summary[key] = result[key]
+    if "brief" in result and result["brief"] is not None:
+        summary["facets"] = list(getattr(result["brief"], "facets", []) or [])
+    if "answer" in result:
+        summary["answer_chars"] = len(str(result.get("answer") or ""))
+    return summary
+
+
+def _traced_node(
+    name: str,
+    fn: Callable[[ResearchState], Dict[str, Any]],
+) -> Callable[[ResearchState], Dict[str, Any]]:
+    """Wrap a graph node so it becomes one span of the run's trace.
+
+    Each span opens and closes inside a single node call, so it never spans a
+    generator suspension point; the run's trace id is carried in the state
+    instead of an ambient context that a resumed generator might not preserve.
+    Any LLM call the node makes through LangChain nests under this span.
+    """
+
+    def wrapped(state: ResearchState) -> Dict[str, Any]:
+        with trace_stage(
+            name,
+            trace_id=state.get("trace_id"),
+            trace_name="research_rag",
+            user_id=str(state.get("user_id")) if state.get("user_id") else None,
+            session_id=state.get("run_id"),
+            metadata={"run_id": state.get("run_id"), "round": state.get("round", 0)},
+            input={"question": state.get("question")} if name == "understand" else None,
+        ) as span:
+            result = fn(state)
+            span.update(output=_trace_output(result))
+            return result
+
+    return wrapped
+
+
 def _build_graph(dependencies: ResearchDependencies):
     try:
         from langgraph.graph import END, START, StateGraph
@@ -328,19 +384,24 @@ def _build_graph(dependencies: ResearchDependencies):
         return {"answer": answer, "stage": "completed"}
 
     graph = StateGraph(ResearchState)
-    graph.add_node("understand", understand)
-    graph.add_node("retrieve", retrieve_node)
-    graph.add_node("ledger", ledger_node)
+    # The *_start nodes only publish a stage transition for the progress stream;
+    # tracing them too would add spans with no work in them, so they stay bare.
+    for node_name, node_fn in (
+        ("understand", understand),
+        ("retrieve", retrieve_node),
+        ("ledger", ledger_node),
+        ("audit", audit_node),
+        ("outline", outline_node),
+        ("draft", draft_node),
+        ("verify", verify_node),
+        ("repair", repair_node),
+        ("finalize", finalize_node),
+    ):
+        graph.add_node(node_name, _traced_node(node_name, node_fn))
     graph.add_node("audit_start", audit_start_node)
-    graph.add_node("audit", audit_node)
-    graph.add_node("outline", outline_node)
     graph.add_node("draft_start", draft_start_node)
-    graph.add_node("draft", draft_node)
     graph.add_node("verify_start", verify_start_node)
-    graph.add_node("verify", verify_node)
     graph.add_node("repair_start", repair_start_node)
-    graph.add_node("repair", repair_node)
-    graph.add_node("finalize", finalize_node)
     graph.add_edge(START, "understand")
     graph.add_edge("understand", "retrieve")
     graph.add_edge("retrieve", "ledger")
@@ -507,6 +568,7 @@ def _checkpoint_research_run(state: ResearchState, status: str = "running") -> N
             run.rounds = state.get("round", 0)
             run.evidence_count = len(state.get("evidence", []))
             run.state_json = json.dumps({
+                "trace_id": state.get("trace_id"),
                 "stage": state.get("stage"),
                 "supported_facets": state.get("supported_facets", []),
                 "missing_facets": state.get("missing_facets", []),
@@ -561,6 +623,9 @@ def stream_research_agent(
         "deadline": time.monotonic() + settings.RESEARCH_TIMEOUT_SECONDS,
     }
     initial["run_id"] = _create_research_run(initial)
+    # Minted before the first node runs so every stage of this run — and the
+    # ResearchRun checkpoint that mirrors it — reference the same trace.
+    initial["trace_id"] = new_trace_id()
     graph = _build_graph(dependencies)
     state_stream = (
         graph.stream(initial, stream_mode="values", config={"recursion_limit": 24})
@@ -580,6 +645,7 @@ def stream_research_agent(
                 yield {"type": "progress", "data": _progress_payload(state)}
     except ResearchCancelled:
         _checkpoint_research_run(last_state, "cancelled")
+        flush_traces()
         raise
     except TimeoutError:
         logger.warning("Research graph reached its %ss budget; finalizing best available state.", settings.RESEARCH_TIMEOUT_SECONDS)
@@ -588,6 +654,7 @@ def stream_research_agent(
     else:
         terminal_status = "completed"
     _checkpoint_research_run(last_state, terminal_status)
+    flush_traces()
     yield {
         "type": "result",
         "data": {

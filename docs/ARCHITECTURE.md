@@ -371,7 +371,14 @@ La API devuelve para cada fuente:
 - sección;
 - tipo de chunk;
 - tabla o figura cuando aplica;
-- bounding boxes para resaltado en el visor PDF.
+- bounding boxes para resaltado en el visor PDF;
+- `doi` y `doi_url` para fuentes web con identificador académico.
+
+### Identificadores académicos en fuentes web
+
+Una fuente web citada como `[W#]` incluye su DOI cuando se puede establecer. El identificador se obtiene por el camino más fiable disponible, en orden: leído literalmente de la URL, derivado de un identificador arXiv, leído del snippet devuelto por el buscador y, solo para hosts académicos conocidos que no declararon ninguno, consultado a la API pública de Crossref.
+
+Crossref responde siempre con su mejor candidato, así que su respuesta nunca se acepta sin comprobar: el título devuelto debe coincidir con el de la fuente, y la comparación respeta el orden de las palabras porque una razón de similitud difusa confunde títulos como "Attention Is All You Need" e "Is Attention All You Need?", que son trabajos distintos. Una fuente cuyo DOI no se pueda confirmar simplemente no lleva DOI: un identificador equivocado aparenta autoridad mientras apunta a otro trabajo, lo que es peor que su ausencia. El mecanismo vive en `backend/app/rag/scholarly.py` y falla de forma abierta ante cualquier error de red.
 
 ## Streaming, progreso y cancelación
 
@@ -429,6 +436,8 @@ La migración es idempotente y puede continuar después de una interrupción.
 - La cancelación o un error de generación no crea mensajes de asistente vacíos.
 
 ## Observabilidad
+
+Dos señales complementarias: métricas de sistema con `prometheus-fastapi-instrumentator` y Grafana, y trazabilidad del razonamiento del agente con Langfuse autoalojado (opcional, desactivado por defecto). El detalle —qué etapas se trazan, qué contenido nunca sale del proceso, correlación entre traza y `ResearchRun`, y el presupuesto de memoria del stack— está en [`OBSERVABILITY.md`](OBSERVABILITY.md).
 
 El backend registra:
 
@@ -501,9 +510,10 @@ La verificación automatizada cubre:
 | Reranker | `backend/app/rag/reranker.py` |
 | Router, agente de herramientas y verificación | `backend/app/rag/agent.py` |
 | Grafo de investigación (`research_rag`) | `backend/app/rag/research_agent.py` |
-| Construcción del grafo de conocimiento (GraphRAG) | `backend/app/rag/graph_builder.py` |
+| Construcción del grafo de conocimiento (GraphRAG, networkx + JSON en disco; ver [ADR 0001](adr/0001-almacenamiento-del-grafo-de-conocimiento.md)) | `backend/app/rag/graph_builder.py` |
 | Lectura del grafo de conocimiento | `backend/app/rag/graph_retriever.py` |
 | Herramientas internas y MCP | `backend/app/rag/tools.py` |
+| Identificadores académicos (DOI) en citas web | `backend/app/rag/scholarly.py` |
 | API de chat | `backend/app/routes/chat.py` |
 | UI de chat | `frontend/src/components/chat/ChatPanel.tsx` |
 | Benchmark | `backend/app/rag/benchmark.py` |
@@ -511,6 +521,8 @@ La verificación automatizada cubre:
 | Fórmulas y algoritmos de recuperación | `docs/RETRIEVAL_MATH.md` |
 | Bucles del agente y herramientas | `docs/AGENT_LOOPS.md` |
 | Herramientas MCP en detalle | `docs/MCP_TOOLS.md` |
+| Métricas y trazabilidad del razonamiento | `docs/OBSERVABILITY.md` |
+| Decisiones arquitectónicas registradas | `docs/adr/` |
 
 ## Invariantes de mantenimiento
 

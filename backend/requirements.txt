@@ -60,7 +60,6 @@ transformers>=4.51
 chromadb
 networkx>=3.3
 spacy>=3.7
-neo4j>=5.0
 
 # LLM Inference
 huggingface-hub
@@ -70,6 +69,10 @@ gunicorn
 slowapi
 prometheus-fastapi-instrumentator
 celery[redis]
+# Reasoning-tree tracing (self-hosted, see docs/OBSERVABILITY.md). The v4 SDK is
+# OpenTelemetry-based and its API differs from v3 (no start_as_current_span on the
+# client), so keep the major pinned until app/rag/tracing.py is ported.
+langfuse>=4.15,<5.0
 
 # File Validation
 #sudo apt-get install libmagic1 // for Debian/Ubuntu
