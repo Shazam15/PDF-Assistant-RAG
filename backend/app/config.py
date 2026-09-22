@@ -140,7 +140,9 @@ class Settings(BaseSettings):
 
     # ── Embeddings ─────────────────────────────────────────
     # This experimental branch targets Ubuntu bare metal on a Xeon/Tesla T4 host.
-    # Other machines can still opt into local, local_balanced, wsl_t4, or custom.
+    # Other machines can still opt into local, local_balanced, wsl_t4, lan_client,
+    # or custom. Use lan_client when ATLAS runs on a GPU-less box and reaches
+    # Ollama over the LAN instead of on localhost.
     MODEL_PROFILE: str = "wsl_t4"
     DEVICE: str = "cpu"
     EMBEDDING_DEVICE: str = "cpu"
@@ -311,10 +313,56 @@ class Settings(BaseSettings):
                     setattr(self, field_name, value)
             extraction_mode = str(self.PDF_EXTRACTION_MODE).lower()
             self.RETRIEVAL_PLANNER_VERSION = "research-brief-qwen3-v1"
+        elif profile == "lan_client":
+            # ATLAS runs on a machine with no GPU — and possibly old enough to
+            # lack AVX2 — while Ollama serves the LLM from another host on the
+            # LAN (e.g. a Windows box with a Tesla T4, reached over Ethernet).
+            # Everything that can be offloaded goes to that host; what has to
+            # stay local (reranker, NLI verifier, PDF extraction) is kept small
+            # on purpose. OLLAMA_BASE_URL is required — see the check below.
+            profile_defaults = {
+                "DEVICE": "cpu",
+                "EMBEDDING_DEVICE": "cpu",
+                "RERANKER_DEVICE": "cpu",
+                "EMBEDDING_BACKEND": "ollama",
+                "EMBEDDING_OLLAMA_MODEL": "qwen3-embedding:0.6b",
+                "EMBEDDING_MODEL": "Qwen/Qwen3-Embedding-0.6B",
+                "EMBEDDING_DIMENSION": 1024,
+                "EMBEDDING_INDEX_VERSION": "hierarchical-qwen3-1024-v1",
+                "EMBEDDING_BATCH_SIZE": 8,
+                # 0 lets PyTorch size itself to whatever this machine has; the
+                # Xeon-sized default of the T4 profiles would oversubscribe it.
+                "CPU_THREADS": 0,
+                "LLM_MODEL": "qwen3:14b-q4_K_M",
+                "LLM_CONTEXT_WINDOW": 8192,
+                "LLM_MAX_NEW_TOKENS": 3072,
+                "LLM_REQUEST_TIMEOUT_SECONDS": 900,
+                "LLM_DISABLE_THINKING": True,
+                "OLLAMA_KEEP_ALIVE": "30m",
+                # The reranker stays on the base multilingual MiniLM instead of
+                # Qwen3-Reranker-0.6B: it is the heaviest stage left on this CPU.
+                "RERANK_MAX_LENGTH": 1024,
+                "AGENT_PLANNER_MAX_TOKENS": 384,
+                "AGENT_SYNTHESIS_MAX_TOKENS": 2048,
+                "RESEARCH_MAX_ROUNDS": 2,
+                "RESEARCH_TIMEOUT_SECONDS": 1800,
+                "RESEARCH_SYNTHESIS_RESERVE_SECONDS": 600,
+                "RESEARCH_MAX_FACETS": 5,
+                "TOP_K_RETRIEVAL": 30,
+                "TOP_K_RERANK": 12,
+                # Docling's quality path runs layout models through torch, which
+                # is the slowest ingestion stage by far on this class of CPU.
+                "PDF_EXTRACTION_MODE": "fast",
+            }
+            for field_name, value in profile_defaults.items():
+                if field_name not in self.model_fields_set:
+                    setattr(self, field_name, value)
+            extraction_mode = str(self.PDF_EXTRACTION_MODE).lower()
+            self.RETRIEVAL_PLANNER_VERSION = "research-brief-qwen3-v1"
         elif profile not in {"local", "custom"}:
             raise ValueError(
                 "MODEL_PROFILE must be local, local_balanced, custom, research_gpu, "
-                "wsl_t4, or ubuntu_t4"
+                "wsl_t4, ubuntu_t4, or lan_client"
             )
 
         if extraction_mode not in {"auto", "fast", "quality"}:
@@ -344,6 +392,12 @@ class Settings(BaseSettings):
             ("http://", "https://")
         ):
             raise ValueError("OLLAMA_BASE_URL must use http:// or https://")
+        if profile == "lan_client" and not self.OLLAMA_BASE_URL:
+            raise ValueError(
+                "MODEL_PROFILE=lan_client serves the LLM from another machine, so "
+                "OLLAMA_BASE_URL must name it explicitly (e.g. http://192.168.1.10:11434). "
+                "Nothing is derived from the default route: that would point at the router."
+            )
         if not self.OLLAMA_KEEP_ALIVE.strip():
             raise ValueError("OLLAMA_KEEP_ALIVE cannot be empty")
         if self.RESEARCH_TIMEOUT_SECONDS < 30 or self.RESEARCH_TIMEOUT_SECONDS > 7200:

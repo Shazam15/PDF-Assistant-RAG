@@ -17,6 +17,8 @@ El repositorio todavía no contiene tags de release. Por ello, las entradas ante
 - Renderizado de fórmulas LaTeX (KaTeX) en las respuestas Markdown del chat y en las conversaciones compartidas (`f279ed0`).
 - Alternativa de toolchain de frontend para CPUs sin AVX2 (p. ej. Sandy Bridge/Ivy Bridge): Tailwind CSS v4→v3.4 sin binario nativo, Next.js forzado a Babel/Webpack en vez de SWC/Turbopack, fuentes servidas vía `<link>` en vez de `next/font`; ver [`frontend/README-avx2-fallback.md`](frontend/README-avx2-fallback.md) para el detalle y el trade-off cosmético conocido (`d6c08f1`).
 - Backend de embeddings vía Ollama remoto (`EMBEDDING_BACKEND=ollama`, `EMBEDDING_OLLAMA_MODEL`) para que un host sin AVX2 ni GPU delegue el cálculo de embeddings a un servidor Ollama de la LAN, reutilizando el mismo host que ya sirve el LLM; `make doctor-*` verifica que el modelo de embeddings esté descargado en ese host remoto (`3268cf7`).
+- Perfil `lan_client` y targets `make doctor-lan`/`make dev-lan` para ejecutar ATLAS en un equipo sin GPU contra un host de Ollama en la red local (p. ej. un PC Windows con Tesla T4 por Ethernet): exige `OLLAMA_BASE_URL` explícito y, a diferencia de los targets WSL/Ubuntu, nunca lo sustituye por una dirección deducida de la ruta por defecto —que en una LAN apunta al router—; activa `EMBEDDING_BACKEND=ollama` por defecto, reduce el trabajo local a reranker, NLI y extracción `fast`, y avisa si la CPU local carece de AVX/AVX2.
+- El diagnóstico verifica la dimensión real de los vectores devueltos por el modelo de embeddings remoto frente a `EMBEDDING_DIMENSION`, en vez de esperar al primer fallo de inserción o a un índice inutilizable.
 
 ### Cambiado
 

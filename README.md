@@ -154,6 +154,10 @@ Para `ubuntu_t4`, todo se ejecuta directamente en Ubuntu: Ollama usa la Tesla T4
 los modelos de recuperación usan el Xeon. Se requiere el driver NVIDIA Server de
 Linux; PostgreSQL y Redis permanecen como los únicos servicios Docker obligatorios.
 
+Para `lan_client`, ATLAS se ejecuta en un equipo sin GPU y Ollama sirve el LLM desde
+otra máquina de la red local. No se requiere driver NVIDIA ni GPU en el equipo que
+ejecuta ATLAS; sí se requiere alcanzar el puerto 11434 del host remoto.
+
 ## Instalación local
 
 ### 1. Dependencias del sistema
@@ -609,6 +613,83 @@ Después de la primera consulta, `ollama ps` en PowerShell debe mostrar el model
 la aplicación fue reiniciada después de definir `OLLAMA_HOST` y que la regla de firewall
 está asociada al adaptador WSL correcto.
 
+### Equipo sin GPU con Ollama en otra máquina de la LAN
+
+El perfil `lan_client` cubre el caso en que ATLAS se ejecuta en un equipo sin GPU
+—y posiblemente sin AVX2— mientras Ollama sirve el LLM desde otra máquina de la red
+local; por ejemplo, un PC Windows con Tesla T4 conectado por Ethernet a un equipo
+Linux de escritorio. Es la única diferencia real frente a `wsl_t4`: aquí las dos
+máquinas son equipos distintos en la LAN, no Windows y su WSL2.
+
+El perfil delega en el host remoto todo lo que puede: el LLM y, por defecto, también
+los embeddings (`EMBEDDING_BACKEND=ollama`). En el equipo local quedan únicamente el
+reranker, el verificador NLI y la extracción de PDF, y por eso el perfil fija
+`PDF_EXTRACTION_MODE=fast`, `CPU_THREADS=0` (PyTorch se dimensiona solo) y lotes de
+embedding pequeños.
+
+#### 1. Host con Ollama y la GPU
+
+En Windows, desde PowerShell, con la misma configuración de la sección WSL2 pero
+abriendo el puerto en la interfaz Ethernet en lugar del adaptador virtual de WSL:
+
+```powershell
+New-NetFirewallRule -DisplayName "Ollama LAN" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 11434 -InterfaceAlias "Ethernet"
+```
+
+Descargue los dos modelos que el perfil espera:
+
+```powershell
+ollama pull qwen3:14b-q4_K_M; ollama pull qwen3-embedding:0.6b
+```
+
+Compruebe desde el equipo Linux que el host responde:
+
+```bash
+curl http://<ip-del-host-ollama>:11434/api/tags
+```
+
+#### 2. Equipo que ejecuta ATLAS
+
+En `backend/.env`, con la IP real del host anterior y los hilos reales de este equipo:
+
+```bash
+MODEL_PROFILE=lan_client
+OLLAMA_BASE_URL=http://192.168.1.10:11434
+CPU_THREADS=4
+EMBEDDING_BATCH_SIZE=8
+```
+
+`lan_client` rechaza el arranque si `OLLAMA_BASE_URL` está vacío. A diferencia de
+`doctor-wsl`, los targets `doctor-lan` y `dev-lan` nunca sustituyen esa variable por
+una dirección deducida: en una LAN normal la ruta por defecto apunta al router, no al
+servidor de Ollama. La dirección configurada es la única que se usa.
+
+```bash
+make doctor-lan PYTHON="$PWD/.venv/bin/python"
+make dev-lan PYTHON="$PWD/.venv/bin/python"
+```
+
+Salida esperada del diagnóstico:
+
+```text
+ATLAS LAN client runtime check
+[OK] profile=lan_client, llm=qwen3:14b-q4_K_M, embeddings=ollama, CPU threads=auto
+[OK] Ollama at http://192.168.1.10:11434 provides qwen3:14b-q4_K_M
+[OK] Remote embeddings via qwen3-embedding:0.6b return 1024 dimensions
+[OK] PostgreSQL and pgvector extensions are available
+ATLAS is ready to start in LAN client mode.
+```
+
+El diagnóstico avisa además si la CPU local no declara AVX2 —en cuyo caso el frontend
+necesita el toolchain alternativo de
+[`frontend/README-avx2-fallback.md`](frontend/README-avx2-fallback.md)— o si no declara
+AVX en absoluto, porque entonces las ruedas precompiladas de PyTorch que usan el
+reranker, el verificador NLI y docling pueden abortar con *illegal instruction*. El LLM
+y los embeddings no se ven afectados: se ejecutan en el host remoto.
+
+Si va a abrir la interfaz desde otra máquina, ajuste también `ALLOWED_ORIGINS`,
+`FRONTEND_URL` y `NEXT_PUBLIC_API_URL` con la IP del equipo que ejecuta ATLAS.
+
 ## Modelos grandes y configuración personalizada
 
 Para cambiar libremente todos los modelos utilice `MODEL_PROFILE=custom`. Esto evita que un perfil predeterminado sustituya la selección explícita.
@@ -669,7 +750,7 @@ El worker debe recibir la misma configuración de base de datos, modelos, almace
 
 | Variable | Valor local | Valor de investigación | Propósito |
 |---|---|---|---|
-| `MODEL_PROFILE` | `local_balanced` | `ubuntu_t4` | Selecciona el conjunto de modelos y dispositivos. |
+| `MODEL_PROFILE` | `local_balanced` | `ubuntu_t4` | Selecciona el conjunto de modelos y dispositivos. Use `lan_client` si Ollama corre en otra máquina de la LAN. |
 | `LLM_MODEL` | `qwen3:4b-instruct-2507-q4_K_M` | `qwen3:14b-q4_K_M` | Modelo servido por Ollama. |
 | `DATABASE_URL` | `sqlite:///./data/app.db` | `postgresql+psycopg://...` | Base de datos SQLAlchemy. |
 | `CORPUS_STORE_BACKEND` | `local` | `postgres` | Índices locales o pgvector/tsvector. |
@@ -683,7 +764,8 @@ El worker debe recibir la misma configuración de base de datos, modelos, almace
 | `RESEARCH_SYNTHESIS_RESERVE_SECONDS` | `600` | `600` | Tiempo reservado para redactar y verificar la respuesta final. |
 | `RESEARCH_MAX_ROUNDS` | `2` | `2` | Rondas correctivas máximas. |
 | `CELERY_ENABLED` | `False` | `True` | Ubuntu procesa la ingesta mediante Redis y un worker separado. |
-| `OLLAMA_BASE_URL` | vacío | `http://127.0.0.1:11434` | Ollama se ejecuta en el mismo host Ubuntu. |
+| `OLLAMA_BASE_URL` | vacío | `http://127.0.0.1:11434` | Ollama se ejecuta en el mismo host Ubuntu. Obligatorio y sin valor deducido con `lan_client`. |
+| `EMBEDDING_BACKEND` | `local` | `local` | `ollama` delega los embeddings en el host remoto; es el valor por defecto de `lan_client`. |
 | `OLLAMA_KEEP_ALIVE` | `5m` | `30m` | Evita recargar el modelo entre fases de investigación. |
 
 Consulte [.env.example](.env.example) y [backend/app/config.py](backend/app/config.py) para ver todas las opciones.
@@ -697,6 +779,8 @@ Consulte [.env.example](.env.example) y [backend/app/config.py](backend/app/conf
 | `make dev` | Inicia FastAPI y Next.js. |
 | `make doctor-ubuntu` | Verifica T4, Ollama, modelo, PostgreSQL, extensiones y Redis. |
 | `make dev-ubuntu` | Ejecuta el diagnóstico e inicia backend, frontend y worker en Ubuntu. |
+| `make doctor-lan` | Verifica el host remoto de Ollama, sus modelos, la dimensión de los embeddings y la CPU local. |
+| `make dev-lan` | Ejecuta el diagnóstico e inicia backend, frontend y worker en un equipo sin GPU. |
 | `make dev-backend` | Inicia solo FastAPI en el puerto 7860. |
 | `make dev-frontend` | Inicia solo Next.js en el puerto 3000. |
 | `make test` | Ejecuta las pruebas del backend. |

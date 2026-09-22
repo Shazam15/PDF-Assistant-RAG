@@ -1,4 +1,4 @@
-.PHONY: dev-backend dev-frontend dev-worker dev dev-wsl dev-ubuntu doctor-wsl doctor-ubuntu test migrate lint format install install-backend install-backend-wsl install-backend-ubuntu install-frontend build clean docker-up docker-down docker-logs help
+.PHONY: dev-backend dev-frontend dev-worker dev dev-wsl dev-ubuntu dev-lan doctor-wsl doctor-ubuntu doctor-lan test migrate lint format install install-backend install-backend-wsl install-backend-ubuntu install-frontend build clean docker-up docker-down docker-logs help
 
 BACKEND_DIR = backend
 FRONTEND_DIR = frontend
@@ -13,8 +13,10 @@ help:
 	@echo "  make dev             Start both backend and frontend concurrently"
 	@echo "  make dev-wsl         Validate Windows Ollama/PostgreSQL and start in WSL2"
 	@echo "  make dev-ubuntu      Validate local T4/Ollama/PostgreSQL/Redis and start on Ubuntu"
+	@echo "  make dev-lan         Validate a remote LAN Ollama host and start on a GPU-less machine"
 	@echo "  make doctor-wsl      Validate the WSL2, Windows Ollama, and PostgreSQL split"
 	@echo "  make doctor-ubuntu   Validate the native Ubuntu/T4 runtime"
+	@echo "  make doctor-lan      Validate the GPU-less client against its remote Ollama host"
 	@echo "  make test            Run pytest"
 	@echo "  make migrate         Apply database migrations"
 	@echo "  make lint            Run flake8 (backend) + eslint (frontend)"
@@ -76,6 +78,30 @@ dev-ubuntu:
 	@$(MAKE) doctor-ubuntu PYTHON="$(PYTHON)"
 	@echo "Starting Ubuntu/T4 backend, frontend, and document worker..."
 	npx concurrently --kill-others --names "BACKEND,FRONTEND,WORKER" --prefix-colors "blue,green,yellow" \
+		"$(MAKE) dev-backend PYTHON='$(PYTHON)'" \
+		"$(MAKE) dev-frontend" \
+		"$(MAKE) dev-worker PYTHON='$(PYTHON)'"
+
+# Unlike the wsl/ubuntu targets, these never substitute a value for
+# OLLAMA_BASE_URL: the remote host cannot be derived from the default route
+# (that is the router), so the address configured by the operator is the only
+# one used. The target only checks that one exists before starting.
+doctor-lan:
+	@if [ -z "$$OLLAMA_BASE_URL" ] && ! grep -qE '^[[:space:]]*OLLAMA_BASE_URL=.+' $(BACKEND_DIR)/.env 2>/dev/null; then \
+		echo "[FAIL] MODEL_PROFILE=lan_client needs the address of the remote Ollama host."; \
+		echo "       Set it in $(BACKEND_DIR)/.env:"; \
+		echo "         OLLAMA_BASE_URL=http://<ollama-host-ip>:11434"; \
+		echo "       or export it for this shell:"; \
+		echo "         export OLLAMA_BASE_URL=http://<ollama-host-ip>:11434"; \
+		exit 1; \
+	fi
+	@cd $(BACKEND_DIR) && MODEL_PROFILE=lan_client \
+	$(PYTHON) -m app.runtime_doctor --profile lan_client
+
+dev-lan:
+	@$(MAKE) doctor-lan PYTHON="$(PYTHON)"
+	@echo "Starting LAN-client backend, frontend, and document worker..."
+	MODEL_PROFILE=lan_client npx concurrently --kill-others --names "BACKEND,FRONTEND,WORKER" --prefix-colors "blue,green,yellow" \
 		"$(MAKE) dev-backend PYTHON='$(PYTHON)'" \
 		"$(MAKE) dev-frontend" \
 		"$(MAKE) dev-worker PYTHON='$(PYTHON)'"

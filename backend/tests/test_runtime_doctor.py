@@ -89,6 +89,88 @@ def test_doctor_accepts_ollama_embedding_model_when_installed(monkeypatch):
     assert runtime_doctor._check_ollama() is True
 
 
+def _lan_settings(**overrides):
+    values = {
+        "MODEL_PROFILE": "lan_client",
+        "EMBEDDING_BACKEND": "ollama",
+        "OLLAMA_BASE_URL": "http://192.168.1.10:11434",
+        "CPU_THREADS": 0,
+        "EMBEDDING_BATCH_SIZE": 8,
+        "PDF_EXTRACTION_MODE": "fast",
+        "DATABASE_URL": "sqlite:///./data/app.db",
+        "CORPUS_STORE_BACKEND": "local",
+    }
+    values.update(overrides)
+    return _settings(**values)
+
+
+def test_doctor_accepts_lan_client_without_a_local_gpu(monkeypatch):
+    monkeypatch.setattr(runtime_doctor, "get_settings", _lan_settings)
+
+    assert runtime_doctor._check_profile("lan_client") is True
+
+
+def test_doctor_does_not_pin_remote_model_tags_for_lan_client(monkeypatch):
+    # The remote host owns the models; _check_ollama verifies the tag exists there.
+    monkeypatch.setattr(
+        runtime_doctor,
+        "get_settings",
+        lambda: _lan_settings(LLM_MODEL="qwen3:8b", EMBEDDING_DIMENSION=768),
+    )
+
+    assert runtime_doctor._check_profile("lan_client") is True
+
+
+def test_doctor_rejects_lan_client_without_a_remote_address(monkeypatch):
+    monkeypatch.setattr(
+        runtime_doctor,
+        "get_settings",
+        lambda: _lan_settings(OLLAMA_BASE_URL=""),
+    )
+
+    assert runtime_doctor._check_profile("lan_client") is False
+
+
+def test_doctor_rejects_a_local_gpu_device_under_lan_client(monkeypatch):
+    monkeypatch.setattr(
+        runtime_doctor,
+        "get_settings",
+        lambda: _lan_settings(RERANKER_DEVICE="cuda"),
+    )
+
+    assert runtime_doctor._check_profile("lan_client") is False
+
+
+def test_doctor_rejects_a_remote_embedding_model_of_the_wrong_width(monkeypatch):
+    response = MagicMock()
+    response.json.return_value = {"embeddings": [[0.0] * 768]}
+    monkeypatch.setattr(runtime_doctor, "get_settings", _lan_settings)
+    monkeypatch.setattr(runtime_doctor.httpx, "post", MagicMock(return_value=response))
+
+    assert runtime_doctor._check_embedding_dimension("lan_client") is False
+
+
+def test_doctor_accepts_a_remote_embedding_model_matching_the_index(monkeypatch):
+    response = MagicMock()
+    response.json.return_value = {"embeddings": [[0.0] * 1024]}
+    monkeypatch.setattr(runtime_doctor, "get_settings", _lan_settings)
+    monkeypatch.setattr(runtime_doctor.httpx, "post", MagicMock(return_value=response))
+
+    assert runtime_doctor._check_embedding_dimension("lan_client") is True
+
+
+def test_doctor_allows_a_non_postgres_store_only_for_lan_client(monkeypatch):
+    monkeypatch.setattr(runtime_doctor, "get_settings", _lan_settings)
+    assert runtime_doctor._check_database("lan_client") is True
+
+    monkeypatch.setattr(
+        runtime_doctor,
+        "get_settings",
+        lambda: _settings(DATABASE_URL="sqlite:///./data/app.db"),
+    )
+    assert runtime_doctor._check_database("ubuntu_t4") is False
+
+
 def test_doctor_checks_postgres_extensions(monkeypatch):
     connection = MagicMock()
     connection.execute.side_effect = [

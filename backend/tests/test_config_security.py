@@ -86,6 +86,49 @@ def test_ubuntu_t4_profile_uses_local_ollama_and_reserves_gpu_for_llm():
     assert settings.OLLAMA_KEEP_ALIVE == "30m"
 
 
+def test_lan_client_offloads_to_a_remote_ollama_and_keeps_local_work_small():
+    settings = Settings(
+        _env_file=None,
+        MODEL_PROFILE="lan_client",
+        OLLAMA_BASE_URL="http://192.168.1.10:11434/",
+    )
+
+    assert settings.DEVICE == "cpu"
+    assert settings.EMBEDDING_DEVICE == "cpu"
+    assert settings.RERANKER_DEVICE == "cpu"
+    assert settings.EMBEDDING_BACKEND == "ollama"
+    assert settings.EMBEDDING_OLLAMA_MODEL == "qwen3-embedding:0.6b"
+    assert settings.EMBEDDING_DIMENSION == 1024
+    assert settings.EMBEDDING_BATCH_SIZE == 8
+    assert settings.CPU_THREADS == 0
+    assert settings.PDF_EXTRACTION_MODE == "fast"
+    assert settings.OLLAMA_BASE_URL == "http://192.168.1.10:11434"
+
+
+def test_lan_client_requires_an_explicit_remote_ollama_address():
+    with pytest.raises(ValueError, match="OLLAMA_BASE_URL"):
+        Settings(_env_file=None, MODEL_PROFILE="lan_client")
+
+
+def test_lan_client_respects_explicit_overrides():
+    settings = Settings(
+        _env_file=None,
+        MODEL_PROFILE="lan_client",
+        OLLAMA_BASE_URL="http://192.168.1.10:11434",
+        EMBEDDING_BACKEND="local",
+        EMBEDDING_BATCH_SIZE=16,
+        CPU_THREADS=4,
+        PDF_EXTRACTION_MODE="quality",
+        LLM_MODEL="qwen3:8b",
+    )
+
+    assert settings.EMBEDDING_BACKEND == "local"
+    assert settings.EMBEDDING_BATCH_SIZE == 16
+    assert settings.CPU_THREADS == 4
+    assert settings.PDF_EXTRACTION_MODE == "quality"
+    assert settings.LLM_MODEL == "qwen3:8b"
+
+
 def test_redis_cache_configuration_is_loaded_from_env_file_settings():
     settings = Settings(
         _env_file=None,
