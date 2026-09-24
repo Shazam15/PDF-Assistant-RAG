@@ -80,8 +80,9 @@ flowchart LR
 | `simple_rag` | Resumen, extracción, explicación o redacción directa. |
 | `research_rag` | Comparación o síntesis de múltiples documentos con rondas correctivas. |
 | `tool_agent` | Web, cálculos, revisión de código o acciones que realmente requieren herramientas. |
+| `code_review_agent` | Revisión y generación de código en el modo `Revisión de Código`; solo lectura, nunca escribe archivos. |
 
-El modo `Rápido` evita el agente y usa únicamente los documentos cargados. El modo `Investigación` fuerza recuperación profunda. `Auto` decide mediante alcance, estructura sustantiva de la tarea, herramientas necesarias y evidencia recuperada; los requisitos de estilo no activan por sí solos un agente.
+El modo `Rápido` evita el agente y usa únicamente los documentos cargados. El modo `Investigación` fuerza recuperación profunda. El modo `Revisión de Código` fuerza el bucle dedicado de rondas con verificación de sintaxis Python. `Auto` decide mediante alcance, estructura sustantiva de la tarea, herramientas necesarias y evidencia recuperada; los requisitos de estilo no activan por sí solos un agente.
 
 ## Stack
 
@@ -91,10 +92,12 @@ El modo `Rápido` evita el agente y usa únicamente los documentos cargados. El 
 | Backend | Python 3.11, FastAPI, SQLAlchemy, Alembic |
 | LLM | Ollama y modelos Qwen/Mistral configurables |
 | Investigación | LangGraph |
+| Herramientas externas | Model Context Protocol (MCP), solo lectura por defecto |
 | Extracción | Docling, PyMuPDF, pdfplumber, Tesseract |
 | Desarrollo local | SQLite, FTS5, Chroma |
 | Producción | PostgreSQL 16, pgvector, tsvector, pg_trgm |
 | Procesamiento asíncrono | Redis y Celery |
+| Observabilidad | Prometheus y Grafana; Langfuse autoalojado para trazas del razonamiento (opcional) |
 | Embeddings locales | Multilingual E5 |
 | Embeddings de investigación | Qwen3-Embedding-0.6B |
 | Reranking local | mMARCO MiniLM multilingüe |
@@ -107,7 +110,8 @@ PDF-Assistant-RAG/
 ├── backend/
 │   ├── app/
 │   │   ├── routes/              # REST, SSE y WebSocket
-│   │   ├── rag/                 # Router, recuperación y agente de investigación
+│   │   ├── rag/                 # Router, recuperación y agentes
+│   │   │   └── skills/          # Skills en Markdown cargables con `use_skill`
 │   │   ├── services/            # Ingesta, migración y mantenimiento
 │   │   ├── config.py            # Configuración centralizada
 │   │   ├── database.py          # SQLite/PostgreSQL
@@ -121,7 +125,7 @@ PDF-Assistant-RAG/
 │   └── package.json
 ├── scripts/
 │   └── init_postgres.sql        # Extensiones de PostgreSQL
-├── docs/ARCHITECTURE.md
+├── docs/                        # Arquitectura, bucles del agente, MCP, observabilidad y ADR
 ├── docker-compose.yml
 ├── Dockerfile
 ├── Makefile
@@ -508,6 +512,8 @@ Endpoints principales:
 | `POST` | `/api/v1/chat/ask/stream` | Respuesta mediante SSE. |
 | `WS` | `/api/v1/chat/ws` | Chat mediante WebSocket. |
 | `GET` | `/api/v1/chat/sessions` | Sesiones persistentes. |
+| `GET` | `/api/v1/admin/graphs` | Grafos de conocimiento persistidos (solo administradores). |
+| `GET` | `/api/v1/admin/graphs/{document_id}` | Entidades, relaciones y páginas de un grafo (solo administradores). |
 
 Las solicitudes de chat aceptan `routing_mode: "auto" | "quick" | "research" | "code_review"` y un identificador de documento opcional para restringir el alcance. El modo `code_review` fuerza el bucle Percibe-Razona-Actúa dedicado (ver `app/rag/code_review_agent.py`), con verificación automática de sintaxis Python entre rondas.
 

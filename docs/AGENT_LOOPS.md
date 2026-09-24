@@ -28,7 +28,7 @@ El paso 3 solo detecta frases explícitas ("lista los archivos"...); una pregunt
 
 ### 2.1 Herramientas vinculadas
 
-`build_agent_tools(user_id, document_id, top_k)` construye la lista completa: los cinco internos —`PDFSearchTool` (`pdf_search`), `CodeReviewTool` (`code_review`), `MathTool` (`calculator`), `WebSearchTool` (`web_search`), `StatisticsTool` (`statistics`)— más `load_mcp_tools()` (herramientas MCP descubiertas en tiempo de ejecución, ver §7). Es la misma lista, y el mismo `AgentExecutor`, el que despacha herramientas internas y MCP: no hay una ruta de despacho separada para MCP dentro del bucle del agente.
+`build_agent_tools(user_id, document_id, top_k)` construye la lista completa: los seis internos —`PDFSearchTool` (`pdf_search`), `CodeReviewTool` (`code_review`), `MathTool` (`calculator`), `WebSearchTool` (`web_search`), `StatisticsTool` (`statistics`), `SkillTool` (`use_skill`)— más `load_mcp_tools()` (herramientas MCP descubiertas en tiempo de ejecución, ver §7). Es la misma lista, y el mismo `AgentExecutor`, el que despacha herramientas internas y MCP: no hay una ruta de despacho separada para MCP dentro del bucle del agente.
 
 ### 2.2 Tope de iteraciones
 
@@ -176,6 +176,7 @@ Ver [`RETRIEVAL_MATH.md` §7](RETRIEVAL_MATH.md#7-verificación-de-afirmaciones)
 | `WebSearchTool` | `web_search` | consulta libre | Usa `DDGS().text(...)` (DuckDuckGo, sin clave de API); resultados envueltos entre `UNTRUSTED WEB RESULT ... END`; deduplicados por URL |
 | `CodeReviewTool` | `code_review` | código + lenguaje + foco | Nunca ejecuta el código recibido; solo pide al LLM una revisión textual |
 | `StatisticsTool` | `statistics` | datos numéricos + operación | Cálculos estadísticos sobre los datos que el propio LLM extrae y pasa como argumento, sin acceso a archivos ni al corpus |
+| `SkillTool` | `use_skill` | nombre de skill (vacío = catálogo) | Solo lee texto bajo `SKILLS_DIR`: nunca ejecuta nada, y `_resolve_resource_path` rechaza con `os.path.commonpath` cualquier recurso de nivel 3 que se salga del directorio de su propia skill. El catálogo de nivel 1 (nombre + descripción de cada skill) ya viaja embebido en la descripción de la herramienta, así que listarlas no cuesta una llamada |
 
 No existe una herramienta de ejecución de código ni un intérprete en sandbox entre las herramientas internas: `MathTool` es la única superficie de expresión evaluable, y está restringida a un whitelist de AST numérico.
 

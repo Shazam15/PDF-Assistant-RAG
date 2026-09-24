@@ -4,7 +4,7 @@ Este documento describe la arquitectura vigente de ATLAS, un sistema RAG orienta
 
 La fuente de verdad para valores configurables es `backend/app/config.py`. Las versiones de modelos e índices forman parte de las claves de caché y de los metadatos del corpus.
 
-El historial de cambios está en [`CHANGELOG.md`](../CHANGELOG.md). El detalle algorítmico —fórmulas, umbrales y constantes exactas— vive en tres documentos dedicados para no sobrecargar este mapa de alto nivel: [`RETRIEVAL_MATH.md`](RETRIEVAL_MATH.md) (fragmentación, embeddings, fusión híbrida, reranking, verificación y grafo de conocimiento), [`AGENT_LOOPS.md`](AGENT_LOOPS.md) (enrutador, bucle ReAct de herramientas y grafo de investigación) y [`MCP_TOOLS.md`](MCP_TOOLS.md) (herramientas MCP, exclusivas de esta rama).
+El historial de cambios está en [`CHANGELOG.md`](../CHANGELOG.md). El detalle algorítmico —fórmulas, umbrales y constantes exactas— vive en tres documentos dedicados para no sobrecargar este mapa de alto nivel: [`RETRIEVAL_MATH.md`](RETRIEVAL_MATH.md) (fragmentación, embeddings, fusión híbrida, reranking, verificación y grafo de conocimiento), [`AGENT_LOOPS.md`](AGENT_LOOPS.md) (enrutador, bucle ReAct de herramientas, grafo de investigación y bucle de revisión de código) y [`MCP_TOOLS.md`](MCP_TOOLS.md) (herramientas MCP, exclusivas de esta rama).
 
 ## Objetivos arquitectónicos
 
@@ -61,6 +61,7 @@ flowchart LR
 | Ingesta | Extracción, fragmentación, embeddings, perfiles, resúmenes y evidencias | Docling, PyMuPDF, OCR, Sentence Transformers |
 | Recuperador | Búsqueda densa y léxica, RRF, reranking y expansión de contexto | Chroma/pgvector, FTS5/tsvector, Qwen3 o modelos locales |
 | Agente de investigación | Planificación, búsquedas correctivas, ledger, auditoría, redacción y reparación | LangGraph y Ollama |
+| Agente de revisión de código | Rondas Percibe-Razona-Actúa con verificación de sintaxis Python entre ellas; solo lectura, nunca escribe archivos | Ejecutor ReAct propio, `ast` y Ollama |
 | Verificador | Validación de citas, números e inferencias | Comprobaciones deterministas y auditoría estructurada con LLM |
 | Persistencia | Usuarios, documentos, memoria, ejecuciones y conversaciones | SQLite local o PostgreSQL 16 en producción |
 | Procesamiento asíncrono | Ingesta fuera del ciclo HTTP | FastAPI BackgroundTasks o Celery + Redis |
@@ -223,7 +224,9 @@ flowchart TD
     Greeting -->|No| Quick{"Modo Rápido"}
     Quick -->|Sí, documento seleccionado| SR["scoped_rag"]
     Quick -->|Sí, corpus completo| DR["simple_rag"]
-    Quick -->|No| Tool{"¿Requiere web, cálculo o código?"}
+    Quick -->|No| CodeMode{"Modo Revisión de Código"}
+    CodeMode -->|Sí| CRA["code_review_agent"]
+    CodeMode -->|No| Tool{"¿Requiere web, cálculo o código?"}
     Tool -->|Sí| TA["tool_agent"]
     Tool -->|No| Scoped{"¿Documento seleccionado?"}
     Scoped -->|Sí| SR
@@ -244,12 +247,19 @@ flowchart TD
 | `simple_rag` | Resumen, extracción, explicación o redacción directa | No | No |
 | `research_rag` | Comparación, integración o síntesis multifuente | Sí | No |
 | `tool_agent` | Web actual, cálculo, código o herramientas externas | Según necesidad | Sí |
+| `code_review_agent` | Revisión o generación de código en el modo manual homónimo; bucle exterior de rondas con verificación de sintaxis Python entre ellas | No | Sí (ejecutor propio) |
 
 Los requisitos estilísticos, como “actúa como investigador”, abstract, keywords, secciones o citas, no activan por sí solos la ruta de investigación.
 
+### Skills del agente
+
+Las skills son procedimientos reutilizables en Markdown (`<nombre>/SKILL.md` bajo `SKILLS_DIR`), no código: el agente las carga bajo demanda con la herramienta `use_skill` (`backend/app/rag/skills.py`). La divulgación es progresiva en tres niveles —catálogo (nombre + descripción de todas, embebido en la descripción de la propia herramienta), cuerpo completo de una skill, y recursos auxiliares de esa skill— para que conocer el catálogo no cueste ni una llamada ni contexto de más.
+
+Quién decide cargarla depende de la ruta: en el `tool_agent` genérico es el modelo (`REQUIRED_TOOL_SKILL_MAP` ya no fuerza `code-review` por palabras clave; `statistics` conserva su inyección determinista), mientras que el modo `code_review` carga su skill al inicio de cada ejecución, porque ahí el usuario ya eligió explícitamente el modo. La resolución de recursos rechaza cualquier ruta que escape del directorio de la skill. Ver [`AGENT_LOOPS.md`](AGENT_LOOPS.md) §4.3.
+
 ### Herramientas MCP
 
-Además de sus herramientas internas (`pdf_search`, `web_search`, `calculator`, `statistics`, `code_review`), el agente ReAct puede usar herramientas [MCP](https://modelcontextprotocol.io/) (Model Context Protocol) declaradas en `MCP_SERVERS_JSON` (`backend/app/config.py`, `backend/app/rag/tools.py`). Ver [`MCP_TOOLS.md`](MCP_TOOLS.md) para el mecanismo completo de descubrimiento, aislamiento y despacho.
+Además de sus herramientas internas (`pdf_search`, `web_search`, `calculator`, `statistics`, `code_review`, `use_skill`), el agente ReAct puede usar herramientas [MCP](https://modelcontextprotocol.io/) (Model Context Protocol) declaradas en `MCP_SERVERS_JSON` (`backend/app/config.py`, `backend/app/rag/tools.py`). Ver [`MCP_TOOLS.md`](MCP_TOOLS.md) para el mecanismo completo de descubrimiento, aislamiento y despacho.
 
 - **Solo lectura por defecto**: `MCP_TOOL_ALLOWLIST` requiere coincidencia exacta de nombre de herramienta; sin entrada allowlisteada, la herramienta se descarta. Ninguna herramienta que pueda escribir/borrar/mover archivos está en el allowlist por defecto — ver `.env.example`.
 - **Descubrimiento cacheado**: `load_mcp_tools()` cachea la lista de herramientas descubiertas por proceso (spawnear el subproceso del servidor MCP en cada turno de chat sería demasiado lento); cada *llamada* a una herramienta sigue abriendo su propia sesión MCP.
@@ -510,12 +520,17 @@ La verificación automatizada cubre:
 | Reranker | `backend/app/rag/reranker.py` |
 | Router, agente de herramientas y verificación | `backend/app/rag/agent.py` |
 | Grafo de investigación (`research_rag`) | `backend/app/rag/research_agent.py` |
+| Bucle de revisión de código (`code_review_agent`) | `backend/app/rag/code_review_agent.py` |
+| Skills del agente (`use_skill`) | `backend/app/rag/skills.py`, `backend/app/rag/skills/` |
 | Construcción del grafo de conocimiento (GraphRAG, networkx + JSON en disco; ver [ADR 0001](adr/0001-almacenamiento-del-grafo-de-conocimiento.md)) | `backend/app/rag/graph_builder.py` |
 | Lectura del grafo de conocimiento | `backend/app/rag/graph_retriever.py` |
 | Herramientas internas y MCP | `backend/app/rag/tools.py` |
 | Identificadores académicos (DOI) en citas web | `backend/app/rag/scholarly.py` |
+| Trazabilidad del razonamiento (Langfuse) | `backend/app/rag/tracing.py` |
+| API administrativa y grafos persistidos | `backend/app/routes/admin.py` |
 | API de chat | `backend/app/routes/chat.py` |
 | UI de chat | `frontend/src/components/chat/ChatPanel.tsx` |
+| UI del grafo de conocimiento (consola admin) | `frontend/src/components/admin/KnowledgeGraphPanel.tsx` |
 | Benchmark | `backend/app/rag/benchmark.py` |
 | Historial de versiones | `CHANGELOG.md` |
 | Fórmulas y algoritmos de recuperación | `docs/RETRIEVAL_MATH.md` |
