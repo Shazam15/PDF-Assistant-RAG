@@ -87,7 +87,8 @@ El modo `Rápido` evita el agente y usa únicamente los documentos cargados. El 
 
 | Componente | Tecnología |
 |---|---|
-| Frontend | Next.js 16, React 19, TypeScript |
+| Frontend | Next.js 16, React 19, TypeScript, Tailwind CSS 3.4 |
+| Toolchain de frontend | Babel/Webpack en vez de SWC y Tailwind sin binario nativo, para CPUs sin AVX2 (ver [`frontend/README-avx2-fallback.md`](frontend/README-avx2-fallback.md)) |
 | Backend | Python 3.11, FastAPI, SQLAlchemy, Alembic |
 | LLM | Ollama y modelos Qwen/Mistral configurables |
 | Investigación | LangGraph |
@@ -118,10 +119,12 @@ PDF-Assistant-RAG/
 ├── frontend/
 │   ├── src/app/
 │   ├── src/components/
+│   ├── tailwind.config.ts       # Tailwind v3 (sin binario nativo)
+│   ├── babel.config.js          # Fuerza Babel/Webpack en vez de SWC
 │   └── package.json
 ├── scripts/
 │   └── init_postgres.sql        # Extensiones de PostgreSQL
-├── docs/ARCHITECTURE.md
+├── docs/                        # Arquitectura, bucles del agente y fórmulas de recuperación
 ├── CHANGELOG.md
 ├── docker-compose.yml
 ├── Dockerfile
@@ -157,6 +160,12 @@ Linux; PostgreSQL y Redis permanecen como los únicos servicios Docker obligator
 Para `lan_client`, ATLAS se ejecuta en un equipo sin GPU y Ollama sirve el LLM desde
 otra máquina de la red local. No se requiere driver NVIDIA ni GPU en el equipo que
 ejecuta ATLAS; sí se requiere alcanzar el puerto 11434 del host remoto.
+
+Esta rama usa un toolchain de frontend sin binarios nativos (Tailwind CSS 3.4 y
+Babel/Webpack) para que `next dev` y `next build` funcionen en CPUs anteriores a
+Haswell, sin AVX2. En un servidor moderno funciona igual, solo compila algo más
+lento; el motivo y el trade-off están en
+[`frontend/README-avx2-fallback.md`](frontend/README-avx2-fallback.md).
 
 ## Instalación local
 
@@ -777,12 +786,17 @@ Consulte [.env.example](.env.example) y [backend/app/config.py](backend/app/conf
 | `make install` | Instala backend y frontend. |
 | `make migrate` | Inicializa la base y aplica Alembic. |
 | `make dev` | Inicia FastAPI y Next.js. |
+| `make doctor-wsl` | Deduce la dirección de Windows desde la ruta por defecto de WSL y verifica perfil, Ollama, modelo, PostgreSQL y extensiones. |
+| `make dev-wsl` | Resuelve la dirección de Windows, ejecuta el diagnóstico e inicia ATLAS en WSL2. |
 | `make doctor-ubuntu` | Verifica T4, Ollama, modelo, PostgreSQL, extensiones y Redis. |
 | `make dev-ubuntu` | Ejecuta el diagnóstico e inicia backend, frontend y worker en Ubuntu. |
 | `make doctor-lan` | Verifica el host remoto de Ollama, sus modelos, la dimensión de los embeddings y la CPU local. |
 | `make dev-lan` | Ejecuta el diagnóstico e inicia backend, frontend y worker en un equipo sin GPU. |
 | `make dev-backend` | Inicia solo FastAPI en el puerto 7860. |
 | `make dev-frontend` | Inicia solo Next.js en el puerto 3000. |
+| `make dev-worker` | Inicia solo el worker de Celery. |
+| `make install-backend-wsl` | Instala el backend en WSL2 con las ruedas CPU de PyTorch. |
+| `make install-backend-ubuntu` | Instala el backend en Ubuntu con las ruedas CPU de PyTorch. |
 | `make test` | Ejecuta las pruebas del backend. |
 | `make lint` | Ejecuta lint de backend y frontend. |
 | `make build` | Compila el frontend. |

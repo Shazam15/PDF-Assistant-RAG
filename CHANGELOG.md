@@ -4,6 +4,8 @@ Este documento registra las versiones públicas y los hitos arquitectónicos rel
 
 El repositorio todavía no contiene tags de release. Por ello, las entradas anteriores a `2.0.0` se presentan como hitos de desarrollo fechados y vinculados a commits, sin asignarles números de versión retroactivos.
 
+> Esta rama (`frontend/tailwind-v3-no-avx2-fallback`) diverge de `experimental` justo después del hito `2.0.0`: ambas comparten la base RAG (fragmentación, embeddings, recuperación híbrida, grafo de investigación), el panel administrativo del grafo de conocimiento y el renderizado LaTeX. Lo propio de esta rama son los perfiles para hardware separado —`wsl_t4` (el predeterminado), `ubuntu_t4` y `lan_client`—, el backend de embeddings vía Ollama remoto y el toolchain de frontend sin AVX2. No incluye las herramientas MCP, el modo Revisión de Código, las skills del agente, la trazabilidad con Langfuse ni la resolución de DOI, que existen únicamente en `experimental`.
+
 ## [Unreleased]
 
 ### Añadido
@@ -39,6 +41,11 @@ El repositorio todavía no contiene tags de release. Por ello, las entradas ante
 - Incorporado este historial como fuente única para futuras notas de versión.
 - Corregida la referencia al perfil predeterminado de esta rama (`wsl_t4`, no `ubuntu_t4`) en `docs/ARCHITECTURE.md`.
 - Añadidas guías dedicadas a los mecanismos internos: [`docs/AGENT_LOOPS.md`](docs/AGENT_LOOPS.md) (bucle del agente de investigación, enrutador y agente de herramientas) y [`docs/RETRIEVAL_MATH.md`](docs/RETRIEVAL_MATH.md) (fórmulas de fragmentación, embeddings, fusión híbrida, reranking, verificación NLI y construcción del grafo de conocimiento).
+- Documentado el perfil `lan_client` en [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), que hasta ahora solo aparecía en el `README.md` y el `Makefile`: sección propia de perfil con su reparto de trabajo, topología de despliegue y la razón por la que el diagnóstico nunca deduce `OLLAMA_BASE_URL`.
+- Promovida a sección propia la guía de embeddings remotos vía Ollama, que estaba anidada bajo el perfil `wsl_t4` pese a ser el valor por defecto de `lan_client`.
+- Documentado en [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) y en el `README.md` el toolchain de frontend sin AVX2 (Tailwind 3.4 y Babel/Webpack), que hasta ahora solo se explicaba en [`frontend/README-avx2-fallback.md`](frontend/README-avx2-fallback.md) sin referencia desde la documentación principal.
+- Completada la tabla de comandos del `README.md`: faltaban `make doctor-wsl` y `make dev-wsl` —los del perfil predeterminado de esta rama—, además de `dev-worker`, `install-backend-wsl` e `install-backend-ubuntu`.
+- Añadida la nota de divergencia entre esta rama y `experimental` al encabezado de este historial.
 
 ## [2.0.0] - 2026-07-22
 

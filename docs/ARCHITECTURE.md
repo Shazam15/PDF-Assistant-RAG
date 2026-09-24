@@ -14,7 +14,7 @@ La versión pública actual de la API es `2.0.0`. Los cambios por versión y los
 - Recuperar información en español, inglés y otros idiomas sin vocabularios de dominio codificados.
 - Permitir investigación iterativa sin exponer cadena de pensamiento.
 - Conservar una ruta rápida para consultas directas y una ruta profunda para síntesis multifuente.
-- Operar con perfiles reproducibles para desarrollo ligero, Mac con MPS, servidores NVIDIA, Ubuntu/T4 bare metal y Windows/WSL2.
+- Operar con perfiles reproducibles para desarrollo ligero, Mac con MPS, servidores NVIDIA, Ubuntu/T4 bare metal, Windows/WSL2 y equipos sin GPU que alcanzan Ollama por la LAN.
 
 ## Vista general
 
@@ -145,9 +145,30 @@ activo. `make dev-ubuntu` solo arranca la aplicación cuando ese diagnóstico pa
 
 `backend/app/rag/llm_client.py` centraliza `base_url`, timeout y `keep_alive` para todas las etapas que usan Ollama, tanto para el LLM (`create_chat_ollama`) como para los embeddings (`create_ollama_embeddings`). `make doctor-wsl` valida el perfil, el modelo remoto, PostgreSQL y sus extensiones; `make dev-wsl` resuelve la dirección de Windows y ejecuta el diagnóstico antes de iniciar ATLAS.
 
-#### Embeddings en un host sin AVX2 ni GPU
+### Equipo sin GPU con Ollama en la LAN
+
+`lan_client` cubre el caso en que ATLAS corre en una máquina sin GPU —y posiblemente sin AVX2— mientras Ollama sirve el LLM desde otro equipo de la red local. La diferencia frente a `wsl_t4` no es el reparto de trabajo, que es casi el mismo, sino que aquí las dos mitades son máquinas distintas conectadas por Ethernet en vez de Windows y su WSL2:
+
+| Componente | Ubicación y configuración |
+| --- | --- |
+| Frontend, API y Celery | Equipo local sin GPU |
+| Persistencia | PostgreSQL 16 + pgvector en el equipo local si está disponible; a diferencia de los perfiles T4, aquí el diagnóstico solo avisa y acepta el almacén de corpus basado en archivos |
+| Ollama | Otro host de la LAN, alcanzado por `OLLAMA_BASE_URL` |
+| LLM | `qwen3:14b-q4_K_M`, contexto 8192, en el host remoto |
+| Embeddings | `qwen3-embedding:0.6b` en el host remoto (`EMBEDDING_BACKEND=ollama` por defecto), 1024 dimensiones, lote 8 |
+| Reranker, NLI y extracción PDF | CPU local; `PDF_EXTRACTION_MODE=fast` y `CPU_THREADS=0` para no sobresuscribir la máquina |
+
+`OLLAMA_BASE_URL` es obligatorio y la configuración falla al arrancar si está vacío. A diferencia de `dev-wsl`, los targets `doctor-lan` y `dev-lan` nunca deducen esa dirección de la ruta por defecto, porque en una LAN esa ruta apunta al router y no al servidor de Ollama. El diagnóstico es además el único que inspecciona las banderas de la CPU local: sin AVX2 avisa de que el frontend necesita el toolchain alternativo descrito abajo, y sin AVX en absoluto avisa de que las ruedas precompiladas de PyTorch —reranker, NLI y Docling— pueden abortar con *illegal instruction*.
+
+### Embeddings remotos vía Ollama
+
+Aplica a `lan_client`, donde es el valor por defecto, y opcionalmente a `wsl_t4`/`ubuntu_t4`.
 
 Cuando el equipo que ejecuta ATLAS es demasiado antiguo o débil para calcular embeddings localmente (por ejemplo, una CPU anterior a Haswell sin AVX2, sin GPU), `EMBEDDING_BACKEND=ollama` delega ese cálculo al mismo servidor Ollama que ya sirve el LLM (`EMBEDDING_OLLAMA_MODEL`, por defecto `qwen3-embedding:0.6b`). Requiere `ollama pull qwen3-embedding:0.6b` en el host remoto; `make doctor-*` verifica que el modelo esté disponible ahí antes de arrancar. El backend por defecto sigue siendo `local` (sentence-transformers en proceso); cambiar de backend cambia el motor de inferencia del mismo modelo, así que conviene bumpear `EMBEDDING_INDEX_VERSION` para forzar una reindexación en vez de mezclar vectores calculados por dos motores distintos.
+
+### Toolchain de frontend sin AVX2
+
+El toolchain de frontend por defecto incluye dos binarios nativos en Rust que asumen AVX2 en Linux x64: el compilador SWC de Next.js (`@next/swc-linux-x64-gnu`) y el motor de Tailwind CSS v4 (`@tailwindcss/oxide`). En una CPU anterior a Haswell, invocarlos falla con *illegal instruction*, y el reintento sin backoff llegaba a agotar la memoria de la máquina. Esta rama sustituye ambos: Tailwind CSS v3.4 (JS/PostCSS puro, con `tailwind.config.ts` explícito), Next.js forzado a Babel/Webpack mediante `babel.config.js`, y las fuentes servidas con `<link>` en vez de `next/font`. El servidor Xeon/T4 real tiene AVX2 y no necesita nada de esto; el detalle y el trade-off cosmético conocido están en [`frontend/README-avx2-fallback.md`](../frontend/README-avx2-fallback.md).
 
 ## Modelo de datos
 
@@ -540,6 +561,8 @@ El `Dockerfile` ejecuta `init_db`, aplica `alembic upgrade head` y luego inicia 
 
 Para el despliegue Windows/T4 recomendado, no se usan los contenedores de aplicación ni GPU: `docker compose up -d postgres` inicia únicamente PostgreSQL, mientras frontend y backend corren en WSL y Ollama corre en Windows. La T4 queda reservada para un solo modelo generativo; embeddings, reranking y NLI se ejecutan en CPU. La guía operativa completa está en la sección “Tesla T4 y Qwen3-14B” del `README.md`.
 
+Para el despliegue `lan_client` no se usan contenedores de aplicación ni GPU: el equipo local ejecuta frontend, backend y PostgreSQL, y toda la inferencia generativa —LLM y embeddings— viaja por la LAN al host de Ollama. Si la interfaz se abre desde otra máquina, `ALLOWED_ORIGINS`, `FRONTEND_URL` y `NEXT_PUBLIC_API_URL` deben nombrar la IP del equipo que ejecuta ATLAS. La guía operativa completa está en la sección “Equipo sin GPU con Ollama en otra máquina de la LAN” del `README.md`.
+
 Para Ubuntu/T4 bare metal se ejecutan `postgres` y `redis` en Docker; Ollama,
 FastAPI y Celery son servicios locales. Caddy sirve la exportación estática del
 frontend y reenvía `/api/*` a FastAPI con streaming inmediato y timeouts de 35
@@ -628,13 +651,14 @@ La verificación automatizada cubre:
 | Construcción del grafo de conocimiento (GraphRAG) | `backend/app/rag/graph_builder.py` |
 | Lectura del grafo de conocimiento | `backend/app/rag/graph_retriever.py` |
 | Cliente Ollama compartido (LLM y embeddings) | `backend/app/rag/llm_client.py` |
-| Diagnóstico WSL/T4 | `backend/app/runtime_doctor.py` |
+| Diagnóstico de entorno (WSL/T4, Ubuntu/T4 y cliente LAN) | `backend/app/runtime_doctor.py` |
 | API de chat | `backend/app/routes/chat.py` |
 | UI de chat | `frontend/src/components/chat/ChatPanel.tsx` |
 | Benchmark | `backend/app/rag/benchmark.py` |
 | Historial de versiones | `CHANGELOG.md` |
 | Fórmulas y algoritmos de recuperación | `docs/RETRIEVAL_MATH.md` |
 | Bucles del agente y herramientas | `docs/AGENT_LOOPS.md` |
+| Toolchain de frontend sin AVX2 | `frontend/README-avx2-fallback.md`, `frontend/tailwind.config.ts`, `frontend/babel.config.js` |
 
 ## Invariantes de mantenimiento
 
