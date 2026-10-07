@@ -24,6 +24,7 @@ from app.rag.retriever import ResearchBrief, ResearchPlan, build_research_plan, 
 from app.rag.research_agent import ResearchDependencies, run_research_agent, stream_research_agent
 from app.rag.graph_retriever import get_entity_context
 from app.rag.prompts import AGENT_SYSTEM_PROMPT, RAG_PROMPT_TEMPLATE
+from app.rag.scholarly import doi_url, normalize_doi
 from app.exceptions import ExternalServiceException
 from app.rag.security import MALFORMED_OUTPUT_MESSAGE, OutputParserError, parse_agent_output
 from app.rag.skills import load_skill
@@ -913,29 +914,45 @@ def _parse_sources_from_observation(observation: str) -> List[Dict[str, Any]]:
             }
         )
 
+    # The title, URL and DOI each occupy exactly one line in format_web_sources,
+    # so they are matched with [^\n]* rather than the DOTALL-enabled ".*?": a
+    # lazy "." spans newlines here, and before the DOI line existed that was
+    # harmless, but it made the url group swallow "...\nDOI: 10.x/y" whenever a
+    # DOI had been resolved. The polluted URL then produced a second
+    # _agent_source_key for a source already collected from the tool's own
+    # state, so one web result surfaced twice — once correct, once with a
+    # broken URL and no DOI. The DOI group is optional because a source whose
+    # identifier could not be established carries no DOI line at all.
     web_pattern = re.compile(
         r"UNTRUSTED WEB RESULT.*?\n"
-        r"Source \[(?P<source_id>W\d+)\]: (?P<title>.*?)\n"
-        r"URL: (?P<url>.*?)\n"
+        r"Source \[(?P<source_id>W\d+)\]: (?P<title>[^\n]*)\n"
+        r"URL: (?P<url>[^\n]*)\n"
+        r"(?:DOI: (?P<doi>[^\n]*)\n)?"
         r"Snippet: (?P<snippet>.*?)\nEND UNTRUSTED WEB RESULT",
         flags=re.DOTALL,
     )
     for match in web_pattern.finditer(observation or ""):
         snippet = match.group("snippet").strip()
-        recovered.append(
-            {
-                "source_type": "web",
-                "source_id": match.group("source_id"),
-                "title": match.group("title").strip(),
-                "filename": match.group("title").strip(),
-                "url": match.group("url").strip(),
-                "snippet": snippet,
-                "text": snippet,
-                "page": 0,
-                "score": 1.0,
-                "confidence": 100.0,
-            }
-        )
+        source = {
+            "source_type": "web",
+            "source_id": match.group("source_id"),
+            "title": match.group("title").strip(),
+            "filename": match.group("title").strip(),
+            "url": match.group("url").strip(),
+            "snippet": snippet,
+            "text": snippet,
+            "page": 0,
+            "score": 1.0,
+            "confidence": 100.0,
+        }
+        # Re-normalize instead of trusting the parsed text: this observation is
+        # assembled from untrusted web content, and doi_url ends up as an href
+        # in the UI, so a malformed identifier is dropped rather than linked.
+        doi = normalize_doi(match.group("doi") or "")
+        if doi:
+            source["doi"] = doi
+            source["doi_url"] = doi_url(doi)
+        recovered.append(source)
     return recovered
 
 

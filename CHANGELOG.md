@@ -33,6 +33,10 @@ El repositorio todavía no contiene tags de release. Por ello, las entradas ante
 - Nuevas dependencias del backend: `langfuse>=4.15,<5.0` (trazabilidad; el mayor queda fijado hasta portar `app/rag/tracing.py` al SDK v5), `mcp[cli]<2.0.0` y `langchain-mcp-adapters` (herramientas MCP; el tope evita el `ImportError` de `MultiServerMCPClient` con `mcp` 2.x) y `scipy`. En el frontend: `cytoscape` (visualización del grafo de conocimiento) y `katex`/`rehype-katex`/`remark-math` (fórmulas LaTeX).
 - `fastapi` y `starlette` quedan acotados a `fastapi<0.116` y `starlette<1.0` en `backend/requirements.txt` (`23e1657`). El motivo del tope no está registrado junto a la restricción; conviene anotarlo ahí antes de subirlo.
 
+### Corregido
+
+- Una fuente web con DOI resuelto aparecía duplicada en la lista de fuentes: la expresión regular de `_parse_sources_from_observation` (`agent.py`) esperaba `URL:` seguido directamente de `Snippet:`, y bajo `re.DOTALL` su grupo perezoso `.*?` absorbía la línea `DOI:` dentro de la URL. La URL contaminada generaba una `_agent_source_key` distinta de la de la misma fuente ya recolectada del estado de la herramienta, así que el deduplicador no las unía: la respuesta mostraba `W1` correcta y `W2` con la URL rota y sin DOI. Los grupos de título, URL y DOI pasan a estar acotados a una línea, el DOI se captura (antes se perdía en este camino) y se vuelve a normalizar con `normalize_doi` en vez de confiar en el texto parseado, porque la observación se arma con contenido web no confiable y `doi_url` termina como `href` en la interfaz. Cubierto por cuatro pruebas nuevas en `tests/test_agent.py`, incluida una del recorrido completo resolución → formato → re-parseo → recolección, que era la frontera que ninguna prueba cruzaba.
+
 ### Documentación
 
 - Corregido el presupuesto documentado del grafo de investigación (`RESEARCH_TIMEOUT_SECONDS=1800`, `LLM_REQUEST_TIMEOUT_SECONDS=900`; `docs/ARCHITECTURE.md` describía valores desactualizados de 180/90 segundos de una configuración anterior).

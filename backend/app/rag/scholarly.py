@@ -148,8 +148,8 @@ def lookup_doi_by_title(title: str) -> Optional[str]:
 
     Crossref always returns its best guess, so an unchecked result would happily
     attach a confident-looking DOI for a different paper. The returned title is
-    compared against the one we searched for and anything below the configured
-    similarity threshold is discarded.
+    compared against the one we searched for with `_titles_match`, and anything
+    that does not match is discarded.
 
     Never raises: a network failure means no DOI, never a failed search.
     """

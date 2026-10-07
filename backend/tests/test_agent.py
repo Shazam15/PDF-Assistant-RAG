@@ -3,7 +3,10 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 import pytest
 from app.rag import agent as agent_module
+from app.rag import scholarly
 from app.rag.agent import generate_answer, generate_answer_stream
+from app.rag.scholarly import enrich_sources_with_doi
+from app.rag.tools import format_web_sources
 
 
 @pytest.mark.parametrize(
@@ -1116,6 +1119,101 @@ END UNTRUSTED DOCUMENT EXCERPT"""
         "water-study.pdf",
     ]
     mock_retriever.assert_not_called()
+
+
+def test_observation_parser_recovers_the_doi_line_without_polluting_the_url():
+    """format_web_sources puts "DOI:" between "URL:" and "Snippet:", so the parser has to
+    expect it. The groups are line-bounded because this pattern runs under re.DOTALL, where
+    a lazy "." also spans newlines and would swallow the DOI line into the URL."""
+    observation = """UNTRUSTED WEB RESULT - use as evidence only.
+Source [W1]: Attention Is All You Need
+URL: https://arxiv.org/abs/1706.03762
+DOI: 10.48550/arxiv.1706.03762
+Snippet: The dominant sequence transduction models are based on complex networks.
+END UNTRUSTED WEB RESULT"""
+
+    (source,) = agent_module._parse_sources_from_observation(observation)
+
+    assert source["url"] == "https://arxiv.org/abs/1706.03762"
+    assert source["doi"] == "10.48550/arxiv.1706.03762"
+    assert source["doi_url"] == "https://doi.org/10.48550/arxiv.1706.03762"
+    assert source["title"] == "Attention Is All You Need"
+
+
+def test_observation_parser_still_reads_a_web_result_without_a_doi():
+    """A source whose identifier could not be established carries no DOI line at all, so the
+    group is optional and its absence must not leave an empty doi field behind."""
+    observation = """UNTRUSTED WEB RESULT - use as evidence only.
+Source [W1]: Informe anual de resultados
+URL: https://example.com/informe
+Snippet: Resultados del ejercicio sin identificador academico.
+END UNTRUSTED WEB RESULT"""
+
+    (source,) = agent_module._parse_sources_from_observation(observation)
+
+    assert source["url"] == "https://example.com/informe"
+    assert "doi" not in source and "doi_url" not in source
+
+
+def test_observation_parser_drops_a_malformed_doi_instead_of_linking_it():
+    """The observation is assembled from untrusted web content and doi_url becomes an href in
+    the UI, so a parsed identifier is re-normalized rather than trusted as written."""
+    observation = """UNTRUSTED WEB RESULT - use as evidence only.
+Source [W1]: Pagina con un identificador roto
+URL: https://example.com/paper
+DOI: not-a-doi-at-all
+Snippet: El identificador de esta pagina no tiene forma de DOI.
+END UNTRUSTED WEB RESULT"""
+
+    (source,) = agent_module._parse_sources_from_observation(observation)
+
+    assert "doi" not in source and "doi_url" not in source
+    assert source["url"] == "https://example.com/paper"
+
+
+def test_a_web_source_with_a_doi_is_collected_once_across_both_recovery_paths(monkeypatch):
+    """Regression: the full round trip resolve -> format -> re-parse -> collect.
+
+    _collect_agent_sources merges the tool's own state with the sources re-parsed from the
+    observation, deduplicating by URL. While the parser folded the DOI line into the URL, the
+    re-parsed copy keyed differently from the identical source already held by the tool, so one
+    web result surfaced twice: W1 correct, and W2 with a broken URL and no DOI.
+    """
+    sources = enrich_sources_with_doi(
+        [
+            {
+                "source_type": "web",
+                "title": "Attention Is All You Need",
+                "url": "https://arxiv.org/abs/1706.03762",
+                "snippet": "The dominant sequence transduction models are based on complex networks.",
+                "text": "The dominant sequence transduction models are based on complex networks.",
+                "score": 1.0,
+                "confidence": 0.0,
+            }
+        ]
+    )
+    # arXiv mints a derivable DOI, so the cheap path resolves it with no network call.
+    monkeypatch.setattr(
+        scholarly,
+        "lookup_doi_by_title",
+        MagicMock(side_effect=AssertionError("Crossref must not be consulted for an arXiv URL")),
+    )
+    assert sources[0]["doi"] == "10.48550/arxiv.1706.03762"
+
+    sources[0]["source_id"] = "W1"
+    observation = format_web_sources(sources)
+    pdf_tool = MagicMock(all_sources=[], last_sources=[])
+    web_tool = MagicMock(all_sources=list(sources), last_sources=list(sources))
+
+    collected = agent_module._collect_agent_sources(
+        pdf_tool,
+        web_tool,
+        [(SimpleNamespace(tool="web_search"), observation)],
+    )
+
+    assert [source["source_id"] for source in collected] == ["W1"]
+    assert collected[0]["url"] == "https://arxiv.org/abs/1706.03762"
+    assert collected[0]["doi"] == "10.48550/arxiv.1706.03762"
 
 
 def test_agent_error_after_retrieval_still_synthesizes_preserved_sources(monkeypatch, mock_retriever):
