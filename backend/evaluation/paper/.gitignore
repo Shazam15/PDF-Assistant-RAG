@@ -1,0 +1,6 @@
+# Contienen texto de tus documentos y respuestas del modelo: revisa antes de publicarlos.
+results/
+judgments_pool.csv
+*.sin_gold.jsonl
+__pycache__/
+server_info.json

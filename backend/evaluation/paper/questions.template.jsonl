@@ -1,0 +1,3 @@
+{"id": "q001", "question": "<pregunta factual sobre UN documento del corpus>", "reference": "<respuesta de referencia redactada por ti>", "tags": ["factual", "lexical"], "gold": [{"filename": "<nombre original del PDF tal como lo subiste>.pdf", "page": 4, "grade": 2}]}
+{"id": "q002", "question": "<pregunta que compara DOS o más documentos>", "reference": "<respuesta de referencia>", "tags": ["multidoc"], "gold": [{"filename": "<documento A>.pdf", "page": 7, "grade": 2}, {"filename": "<documento B>.pdf", "page": 3, "grade": 1}]}
+{"id": "q003", "question": "<pregunta cuya evidencia está en cualquier parte de un documento>", "reference": "<respuesta de referencia>", "tags": ["sintesis"], "gold": [{"filename": "<documento C>.pdf"}]}
