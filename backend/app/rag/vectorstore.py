@@ -28,6 +28,35 @@ def _sqlite_fts_query(query: str, max_terms: int = 64) -> str:
     return " OR ".join(terms)
 
 
+# Function words dropped from the PostgreSQL lexical query. ts_rank_cd has no
+# IDF term (unlike SQLite's BM25), so with OR semantics they would match almost
+# every chunk and dominate the ranking.
+_LEXICAL_STOPWORDS = frozenset(
+    "a al algo como con cual cuales cuando de del desde donde e el ella ellas ellos en entre es esa ese esta "
+    "este esto fue la las le les lo los mas más o para pero por que qué se segun según ser si sin sobre su sus "
+    "un una unas uno unos y "
+    "about an and are as at be by did do does for from how in into is it its of on or that the their this to "
+    "was were what when where which who why with".split()
+)
+
+
+def _postgres_tsquery(query: str, max_terms: int = 64) -> str:
+    """OR-combine the query's content words, mirroring the SQLite FTS path.
+
+    websearch_to_tsquery ANDs every word, so a natural-language question only
+    matched chunks containing all of its words — in practice none.
+    """
+    terms: List[str] = []
+    for token in re.findall(r"[^\W_]+", query, flags=re.UNICODE):
+        normalized = token.casefold()
+        if normalized in _LEXICAL_STOPWORDS or normalized in terms:
+            continue
+        terms.append(normalized)
+        if len(terms) >= max_terms:
+            break
+    return " | ".join(terms)
+
+
 def _chunk_payload(chunk: Dict[str, Any], document_id: str, filename: str, user_id: str) -> Dict[str, Any]:
     section = chunk.get("section_title") or chunk.get("section")
     context_labels = [filename]
@@ -479,11 +508,14 @@ def query_lexical_chunks(
         "top_k": top_k,
     }
     if engine.dialect.name == "postgresql":
+        params["query"] = _postgres_tsquery(query)
+        if not params["query"]:
+            return []
         scope = "AND document_id=CAST(:document_id AS uuid)" if document_id else (
             "AND document_id=ANY(CAST(:document_ids AS uuid[]))" if document_ids else ""
         )
         statement = text(
-            "WITH q AS (SELECT websearch_to_tsquery('simple', :query) AS value) "
+            "WITH q AS (SELECT to_tsquery('simple', :query) AS value) "
             "SELECT id,text,filename,document_id,page,page_start,page_end,chunk_index,chunk_type,parent_id,"
             "parent_text,section_id,section_title,bbox,table_index,"
             "ts_rank_cd(to_tsvector('simple', COALESCE(search_text,text)), q.value) AS score "

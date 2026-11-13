@@ -81,10 +81,25 @@ def get_llm_client(hf_token: Optional[str] = None, max_tokens: Optional[int] = N
     )
 
 
-def _structured_system_prompt(instruction: str) -> str:
-    """Disable free-form thinking only for schema-constrained model calls."""
+def _structured_system_prompt(instruction: str, schema: Optional[type] = None) -> str:
+    """Disable free-form thinking only for schema-constrained model calls.
+
+    With a schema, the expected keys are spelled out in the prompt as well:
+    a grammar-constrained model that does not know them may emit only
+    whitespace until it runs out of tokens.
+    """
     prefix = "/no_think\n" if settings.LLM_DISABLE_THINKING else ""
-    return prefix + instruction
+    if schema is None:
+        return prefix + instruction
+    fields = "; ".join(
+        f"{name} ({'list of integers' if 'int' in str(field.annotation) else 'list of strings'}): "
+        f"{field.description}"
+        for name, field in schema.model_fields.items()
+    )
+    return (
+        f"{prefix}{instruction}\nRespond with only a JSON object with exactly these keys: {fields} "
+        "Use an empty list when nothing applies."
+    )
 
 
 def _format_chat_history(messages: List[Dict[str, str]], max_chars: int = 6000) -> str:
@@ -1226,6 +1241,20 @@ def _build_direct_rag_prompt(
     chat_history: Optional[List[Dict[str, str]]] = None,
     style_reference: Optional[str] = None,
 ) -> str:
+    # Unlike the research/audit prompt builders, this path never bounded `context`
+    # against the model's context window — a broad/unscoped query that matches
+    # several documents' expanded parent chunks can assemble tens of thousands of
+    # characters of context, which Ollama then hard-rejects with a raw 400
+    # "exceeds the available context size" error instead of a normal answer.
+    budget = _llm_prompt_char_budget(settings.AGENT_SYNTHESIS_MAX_TOKENS)
+    if len(context) > budget:
+        logger.warning(
+            "Direct RAG context (%d chars) exceeds the prompt budget (%d chars); truncating.",
+            len(context),
+            budget,
+        )
+        context = context[:budget] + "\n...[contexto truncado por límite de tokens]"
+
     history = _format_chat_history(chat_history) if chat_history else ""
     prompt = RAG_PROMPT_TEMPLATE.format(
         context=context,
@@ -1703,17 +1732,22 @@ def _retrieved_document_count(raw_sources: List[Dict[str, Any]]) -> int:
     return len({_document_key(source) for source in raw_sources if _document_key(source)})
 
 
+# The audit schemas are sent to Ollama as a JSON schema (method="json_schema"),
+# so every field is required: with json_mode the model never saw the field
+# names, invented its own keys, and the defaults silently emptied the audit.
 class _CoverageAudit(BaseModel):
-    supported_indices: List[int] = Field(default_factory=list)
-    missing_indices: List[int] = Field(default_factory=list)
-    relevant_evidence_indices: List[int] = Field(default_factory=list)
-    conflicts: List[str] = Field(default_factory=list)
+    supported_indices: List[int] = Field(description="Numbers of the facets with direct evidence.")
+    missing_indices: List[int] = Field(description="Numbers of the facets without direct evidence.")
+    relevant_evidence_indices: List[int] = Field(
+        description="Numbers of the excerpts that contribute direct evidence."
+    )
+    conflicts: List[str] = Field(description="Concise descriptions of contradictions between excerpts.")
 
 
 class _ClaimAudit(BaseModel):
-    unsupported_claims: List[str] = Field(default_factory=list)
-    unmarked_inferences: List[str] = Field(default_factory=list)
-    wrong_citations: List[str] = Field(default_factory=list)
+    unsupported_claims: List[str] = Field(description="Answer sentences not entailed by their cited excerpt.")
+    unmarked_inferences: List[str] = Field(description="Answer sentences that infer without saying so.")
+    wrong_citations: List[str] = Field(description="Answer sentences whose citation points to the wrong excerpt.")
 
 
 def _bounded_audit_evidence(evidence: List[Dict[str, Any]], max_chars: int) -> str:
@@ -1758,13 +1792,14 @@ def _audit_research_coverage(brief: ResearchBrief, evidence: List[Dict[str, Any]
     try:
         from langchain_core.messages import SystemMessage, HumanMessage
 
-        judge = get_llm_client(max_tokens=768).with_structured_output(_CoverageAudit, method="json_mode")
+        judge = get_llm_client(max_tokens=768).with_structured_output(_CoverageAudit, method="json_schema")
         audit = judge.invoke([
             SystemMessage(content=_structured_system_prompt(
                 "Audit whether the retrieved excerpts contain direct, usable evidence for each numbered facet. "
                 "Do not answer the research question and do not infer missing facts. Mark a facet supported only "
                 "when at least one excerpt addresses it substantively. Also return the numbers of every excerpt "
-                "that contributes direct evidence; exclude merely tangential excerpts. Return concise conflicts."
+                "that contributes direct evidence; exclude merely tangential excerpts. Return concise conflicts.",
+                schema=_CoverageAudit,
             )),
             HumanMessage(content=f"FACETS\n{facets_text}\n\nEXCERPTS\n{evidence_text}"),
         ])
@@ -1773,15 +1808,18 @@ def _audit_research_coverage(brief: ResearchBrief, evidence: List[Dict[str, Any]
         valid = set(range(1, len(brief.facets) + 1))
         supported_indices = set(audit.supported_indices) & valid
         missing_indices = (set(audit.missing_indices) & valid) | (valid - supported_indices)
+        relevant_indices = [
+            index - 1
+            for index in audit.relevant_evidence_indices
+            if 1 <= index <= len(evidence)
+        ]
         return {
             "supported": [brief.facets[index - 1] for index in sorted(supported_indices)],
             "missing": [brief.facets[index - 1] for index in sorted(missing_indices - supported_indices)],
             "conflicts": audit.conflicts[:8],
-            "relevant_indices": [
-                index - 1
-                for index in audit.relevant_evidence_indices
-                if 1 <= index <= len(evidence)
-            ],
+            # An audit that supports facets but names no excerpt is inconsistent;
+            # None keeps all evidence instead of discarding it.
+            "relevant_indices": relevant_indices if relevant_indices or not supported_indices else None,
         }
     except Exception as exc:
         logger.warning("Semantic evidence audit failed; using retrieval provenance: %s", exc)
@@ -1818,12 +1856,13 @@ def _semantic_claim_issues(
             evidence,
             max_context_chars=max(2400, audit_prompt_budget - len(answer) - 1600),
         )
-        judge = get_llm_client(max_tokens=900).with_structured_output(_ClaimAudit, method="json_mode")
+        judge = get_llm_client(max_tokens=900).with_structured_output(_ClaimAudit, method="json_schema")
         audit = judge.invoke([
             SystemMessage(content=_structured_system_prompt(
                 "Audit claim-to-evidence fidelity. A direct claim must be entailed by its cited excerpt. A bounded "
                 "cross-source inference is acceptable only when explicitly labeled as an inference and all premises "
-                "are cited. Copy problematic answer sentences exactly. Do not criticize style or missing topics."
+                "are cited. Copy problematic answer sentences exactly. Do not criticize style or missing topics.",
+                schema=_ClaimAudit,
             )),
             HumanMessage(content=f"EVIDENCE\n{context}\n\nANSWER\n{answer}"),
         ])

@@ -258,6 +258,14 @@ def main() -> None:
                 elif isinstance(value, (int, float)) and not isinstance(value, bool) and name not in {"recall_at_20", "ndcg_at_10"}:
                     add(label, run["condition"], run["qid"], name, value)
 
+    # run_meta.json only lists the conditions of the last invocation of 03_run_ablation.py (e.g. a
+    # rerun with --conditions C5); report every condition that actually has runs.
+    for label in labels:
+        present = {row["condition"] for row in per_run if row["label"] == label}
+        declared = metas[label]["conditions"]
+        metas[label]["conditions"] = {c: declared.get(c, "") if isinstance(declared, dict) else ""
+                                      for c in CONDITION_NAMES if c in present or c in declared}
+
     def q_values(label: str, condition: str, metric: str) -> Dict[str, float]:
         return {qid: mean(values[metric]) for (lab, cond, qid), values in perq.items()
                 if lab == label and cond == condition and values.get(metric)}
