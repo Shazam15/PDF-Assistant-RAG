@@ -25,6 +25,38 @@ from typing import Any, Dict, List
 import _common
 
 METRIC_ALIASES = {"faithful": "faithfulness", "factual": "factual_correctness", "recall": "context_recall"}
+METRICS = tuple(METRIC_ALIASES.values())
+
+# RAGAS sends anonymous usage events to its authors by default; the evaluation must not contact third parties.
+os.environ.setdefault("RAGAS_DO_NOT_TRACK", "true")
+
+
+def _stub_vertexai_imports() -> None:
+    """Let RAGAS import with langchain-community >= 0.4, which dropped the Vertex AI wrappers.
+
+    ``ragas.llms.base`` imports ``ChatVertexAI`` and ``VertexAI`` only for isinstance checks; with a local
+    Ollama judge those checks are always false, so empty placeholder classes are equivalent.
+    """
+    import importlib.util
+    import sys
+    import types
+
+    try:
+        if importlib.util.find_spec("langchain_community.chat_models.vertexai") is None:
+            module = types.ModuleType("langchain_community.chat_models.vertexai")
+            module.ChatVertexAI = type("ChatVertexAI", (), {})
+            sys.modules[module.__name__] = module
+        import langchain_community.llms as community_llms
+
+        if not hasattr(community_llms, "VertexAI"):
+            community_llms.VertexAI = type("VertexAI", (), {})
+    except ModuleNotFoundError:
+        pass  # without langchain-community, RAGAS reports its own missing dependency
+
+
+def _scored(row: Dict[str, Any]) -> bool:
+    """A run counts as done when the judge produced at least one metric (failed calls are retried)."""
+    return any(row.get(name) is not None for name in METRICS)
 
 
 def ollama_base_url() -> str:
@@ -55,6 +87,7 @@ def bounded_contexts(contexts: List[str], max_total: int) -> List[str]:
 
 
 def build_evaluator(args):
+    _stub_vertexai_imports()
     from langchain_ollama import ChatOllama
     from ragas.llms import LangchainLLMWrapper
 
@@ -130,7 +163,8 @@ def main() -> None:
     if not args.include_abstentions:
         runs = [r for r in runs if not r.get("abstained")]
     scores_path = out_dir / "ragas_scores.jsonl"
-    done = {row["key"] for row in _common.read_jsonl(scores_path)}
+    # A key may appear twice after a retry; 05_make_tables.py keeps the last row, which is the scored one.
+    done = {row["key"] for row in _common.read_jsonl(scores_path) if _scored(row)}
     pending = [r for r in runs if r["key"] not in done]
     _common.write_json(out_dir / "ragas_meta.json", {
         "judge_model": args.judge_model,
@@ -153,6 +187,13 @@ def main() -> None:
         eta = (time.perf_counter() - started) / finished * (len(pending) - finished)
         print(f"  {finished}/{len(pending)} | ETA {eta / 60:.0f} min")
     print(f"Guardado en {scores_path}")
+    latest = {row["key"]: row for row in _common.read_jsonl(scores_path)}
+    wanted = [latest[r["key"]] for r in runs if r["key"] in latest]
+    missing = {name: sum(1 for row in wanted if row.get(name) is None) for name in METRICS}
+    failed = sum(1 for row in wanted if not _scored(row))
+    print(f"Puntuadas {len(wanted) - failed}/{len(runs)}; sin valor por métrica: {missing}")
+    if failed:
+        print(f"{failed} ejecuciones sin ninguna métrica: relanza el mismo comando para reintentarlas.")
 
 
 if __name__ == "__main__":
