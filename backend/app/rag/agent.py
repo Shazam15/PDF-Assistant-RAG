@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 from app.rag.retriever import ResearchBrief, ResearchPlan, build_research_plan, retrieve
 from app.rag.research_agent import ResearchDependencies, run_research_agent, stream_research_agent
 from app.rag.graph_retriever import get_entity_context
+from app.rag.mediation import mediate_claims, rescuable_draft
 from app.rag.prompts import AGENT_SYSTEM_PROMPT, RAG_PROMPT_TEMPLATE
 from app.rag.scholarly import doi_url, normalize_doi
 from app.exceptions import ExternalServiceException
@@ -1317,6 +1318,37 @@ def _prune_unsupported_claims(
     return "\n".join(output_lines).strip()
 
 
+def _mediate_or_prune(
+    answer: str,
+    sources: List[Dict[str, Any]],
+    evidence_chunks: Optional[List[Dict[str, Any]]] = None,
+    verify_entailment: bool = False,
+) -> str:
+    """Let the model anchor flagged claims to verbatim quotes, or prune them as before."""
+    if settings.CLAIM_MEDIATION_ENABLED:
+        return mediate_claims(answer, sources, evidence_chunks).answer
+    return _prune_unsupported_claims(answer, sources, evidence_chunks, verify_entailment=verify_entailment)
+
+
+def _rescue_uncited_draft(
+    draft: str,
+    sources: List[Dict[str, Any]],
+    evidence_chunks: Optional[List[Dict[str, Any]]] = None,
+) -> str:
+    """Attach verified citations to a draft rejected only for lacking them.
+
+    The paper found that most abstentions happened with the answer present in
+    the evidence: the draft was right but uncited. Returns "" when not rescued.
+    """
+    if not settings.CLAIM_MEDIATION_ENABLED or not rescuable_draft(draft, sources):
+        return ""
+    rescued = mediate_claims(draft, sources, evidence_chunks).answer
+    if not rescued:
+        return ""
+    validated = _validate_answer_citations(rescued, sources)
+    return "" if validated == INSUFFICIENT_EVIDENCE_MESSAGE else validated
+
+
 def _refine_recovered_sources(
     question: str,
     raw_sources: List[Dict[str, Any]],
@@ -1634,6 +1666,7 @@ def _generate_grounded_selected_document_answer(
     completed_generation = False
     revision_issues: List[str] = []
     best_answer = ""
+    last_draft = ""
 
     for attempt in range(2):
         attempt_prompt = prompt
@@ -1655,6 +1688,7 @@ def _generate_grounded_selected_document_answer(
             logger.warning("Selected-document synthesis attempt %d failed: %s", attempt + 1, exc)
             continue
 
+        last_draft = answer
         answer = _validate_answer_citations(answer, sources)
         if answer != INSUFFICIENT_EVIDENCE_MESSAGE:
             best_answer = answer
@@ -1672,9 +1706,12 @@ def _generate_grounded_selected_document_answer(
     if not completed_generation and last_error is not None:
         raise last_error
     if best_answer:
-        return _prune_unsupported_claims(
+        return _mediate_or_prune(
             best_answer, sources, raw_sources, verify_entailment=verify_entailment
         ) or best_answer
+    rescued = _rescue_uncited_draft(last_draft, sources, raw_sources)
+    if rescued:
+        return rescued
     return "No fue posible generar una respuesta con citas verificables a partir del documento seleccionado."
 
 
@@ -1850,6 +1887,7 @@ def _generate_partial_answer_from_agent_sources(
 
     revision_issues: List[str] = []
     best_answer = ""
+    last_draft = ""
     best_penalty = float("inf")
     for attempt in range(2):
         attempt_prompt = prompt
@@ -1883,6 +1921,7 @@ def _generate_partial_answer_from_agent_sources(
 
         if _is_agent_stop_answer(answer):
             continue
+        last_draft = answer
         answer = _validate_answer_citations(answer, sources)
         cited_documents = _cited_document_count(answer, sources)
         revision_issues = _answer_evidence_issues(
@@ -1917,18 +1956,20 @@ def _generate_partial_answer_from_agent_sources(
         )
 
     if best_answer:
-        pruned_answer = _prune_unsupported_claims(
+        pruned_answer = _mediate_or_prune(
             best_answer,
             sources,
             raw_sources,
             verify_entailment=verify_entailment,
         )
-        if pruned_answer and _cited_document_count(pruned_answer, sources) >= required_documents:
-            return (
-                "**Limitación de cobertura:** la evidencia recuperada no permitió respaldar todos los ejes "
-                "solicitados; se omiten las decisiones sin sustento documental.\n\n"
-                + pruned_answer
-            )
+    else:
+        pruned_answer = _rescue_uncited_draft(last_draft, sources, raw_sources)
+    if pruned_answer and _cited_document_count(pruned_answer, sources) >= required_documents:
+        return (
+            "**Limitación de cobertura:** la evidencia recuperada no permitió respaldar todos los ejes "
+            "solicitados; se omiten las decisiones sin sustento documental.\n\n"
+            + pruned_answer
+        )
 
     return (
         "No fue posible producir una síntesis cuyas afirmaciones pudieran verificarse contra los fragmentos "
@@ -2025,6 +2066,7 @@ def _generate_direct_document_answer(
         prompt += f"\n\n{coverage_guide}"
     revision_issues: List[str] = []
     best_answer = ""
+    last_draft = ""
     for attempt in range(2):
         attempt_prompt = prompt
         if attempt:
@@ -2039,6 +2081,7 @@ def _generate_direct_document_answer(
         if _is_agent_stop_answer(answer):
             revision_issues = ["la salida no contiene una respuesta final"]
             continue
+        last_draft = answer
         answer = _validate_answer_citations(answer, sources)
         if answer != INSUFFICIENT_EVIDENCE_MESSAGE:
             best_answer = answer
@@ -2054,10 +2097,13 @@ def _generate_direct_document_answer(
             return {"answer": answer, "sources": sources}
 
     if best_answer:
-        answer = _prune_unsupported_claims(
+        answer = _mediate_or_prune(
             best_answer, sources, raw_sources, verify_entailment=verify_entailment
         ) or best_answer
         return {"answer": answer, "sources": sources}
+    rescued = _rescue_uncited_draft(last_draft, sources, raw_sources)
+    if rescued:
+        return {"answer": rescued, "sources": sources}
 
     # Retrieved chunks scored just high enough to count as "context" but never
     # produced a citable answer across both attempts — e.g. a filesystem question
@@ -2193,6 +2239,9 @@ def _semantic_claim_issues(
     deterministic = _answer_evidence_issues(answer, sources, evidence, verify_entailment=False)
     if not answer or answer == INSUFFICIENT_EVIDENCE_MESSAGE:
         return [*deterministic, "la salida no contiene una respuesta verificable"]
+    mode = settings.RESEARCH_SEMANTIC_AUDIT_MODE
+    if mode == "off":
+        return deterministic
     context = _build_agent_source_context(evidence)
     if not context:
         return deterministic
@@ -2216,6 +2265,16 @@ def _semantic_claim_issues(
         ])
         if not isinstance(audit, _ClaimAudit):
             raise ValueError("claim judge returned an invalid schema")
+        if mode == "signal":
+            # The paper measured this same-model audit as a poor gate (it flags an
+            # "unmarked inference" in ~90% of answers); keep it as a logged signal.
+            logger.info(
+                "Semantic claim audit (signal only): unsupported=%d unmarked_inferences=%d wrong_citations=%d",
+                len(audit.unsupported_claims),
+                len(audit.unmarked_inferences),
+                len(audit.wrong_citations),
+            )
+            return deterministic
         if audit.unsupported_claims:
             deterministic.append("afirmaciones no respaldadas: " + " | ".join(audit.unsupported_claims[:3]))
         if audit.unmarked_inferences:
@@ -2236,6 +2295,12 @@ def _repair_research_answer(
     issues: List[str],
     chat_history: Optional[List[Dict[str, str]]],
 ) -> str:
+    if settings.CLAIM_MEDIATION_ENABLED:
+        # Repair flagged claims against verbatim quotes instead of a free rewrite,
+        # which resolved only 0-4% of the issues in the paper (Table 5).
+        mediated = mediate_claims(answer, sources, evidence).answer
+        return mediated or answer
+
     from langchain_core.messages import HumanMessage
 
     previous_answer = answer[:3500]

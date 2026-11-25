@@ -76,16 +76,17 @@ def run_phase_rankings(questions, user_id: str, path: Path, depth: int) -> None:
 def execute(condition: str, question: str, user_id: str) -> Dict[str, Any]:
     from app.rag import agent
 
-    if condition == "C5":
+    if _instrument.is_research(condition):
         decision = agent.RoutingDecision("research_rag", "paper_eval", 0, "research", None)
-        result = agent.run_research_agent(
-            question=question,
-            user_id=user_id,
-            document_id=None,
-            top_k=agent._effective_retrieval_top_k(decision, None),
-            chat_history=None,
-            dependencies=agent._research_dependencies(question, None, None),
-        )
+        with _instrument.condition(condition):
+            result = agent.run_research_agent(
+                question=question,
+                user_id=user_id,
+                document_id=None,
+                top_k=agent._effective_retrieval_top_k(decision, None),
+                chat_history=None,
+                dependencies=agent._research_dependencies(question, None, None),
+            )
         return {
             "route": "research_rag",
             "answer": result.get("answer", ""),
@@ -131,7 +132,7 @@ def run_one(condition: str, question: Dict[str, Any], repeat: int, user_id: str,
     except Exception as exc:
         error = f"{type(exc).__name__}: {exc}"
         traceback.print_exc()
-        output = {"route": "research_rag" if condition == "C5" else "simple_rag",
+        output = {"route": "research_rag" if _instrument.is_research(condition) else "simple_rag",
                   "answer": "", "sources": [], "evidence": [], "coverage": {}}
     latency = time.perf_counter() - start
 
@@ -163,7 +164,7 @@ def run_one(condition: str, question: Dict[str, Any], repeat: int, user_id: str,
         "contexts": contexts,
         "graph_context_chars": len(rec.graph_context),
         "coverage": output["coverage"],
-        "rounds": sum(1 for s in stages if s["name"] == "retrieve") if condition == "C5" else 1,
+        "rounds": sum(1 for s in stages if s["name"] == "retrieve") if _instrument.is_research(condition) else 1,
         "repairs": sum(1 for s in stages if s["name"] == "repair"),
         "events": [{**e, "t": round(e["t"] - t0, 3)} for e in rec.events],
         "stages": [{**s, "seconds": round(s["seconds"], 3)} for s in stages],

@@ -300,7 +300,10 @@ def _build_graph(dependencies: ResearchDependencies):
         )
         evidence = state.get("evidence", [])
         relevant_indices = audit.get("relevant_indices")
-        if relevant_indices is not None:
+        # With RESEARCH_AUDIT_FILTER off, the same-model audit only decides the
+        # corrective round: in the paper, filtering on it dropped relevant
+        # evidence (final recall 0.890 -> 0.767, Table 5b).
+        if relevant_indices is not None and settings.RESEARCH_AUDIT_FILTER:
             evidence = [item for index, item in enumerate(evidence) if index in set(relevant_indices)]
         supported = audit.get("supported", [])
         return {
@@ -472,7 +475,7 @@ def _fallback_state_stream(
             else _fallback_audit(state["brief"], evidence)
         )
         relevant_indices = audit.get("relevant_indices")
-        if relevant_indices is not None:
+        if relevant_indices is not None and settings.RESEARCH_AUDIT_FILTER:
             state["evidence"] = [
                 item for index, item in enumerate(evidence) if index in set(relevant_indices)
             ]

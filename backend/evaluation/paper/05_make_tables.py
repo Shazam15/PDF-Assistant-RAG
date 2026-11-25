@@ -25,9 +25,20 @@ from typing import Any, Dict, List, Optional, Sequence
 import _common
 
 CIT = re.compile(r"\[((?:D|W)\d+)\]")
-CONDITION_NAMES = {"C1": "C1 Densa", "C2": "C2 + RRF", "C3": "C3 + Reranking", "C4": "C4 + Grafo", "C5": "C5 Completo"}
+CONDITION_NAMES = {"C1": "C1 Densa", "C2": "C2 + RRF", "C3": "C3 + Reranking", "C4": "C4 + Grafo", "C5": "C5 Completo",
+                   "C4M": "C4M + Mediación", "C5S": "C5S Auditoría como señal", "C5M": "C5M Señal + Mediación"}
 STAGES = ("understand", "retrieve", "ledger", "audit", "outline", "draft", "verify", "repair", "finalize")
-COMPARISONS = (("C1", "C2"), ("C2", "C3"), ("C3", "C4"), ("C4", "C5"), ("C3", "C5"), ("C1", "C5"))
+PAPER_COMPARISONS = (("C1", "C2"), ("C2", "C3"), ("C3", "C4"), ("C4", "C5"), ("C3", "C5"), ("C1", "C5"))
+# Claim-mediation extensions. Holm is applied to each family separately so the
+# paper's adjusted p-values do not change when these conditions are present.
+EXTENSION_COMPARISONS = (("C4", "C4M"), ("C5", "C5S"), ("C5S", "C5M"), ("C5", "C5M"), ("C4", "C5M"))
+COMPARISONS = PAPER_COMPARISONS + EXTENSION_COMPARISONS
+
+
+def _is_research(condition: str) -> bool:
+    """C5 and its variants run research_rag (see _instrument.is_research)."""
+    return condition.startswith("C5")
+
 TEST_METRICS = ("recall_at_20", "ndcg_at_10", "citation_precision", "citation_precision_draft",
                 "claim_support", "completeness", "faithfulness", "factual_correctness", "latency_seconds")
 
@@ -74,6 +85,7 @@ def run_metrics(run: Dict[str, Any], gold: List[Dict[str, Any]], mode: str, chec
     checks = [e for e in events if e["kind"] == "evidence_check" and not e.get("placeholder")]
     verifies = [e for e in events if e["kind"] == "verify"]
     prunes = [e for e in events if e["kind"] == "prune" and e.get("changed")]
+    mediations = [e for e in events if e["kind"] == "mediate"]
     first = validations[0] if validations else None
     repair_called = any(e["kind"] == "repair_called" for e in events)
 
@@ -96,8 +108,12 @@ def run_metrics(run: Dict[str, Any], gold: List[Dict[str, Any]], mode: str, chec
         "v_uncited_claims": any(e.get("uncited_claims") for e in checks),
         "v_prune_synthesis": any(e.get("stage") != "repair" for e in prunes),
         "v_prune_after_repair": any(e.get("stage") == "repair" for e in prunes),
+        # Claim mediation (C4M, C5M): claims the model anchored to a verified quote.
+        "mediation_flagged": sum(e.get("flagged", 0) for e in mediations),
+        "mediation_accepted": sum(e.get("accepted_supported", 0) + e.get("accepted_partial", 0) for e in mediations),
+        "mediation_rejected": sum(sum((e.get("rejected") or {}).values()) for e in mediations),
     }
-    if run["condition"] == "C5":
+    if _is_research(run["condition"]):
         metrics["v_repair_success"] = repair_called and bool(verifies) and verifies[-1]["issue_count"] == 0
         metrics["v_residual_issues"] = bool(verifies) and verifies[-1]["issue_count"] > 0
     else:
@@ -123,7 +139,7 @@ def run_metrics(run: Dict[str, Any], gold: List[Dict[str, Any]], mode: str, chec
         covered = sum(any(_common.unit_matches(c, u, mode) for c in cited_chunks for u in units)
                       for units in groups.values())
         metrics["completeness"] = covered / len(groups)
-    if run["condition"] == "C5" and run.get("coverage"):
+    if _is_research(run["condition"]) and run.get("coverage"):
         coverage = run["coverage"]
         total = len(coverage.get("supported", [])) + len(coverage.get("missing", []))
         metrics["facet_coverage"] = len(coverage.get("supported", [])) / total if total else None
@@ -243,12 +259,12 @@ def main() -> None:
             metrics = run_metrics(run, gold, args.match, checker)
             for name in ("faithfulness", "factual_correctness", "context_recall"):
                 metrics[name] = (ragas.get(run["key"]) or {}).get(name)
-            if run["condition"] == "C5":
+            if _is_research(run["condition"]):
                 # C5 has no fixed-depth ranking: score the evidence it delivered.
                 metrics["recall_at_20"] = metrics.get("recall_delivered")
                 metrics["ndcg_at_10"] = metrics.get("ndcg_delivered")
-                add(label, "C5", run["qid"], "recall_at_20", metrics["recall_at_20"])
-                add(label, "C5", run["qid"], "ndcg_at_10", metrics["ndcg_at_10"])
+                add(label, run["condition"], run["qid"], "recall_at_20", metrics["recall_at_20"])
+                add(label, run["condition"], run["qid"], "ndcg_at_10", metrics["ndcg_at_10"])
             per_run.append({"label": label, "key": run["key"], "qid": run["qid"], "condition": run["condition"],
                             "repeat": run["repeat"], "route": run["route"], **metrics,
                             "stages": run.get("stages") or []})
@@ -513,14 +529,20 @@ def main() -> None:
         stats += [f"## {label}", ""]
         for metric in TEST_METRICS:
             results = []
-            for first, second in COMPARISONS:
-                a, b = q_values(label, first, metric), q_values(label, second, metric)
-                common = sorted(set(a) & set(b))
-                if len(common) >= 2:
-                    results.append((first, second, wilcoxon([a[q] for q in common], [b[q] for q in common])))
+            adjusted = []
+            for family in (PAPER_COMPARISONS, EXTENSION_COMPARISONS):
+                family_results = []
+                for first, second in family:
+                    a, b = q_values(label, first, metric), q_values(label, second, metric)
+                    common = sorted(set(a) & set(b))
+                    if len(common) >= 2:
+                        family_results.append(
+                            (first, second, wilcoxon([a[q] for q in common], [b[q] for q in common]))
+                        )
+                results += family_results
+                adjusted += holm([res["p"] for _, _, res in family_results]) if family_results else []
             if not results:
                 continue
-            adjusted = holm([res["p"] for _, _, res in results])
             stats += [f"### {metric}", "", table(
                 ["Comparación", "n", "Δ mediana", "p", "p (Holm)", "r"],
                 [[f"{f} → {s}", res["n"], _common.fmt(res["median_diff"]), _common.fmt(res["p"], 4),

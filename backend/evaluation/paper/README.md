@@ -215,6 +215,23 @@ código consulta:
 - C5: `run_research_agent` con las dependencias de producción; **no usa el
   grafo** en ninguna de las dos ramas.
 
+Condiciones de extensión (posteriores al paper; no se ejecutan por defecto, se
+piden con `--conditions C4,C4M,C5,C5S,C5M`):
+
+- C4M: C4 con `CLAIM_MEDIATION_ENABLED`. El modelo propone, para cada
+  afirmación marcada, la fuente y una cita textual; el código la acepta solo si
+  la cita es literal y contiene las cifras (`app/rag/mediation.py`).
+- C5S: C5 con `RESEARCH_AUDIT_FILTER=False` y
+  `RESEARCH_SEMANTIC_AUDIT_MODE=signal`: las auditorías del propio modelo ya no
+  filtran evidencia ni disparan la reparación. Separa el filtro de la ronda
+  correctiva (limitación 9).
+- C5M: C5S más la mediación en la síntesis y en la reparación.
+
+`05_make_tables.py` aplica Holm por separado a las comparaciones del paper y a
+las de extensión, de modo que las cifras del paper no cambian. El respaldo de
+afirmaciones sigue usando `_numeric_tokens` sin normalizar; reporta Faithfulness
+(juez externo) junto a él, porque la mediación cambia el criterio interno.
+
 Todas comparten los mismos topes de evidencia (`TOP_K_RERANK`, máximo 3
 fragmentos por documento). En `experimental` se desactiva además el escalado al
 agente de herramientas (MCP), que la otra rama no tiene.

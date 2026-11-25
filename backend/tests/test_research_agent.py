@@ -137,3 +137,32 @@ def test_research_graph_synthesizes_accumulated_evidence_after_timeout():
 
     assert result["answer"] == "Best available answer [D1]."
     assert [source["filename"] for source in result["sources"]] == ["engine.pdf"]
+
+
+def test_research_graph_keeps_all_evidence_when_audit_filter_is_off(monkeypatch):
+    from app.rag import research_agent
+
+    monkeypatch.setattr(research_agent.settings, "RESEARCH_AUDIT_FILTER", False)
+    evidence = [
+        {"id": "wrong", "filename": "water.pdf", "document_id": "water", "page": 1, "text": "Water treatment."},
+        {"id": "right", "filename": "engine.pdf", "document_id": "engine", "page": 2, "text": "Valve timing result."},
+    ]
+    dependencies = ResearchDependencies(
+        plan=lambda _question: ResearchBrief(main_question="engine", facets=["valve timing"]),
+        retrieve=lambda **_kwargs: evidence,
+        source_payload=_source_payload,
+        synthesize=lambda _brief, _evidence, _sources, _outline: "Supported result [D2].",
+        verify=lambda _answer, _sources, _evidence: [],
+        repair=lambda *_args: "",
+        audit=lambda _brief, _evidence: {
+            "supported": ["valve timing"],
+            "missing": [],
+            "conflicts": [],
+            "relevant_indices": [1],
+        },
+    )
+
+    events = list(stream_research_agent("question", "user", None, 8, [], dependencies))
+    result = next(event["data"] for event in events if event["type"] == "result")
+
+    assert [source["filename"] for source in result["sources"]] == ["water.pdf", "engine.pdf"]

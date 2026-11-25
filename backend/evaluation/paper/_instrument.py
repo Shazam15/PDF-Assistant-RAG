@@ -25,7 +25,18 @@ CONDITIONS = {
     "C3": "Híbrida + reordenamiento (simple_rag sin grafo)",
     "C4": "C3 + contexto del grafo (simple_rag tal como está en producción)",
     "C5": "research_rag completo (planificación, auditoría, rondas correctivas, verificación, reparación)",
+    # Extensions after the paper (feature/claim-mediation); C1–C5 are unchanged.
+    "C4M": "C4 + mediación de afirmaciones con cita textual verificada",
+    "C5S": "C5 con las auditorías del propio modelo como señal (sin filtrar evidencia ni disparar la reparación)",
+    "C5M": "C5S + mediación de afirmaciones en la síntesis y en la reparación",
 }
+MEDIATION_CONDITIONS = {"C4M", "C5M"}
+AUDIT_SIGNAL_CONDITIONS = {"C5S", "C5M"}
+
+
+def is_research(name: str) -> bool:
+    """Conditions that run research_rag instead of simple_rag."""
+    return name.startswith("C5")
 
 
 class Recorder:
@@ -145,6 +156,16 @@ def install() -> None:
         return original_repair(*args, **kwargs)
 
     agent._repair_research_answer = repair
+
+    # ── Claim mediation (C4M, C5M) ───────────────────────────────────
+    original_mediate = agent.mediate_claims
+
+    def mediate(*args, **kwargs):
+        outcome = original_mediate(*args, **kwargs)
+        REC.event("mediate", **outcome.stats)
+        return outcome
+
+    agent.mediate_claims = mediate
 
     # ── Retrieval and graph timing; delivered evidence of simple_rag ─
     original_retrieve = agent.retrieve
@@ -274,12 +295,17 @@ def _swap(module, name: str, value) -> Iterator[None]:
 
 @contextmanager
 def condition(name: str) -> Iterator[None]:
-    """Disable components for one ablation condition (C5 runs untouched)."""
+    """Disable components for one ablation condition (C4 and C5 run untouched)."""
     from contextlib import ExitStack
 
     from app.rag import agent, retriever
 
     with ExitStack() as stack:
+        if name in MEDIATION_CONDITIONS:
+            stack.enter_context(_swap(agent.settings, "CLAIM_MEDIATION_ENABLED", True))
+        if name in AUDIT_SIGNAL_CONDITIONS:
+            stack.enter_context(_swap(agent.settings, "RESEARCH_AUDIT_FILTER", False))
+            stack.enter_context(_swap(agent.settings, "RESEARCH_SEMANTIC_AUDIT_MODE", "signal"))
         # The evaluation must never escape to the tool agent (web / MCP).
         # Only the experimental branch has this escalation path.
         if hasattr(agent, "_fallback_tool_agent_answer"):

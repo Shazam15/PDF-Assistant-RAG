@@ -6,7 +6,7 @@ import json
 import os
 import secrets
 from functools import lru_cache
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import AliasChoices, ConfigDict, Field, model_validator
 from pydantic_settings import BaseSettings, NoDecode
@@ -316,6 +316,20 @@ class Settings(BaseSettings):
     NLI_MODEL: str = "MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli"
     NLI_ENTAILMENT_THRESHOLD: float = 0.65
     NLI_VERIFIER_VERSION: str = "multilingual-nli-v1"
+    # ── Claim mediation (see app/rag/mediation.py) ──────
+    # The generator proposes a source and a verbatim quote for each claim the
+    # deterministic checks flag; code accepts or prunes. Off by default so the
+    # behaviour evaluated in the ATLAS paper stays the default.
+    CLAIM_MEDIATION_ENABLED: bool = False
+    CLAIM_MEDIATION_MAX_CLAIMS: int = 8
+    CLAIM_MEDIATION_MAX_TOKENS: int = 700
+    CLAIM_MEDIATION_NLI: bool = False
+    # "gate": the generator's claim audit triggers repair (paper behaviour);
+    # "signal": it is only logged; "off": it is not called.
+    RESEARCH_SEMANTIC_AUDIT_MODE: Literal["gate", "signal", "off"] = "gate"
+    # True: the coverage audit filters the evidence passed to synthesis (paper
+    # behaviour). False: it only decides whether to run a corrective round.
+    RESEARCH_AUDIT_FILTER: bool = True
     # ── Vision / Image captioning ─────────────────────
     VISION_PROVIDER: str | None = None  # e.g. 'openai'
     VISION_MODEL: str | None = None
