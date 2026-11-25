@@ -223,7 +223,7 @@ class WorkspaceInvitation(Base):
     email = Column(String(120), nullable=False, index=True)
     token_hash = Column(String(255), nullable=False, unique=True, index=True)
     inviter_id = Column(
-        String,
+        GUID,
         ForeignKey("users.id"),
         nullable=False,
         index=True,
